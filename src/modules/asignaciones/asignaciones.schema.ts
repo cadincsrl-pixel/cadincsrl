@@ -17,4 +17,4 @@ export const BajaAsignacionSchema = z.object({
 
 export type Asignacion = z.infer<typeof AsignacionSchema>
 export type CreateAsignacionDto = z.infer<typeof CreateAsignacionSchema>
-export type BajaAsignacionDto = z.infer<typeof BajaAsignacionSchema>
+export type BajaAsignacionDto = z.infer<typeof BajaAsignacionSchema> 
