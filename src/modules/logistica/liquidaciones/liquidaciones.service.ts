@@ -1,0 +1,93 @@
+import { createSupabaseClient } from '../../../lib/supabase.js'
+import type { CreateLiquidacionDto, CreateAdelantoDto } from './liquidaciones.schema.js'
+
+export const liquidacionesService = {
+
+  async getAll(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('liquidaciones')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async getAdelantos(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('adelantos')
+      .select('*')
+      .order('fecha', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async create(dto: CreateLiquidacionDto, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { viaje_ids, adelanto_ids, ...rest } = dto
+
+    const { data, error } = await supabase
+      .from('liquidaciones')
+      .insert({ ...rest, estado: 'borrador' })
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+
+    // Vincular viajes
+    if (viaje_ids.length) {
+      await supabase
+        .from('liquidacion_viajes')
+        .insert(viaje_ids.map(vid => ({ liquidacion_id: data.id, viaje_id: vid })))
+    }
+
+    // Vincular adelantos — marcarlos como liquidados
+    if (adelanto_ids.length) {
+      await supabase
+        .from('adelantos')
+        .update({ liquidacion_id: data.id })
+        .in('id', adelanto_ids)
+    }
+
+    return data
+  },
+
+  async cerrar(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('liquidaciones')
+      .update({ estado: 'cerrada' })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async delete(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    await supabase.from('liquidacion_viajes').delete().eq('liquidacion_id', id)
+    const { error } = await supabase.from('liquidaciones').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
+  },
+
+  async createAdelanto(dto: CreateAdelantoDto, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('adelantos')
+      .insert(dto)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteAdelanto(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('adelantos').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
+  },
+}

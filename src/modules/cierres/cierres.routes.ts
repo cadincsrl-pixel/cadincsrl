@@ -3,10 +3,18 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { cierresService } from './cierres.service.js'
 import { CreateCierreSchema, UpdateCierreSchema } from './cierres.schema.js'
+import { createSupabaseClient } from '../../lib/supabase.js'
 
 const cierres = new Hono()
 
 cierres.use('*', authMiddleware)
+
+cierres.get('/all', async (c) => {
+  const supabase = createSupabaseClient(c.get('accessToken'))
+  const { data, error } = await supabase.from('cierres').select('*')
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
 
 // GET /api/cierres/:obraCod
 cierres.get('/:obraCod', async (c) => {

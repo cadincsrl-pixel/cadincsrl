@@ -3,10 +3,23 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { horasService } from './horas.service.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
+import { createSupabaseClient } from '../../lib/supabase.js'
 
 const horas = new Hono()
 
 horas.use('*', authMiddleware)
+
+
+horas.get('/all', async (c) => {
+  const supabase = createSupabaseClient(c.get('accessToken'))
+  const { data, error } = await supabase
+    .from('horas')
+    .select('*')
+    .order('fecha')
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
 
 // GET /api/horas/:obraCod?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
 horas.get('/:obraCod', async (c) => {
@@ -50,5 +63,27 @@ horas.delete('/:obraCod/semana', async (c) => {
   const data = await horasService.limpiarSemana(obraCod, desde, hasta, token)
   return c.json(data)
 })
+
+horas.get('/trabajador/:leg', async (c) => {
+  const leg   = c.req.param('leg')
+  const desde = c.req.query('desde')
+  const hasta = c.req.query('hasta')
+  const token = c.get('accessToken')
+  const supabase = createSupabaseClient(token)
+
+  let query = supabase
+    .from('horas')
+    .select('*')
+    .eq('leg', leg)
+    .order('fecha')
+
+  if (desde) query = query.gte('fecha', desde)
+  if (hasta) query = query.lte('fecha', hasta)
+
+  const { data, error } = await query
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
 
 export default horas

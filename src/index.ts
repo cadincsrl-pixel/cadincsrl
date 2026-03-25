@@ -15,6 +15,12 @@ import asignacionesRoutes from './modules/asignaciones/asignaciones.routes.js'
 import cierresRoutes from './modules/cierres/cierres.routes.js'
 import tarifasRoutes from './modules/tarifas/tarifas.routes.js'
 import contratistasRoutes from './modules/contratistas/contratistas.routes.js'
+import choferesRoutes     from './modules/logistica/choferes/choferes.routes.js'
+import camionesRoutes     from './modules/logistica/camiones/camiones.routes.js'
+import lugaresRoutes      from './modules/logistica/lugares/lugares.routes.js'
+import viajesRoutes       from './modules/logistica/viajes/viajes.routes.js'
+import liquidacionesRoutes from './modules/logistica/liquidaciones/liquidaciones.routes.js'
+
 
 const app = new Hono()
 
@@ -45,6 +51,12 @@ app.route('/api/asignaciones', asignacionesRoutes)
 app.route('/api/cierres', cierresRoutes)
 app.route('/api/tarifas', tarifasRoutes)
 app.route('/api/contratistas', contratistasRoutes)
+app.route('/api/logistica/choferes',      choferesRoutes)
+app.route('/api/logistica/camiones',      camionesRoutes)
+app.route('/api/logistica/lugares',       lugaresRoutes)
+app.route('/api/logistica/viajes',        viajesRoutes)
+app.route('/api/logistica/liquidaciones', liquidacionesRoutes)
+
 
 // ── Manejo global de errores ──
 app.onError((err, c) => {

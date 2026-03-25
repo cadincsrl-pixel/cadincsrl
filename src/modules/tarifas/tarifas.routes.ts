@@ -3,10 +3,22 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { tarifasService } from './tarifas.service.js'
 import { CreateTarifaSchema } from './tarifas.schema.js'
+import { createSupabaseClient } from '../../lib/supabase.js'
 
 const tarifas = new Hono()
 
 tarifas.use('*', authMiddleware)
+
+tarifas.get('/all', async (c) => {
+  const supabase = createSupabaseClient(c.get('accessToken'))
+  const { data, error } = await supabase
+    .from('tarifas')
+    .select('*')
+    .order('desde')
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
 
 // GET /api/tarifas/:obraCod
 tarifas.get('/:obraCod', async (c) => {
@@ -32,5 +44,7 @@ tarifas.delete('/:id', async (c) => {
   const data = await tarifasService.delete(id, token)
   return c.json(data)
 })
+
+
 
 export default tarifas
