@@ -1,0 +1,46 @@
+import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { authMiddleware } from '../../middleware/auth.js'
+import { cierresService } from './cierres.service.js'
+import { CreateCierreSchema, UpdateCierreSchema } from './cierres.schema.js'
+
+const cierres = new Hono()
+
+cierres.use('*', authMiddleware)
+
+// GET /api/cierres/:obraCod
+cierres.get('/:obraCod', async (c) => {
+  const obraCod = c.req.param('obraCod')
+  const token = c.get('accessToken')
+  const data = await cierresService.getByObra(obraCod, token)
+  return c.json(data)
+})
+
+// GET /api/cierres/:obraCod/:semKey
+cierres.get('/:obraCod/:semKey', async (c) => {
+  const obraCod = c.req.param('obraCod')
+  const semKey = c.req.param('semKey')
+  const token = c.get('accessToken')
+  const data = await cierresService.getBySemKey(obraCod, semKey, token)
+  return c.json(data)
+})
+
+// POST /api/cierres
+cierres.post('/', zValidator('json', CreateCierreSchema), async (c) => {
+  const dto = c.req.valid('json')
+  const token = c.get('accessToken')
+  const data = await cierresService.create(dto, token)
+  return c.json(data, 201)
+})
+
+// PATCH /api/cierres/:obraCod/:semKey
+cierres.patch('/:obraCod/:semKey', zValidator('json', UpdateCierreSchema), async (c) => {
+  const obraCod = c.req.param('obraCod')
+  const semKey = c.req.param('semKey')
+  const dto = c.req.valid('json')
+  const token = c.get('accessToken')
+  const data = await cierresService.updateEstado(obraCod, semKey, dto, token)
+  return c.json(data)
+})
+
+export default cierres
