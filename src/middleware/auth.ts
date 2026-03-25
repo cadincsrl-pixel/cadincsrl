@@ -44,7 +44,8 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     c.set('accessToken', token)
 
     await next()
-  } catch {
+  } catch (err) {
+    console.error('JWT error:', err)
     throw new HTTPException(401, { message: 'Token inválido o expirado' })
   }
 })
