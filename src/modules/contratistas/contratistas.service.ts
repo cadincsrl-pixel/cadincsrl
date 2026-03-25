@@ -112,7 +112,7 @@ export const contratistasService = {
       .eq('obra_cod', obraCod)
       .order('sem_key', { ascending: false })
 
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(error.message) 
     return data
   },
 
