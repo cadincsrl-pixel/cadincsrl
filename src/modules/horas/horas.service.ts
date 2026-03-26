@@ -66,31 +66,18 @@ export const horasService = {
   },
 
   // Upsert en lote — para autoFill o importación Excel
+  // Upsert en lote — para autoFill, importación Excel, y agregar a semana
   async upsertLote(dto: UpsertHorasLoteDto, token: string) {
     const supabase = createSupabaseClient(token)
 
-    const toDelete = dto.horas.filter(h => h.horas === 0)
-    const toUpsert = dto.horas.filter(h => h.horas > 0)
+    const rows = dto.horas.map(h => ({
+      obra_cod: dto.obra_cod,
+      fecha: h.fecha,
+      leg: h.leg,
+      horas: h.horas,
+    }))
 
-    // Eliminar los que son 0
-    for (const h of toDelete) {
-      await supabase
-        .from('horas')
-        .delete()
-        .eq('obra_cod', dto.obra_cod)
-        .eq('fecha', h.fecha)
-        .eq('leg', h.leg)
-    }
-
-    // Upsert los que tienen valor
-    if (toUpsert.length > 0) {
-      const rows = toUpsert.map(h => ({
-        obra_cod: dto.obra_cod,
-        fecha: h.fecha,
-        leg: h.leg,
-        horas: h.horas,
-      }))
-
+    if (rows.length > 0) {
       const { error } = await supabase
         .from('horas')
         .upsert(rows, { onConflict: 'obra_cod,fecha,leg' })
@@ -98,7 +85,7 @@ export const horasService = {
       if (error) throw new Error(error.message)
     }
 
-    return { success: true, upserted: toUpsert.length, deleted: toDelete.length }
+    return { success: true, upserted: rows.length }
   },
 
   // Limpiar todas las horas de una semana en una obra
