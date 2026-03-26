@@ -22,6 +22,7 @@ import viajesRoutes       from './modules/logistica/viajes/viajes.routes.js'
 import liquidacionesRoutes from './modules/logistica/liquidaciones/liquidaciones.routes.js'
 import authRoutes from './modules/auth/auth.routes.js'
 import usuariosRoutes from './modules/auth/usuarios.routes.js'
+import herramientasRoutes from './modules/herramientas/herramientas.routes.js'
 
 
 
@@ -61,7 +62,7 @@ app.route('/api/logistica/viajes',        viajesRoutes)
 app.route('/api/logistica/liquidaciones', liquidacionesRoutes)
 app.route('/api/me', authRoutes)
 app.route('/api/usuarios', usuariosRoutes)
-
+app.route('/api/herramientas', herramientasRoutes)
 // ── Manejo global de errores ──
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
