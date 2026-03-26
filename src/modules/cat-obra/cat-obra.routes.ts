@@ -10,6 +10,16 @@ catObra.use('*', authMiddleware)
 
 // GET /api/cat-obra/:obraCod?sem_key=YYYY-MM-DD
 // Devuelve las categorías asignadas por trabajador en esa obra para esa semana
+catObra.get('/all', async (c) => {
+  const supabase = createSupabaseClient(c.get('accessToken'))
+  const { data, error } = await supabase
+    .from('cat_obra')
+    .select('*')
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
+
 catObra.get('/:obraCod', async (c) => {
   const obraCod = c.req.param('obraCod')
   const semKey = c.req.query('sem_key')

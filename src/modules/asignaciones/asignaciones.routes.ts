@@ -6,10 +6,21 @@ import {
   CreateAsignacionSchema,
   BajaAsignacionSchema,
 } from './asignaciones.schema.js'
+import { createSupabaseClient } from '../../lib/supabase.js'
 
 const asignaciones = new Hono()
 
 asignaciones.use('*', authMiddleware)
+
+asignaciones.get('/all', async (c) => {
+  const token = c.get('accessToken')
+  const supabase = createSupabaseClient(token)
+  const { data, error } = await supabase
+    .from('asignaciones')
+    .select('*')
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
 
 // GET /api/asignaciones/:obraCod
 asignaciones.get('/:obraCod', async (c) => {

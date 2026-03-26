@@ -78,6 +78,13 @@ contratistas.delete('/asig/:obraCod/:contratId', async (c) => {
 })
 
 // ── Certificaciones ──
+contratistas.get('/cert/all', async (c) => {
+  const supabase = createSupabaseClient(c.get('accessToken'))
+  const { data, error } = await supabase.from('certificaciones').select('*')
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
 contratistas.get('/cert/:obraCod', async (c) => {
   const obraCod = c.req.param('obraCod')
   const token = c.get('accessToken')
@@ -92,12 +99,7 @@ contratistas.put('/cert', zValidator('json', CertificacionSchema), async (c) => 
   return c.json(data)
 })
 
-contratistas.get('/cert/all', async (c) => {
-  const supabase = createSupabaseClient(c.get('accessToken'))
-  const { data, error } = await supabase.from('certificaciones').select('*')
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json(data)
-})
+
 
 
 export default contratistas
