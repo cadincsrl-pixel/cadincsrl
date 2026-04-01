@@ -14,7 +14,7 @@ export const asignacionesService = {
     return data
   },
 
-  async create(dto: CreateAsignacionDto, token: string) {
+  async create(dto: CreateAsignacionDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
     // Verificar que no exista ya
@@ -29,7 +29,7 @@ export const asignacionesService = {
 
     const { data, error } = await supabase
       .from('asignaciones')
-      .insert({ obra_cod: dto.obra_cod, leg: dto.leg })
+      .insert({ obra_cod: dto.obra_cod, leg: dto.leg, created_by: userId, updated_by: userId })
       .select()
       .single()
 
@@ -37,11 +37,11 @@ export const asignacionesService = {
     return data
   },
 
-  async baja(obraCod: string, leg: string, dto: BajaAsignacionDto, token: string) {
+  async baja(obraCod: string, leg: string, dto: BajaAsignacionDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('asignaciones')
-      .update({ baja_desde: dto.baja_desde })
+      .update({ baja_desde: dto.baja_desde, updated_by: userId })
       .eq('obra_cod', obraCod)
       .eq('leg', leg)
       .select()

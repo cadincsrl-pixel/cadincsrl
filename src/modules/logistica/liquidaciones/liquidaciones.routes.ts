@@ -11,12 +11,12 @@ liquidaciones.get('/',          async (c) => c.json(await liquidacionesService.g
 liquidaciones.get('/adelantos', async (c) => c.json(await liquidacionesService.getAdelantos(c.get('accessToken'))))
 
 liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) => {
-  const data = await liquidacionesService.create(c.req.valid('json'), c.get('accessToken'))
+  const data = await liquidacionesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
 })
 
 liquidaciones.patch('/:id/cerrar', async (c) => {
-  const data = await liquidacionesService.cerrar(Number(c.req.param('id')), c.get('accessToken'))
+  const data = await liquidacionesService.cerrar(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
   return c.json(data)
 })
 
@@ -26,7 +26,7 @@ liquidaciones.delete('/:id', async (c) => {
 })
 
 liquidaciones.post('/adelantos', zValidator('json', CreateAdelantoSchema), async (c) => {
-  const data = await liquidacionesService.createAdelanto(c.req.valid('json'), c.get('accessToken'))
+  const data = await liquidacionesService.createAdelanto(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
 })
 

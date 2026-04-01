@@ -13,13 +13,13 @@ camiones.get('/', async (c) => {
 })
 
 camiones.post('/', zValidator('json', CreateCamionSchema), async (c) => {
-  const data = await camionesService.create(c.req.valid('json'), c.get('accessToken'))
+  const data = await camionesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
 })
 
 camiones.patch('/:id', zValidator('json', UpdateCamionSchema), async (c) => {
   const id = Number(c.req.param('id'))
-  const data = await camionesService.update(id, c.req.valid('json'), c.get('accessToken'))
+  const data = await camionesService.update(id, c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data)
 })
 

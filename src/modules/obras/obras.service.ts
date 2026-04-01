@@ -39,7 +39,7 @@ export const obrasService = {
     return data
   },
 
-  async create(dto: CreateObraDto, token: string) {
+  async create(dto: CreateObraDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
     // Verificar que el código no exista
@@ -61,6 +61,8 @@ export const obrasService = {
         resp: dto.resp,
         obs: dto.obs,
         archivada: false,
+        created_by: userId,
+        updated_by: userId,
       })
       .select()
       .single()
@@ -69,11 +71,11 @@ export const obrasService = {
     return data
   },
 
-  async update(cod: string, dto: UpdateObraDto, token: string) {
+  async update(cod: string, dto: UpdateObraDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('obras')
-      .update(dto)
+      .update({ ...dto, updated_by: userId })
       .eq('cod', cod)
       .select()
       .single()
@@ -82,13 +84,14 @@ export const obrasService = {
     return data
   },
 
-  async archivar(cod: string, token: string) {
+  async archivar(cod: string, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('obras')
       .update({
         archivada: true,
         fecha_archivo: new Date().toISOString().slice(0, 10),
+        updated_by: userId,
       })
       .eq('cod', cod)
       .select()

@@ -23,13 +23,13 @@ export const liquidacionesService = {
     return data
   },
 
-  async create(dto: CreateLiquidacionDto, token: string) {
+  async create(dto: CreateLiquidacionDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { viaje_ids, adelanto_ids, ...rest } = dto
 
     const { data, error } = await supabase
       .from('liquidaciones')
-      .insert({ ...rest, estado: 'borrador' })
+      .insert({ ...rest, estado: 'borrador', created_by: userId, updated_by: userId })
       .select()
       .single()
 
@@ -46,18 +46,18 @@ export const liquidacionesService = {
     if (adelanto_ids.length) {
       await supabase
         .from('adelantos')
-        .update({ liquidacion_id: data.id })
+        .update({ liquidacion_id: data.id, updated_by: userId })
         .in('id', adelanto_ids)
     }
 
     return data
   },
 
-  async cerrar(id: number, token: string) {
+  async cerrar(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('liquidaciones')
-      .update({ estado: 'cerrada' })
+      .update({ estado: 'cerrada', updated_by: userId })
       .eq('id', id)
       .select()
       .single()
@@ -73,11 +73,11 @@ export const liquidacionesService = {
     return { success: true }
   },
 
-  async createAdelanto(dto: CreateAdelantoDto, token: string) {
+  async createAdelanto(dto: CreateAdelantoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('adelantos')
-      .insert(dto)
+      .insert({ ...dto, created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)

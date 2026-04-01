@@ -8,8 +8,7 @@ const catObra = new Hono()
 
 catObra.use('*', authMiddleware)
 
-// GET /api/cat-obra/:obraCod?sem_key=YYYY-MM-DD
-// Devuelve las categorías asignadas por trabajador en esa obra para esa semana
+// GET /api/cat-obra/all
 catObra.get('/all', async (c) => {
   const supabase = createSupabaseClient(c.get('accessToken'))
   const { data, error } = await supabase
@@ -48,6 +47,7 @@ const UpsertSchema = z.object({
 catObra.put('/', zValidator('json', UpsertSchema), async (c) => {
   const dto = c.req.valid('json')
   const supabase = createSupabaseClient(c.get('accessToken'))
+  const userId = c.get('user').id
 
   // Buscar si ya existe un registro para esta combinación
   const { data: existing } = await supabase
@@ -62,7 +62,7 @@ catObra.put('/', zValidator('json', UpsertSchema), async (c) => {
     // Actualizar
     const { data, error } = await supabase
       .from('cat_obra')
-      .update({ cat_id: dto.cat_id })
+      .update({ cat_id: dto.cat_id, updated_by: userId })
       .eq('id', existing.id)
       .select()
       .single()
@@ -78,6 +78,8 @@ catObra.put('/', zValidator('json', UpsertSchema), async (c) => {
         leg: dto.leg,
         cat_id: dto.cat_id,
         desde: dto.desde,
+        created_by: userId,
+        updated_by: userId,
       })
       .select()
       .single()

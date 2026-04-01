@@ -34,7 +34,8 @@ obras.get('/:cod', async (c) => {
 obras.post('/', zValidator('json', CreateObraSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await obrasService.create(dto, token)
+  const userId = c.get('user').id
+  const data = await obrasService.create(dto, token, userId)
   return c.json(data, 201)
 })
 
@@ -43,7 +44,8 @@ obras.patch('/:cod', zValidator('json', UpdateObraSchema), async (c) => {
   const cod = c.req.param('cod')
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await obrasService.update(cod, dto, token)
+  const userId = c.get('user').id
+  const data = await obrasService.update(cod, dto, token, userId)
   return c.json(data)
 })
 
@@ -51,7 +53,8 @@ obras.patch('/:cod', zValidator('json', UpdateObraSchema), async (c) => {
 obras.patch('/:cod/archivar', async (c) => {
   const cod = c.req.param('cod')
   const token = c.get('accessToken')
-  const data = await obrasService.archivar(cod, token)
+  const userId = c.get('user').id
+  const data = await obrasService.archivar(cod, token, userId)
   return c.json(data)
 })
 

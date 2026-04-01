@@ -32,7 +32,8 @@ contratistas.get('/:id', async (c) => {
 contratistas.post('/', zValidator('json', CreateContratistaSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await contratistasService.create(dto, token)
+  const userId = c.get('user').id
+  const data = await contratistasService.create(dto, token, userId)
   return c.json(data, 201)
 })
 
@@ -41,7 +42,8 @@ contratistas.patch('/:id', zValidator('json', UpdateContratistaSchema), async (c
   if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await contratistasService.update(id, dto, token)
+  const userId = c.get('user').id
+  const data = await contratistasService.update(id, dto, token, userId)
   return c.json(data)
 })
 
@@ -64,7 +66,8 @@ contratistas.get('/asig/:obraCod', async (c) => {
 contratistas.post('/asig', zValidator('json', AsigContratistaSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await contratistasService.asignar(dto, token)
+  const userId = c.get('user').id
+  const data = await contratistasService.asignar(dto, token, userId)
   return c.json(data, 201)
 })
 
@@ -95,7 +98,8 @@ contratistas.get('/cert/:obraCod', async (c) => {
 contratistas.put('/cert', zValidator('json', CertificacionSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await contratistasService.upsertCert(dto, token)
+  const userId = c.get('user').id
+  const data = await contratistasService.upsertCert(dto, token, userId)
   return c.json(data)
 })
 

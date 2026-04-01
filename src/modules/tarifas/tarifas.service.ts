@@ -15,7 +15,7 @@ export const tarifasService = {
     return data
   },
 
-  async upsert(dto: CreateTarifaDto, token: string) {
+  async upsert(dto: CreateTarifaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const desde = dto.desde ?? new Date().toISOString().slice(0, 10)
 
@@ -27,6 +27,8 @@ export const tarifasService = {
           cat_id: dto.cat_id,
           vh: dto.vh,
           desde,
+          created_by: userId,
+          updated_by: userId,
         },
         { onConflict: 'obra_cod,cat_id,desde' }
       )

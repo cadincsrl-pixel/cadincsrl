@@ -27,4 +27,16 @@ auth.get('/profile', async (c) => {
   return c.json(data)
 })
 
+// GET /api/auth/perfiles — nombres de todos los usuarios activos (cualquier usuario autenticado)
+auth.get('/perfiles', async (c) => {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, nombre')
+    .eq('activo', true)
+    .order('nombre')
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
 export default auth

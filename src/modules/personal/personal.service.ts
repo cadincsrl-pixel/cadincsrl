@@ -38,7 +38,7 @@ export const personalService = {
     return data
   },
 
-  async create(dto: CreatePersonalDto, token: string) {
+  async create(dto: CreatePersonalDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
     const { data, error } = await supabase
@@ -51,6 +51,8 @@ export const personalService = {
         tel: dto.tel,
         dir: dto.dir,
         obs: dto.obs,
+        created_by: userId,
+        updated_by: userId,
       })
       .select()
       .single()
@@ -64,16 +66,18 @@ export const personalService = {
         leg: dto.leg,
         cat_id: dto.cat_id,
         desde: new Date().toISOString().slice(0, 10),
+        created_by: userId,
+        updated_by: userId,
       })
 
     return data
   },
 
-  async update(leg: string, dto: UpdatePersonalDto, token: string) {
+  async update(leg: string, dto: UpdatePersonalDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('personal')
-      .update(dto)
+      .update({ ...dto, updated_by: userId })
       .eq('leg', leg)
       .select()
       .single()
@@ -88,6 +92,8 @@ export const personalService = {
           leg,
           cat_id: dto.cat_id,
           desde: new Date().toISOString().slice(0, 10),
+          created_by: userId,
+          updated_by: userId,
         })
     }
 

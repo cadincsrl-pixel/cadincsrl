@@ -17,33 +17,33 @@ export const viajesService = {
     return data
   },
 
-  async create(dto: CreateViajeDto, token: string) {
+  async create(dto: CreateViajeDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('viajes')
-      .insert({ ...dto, estado: 'en_curso' })
+      .insert({ ...dto, estado: 'en_curso', created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data
   },
 
-  async registrarCarga(dto: CargaDto, token: string) {
+  async registrarCarga(dto: CargaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('cargas')
-      .insert(dto)
+      .insert({ ...dto, created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data
   },
 
-  async registrarDescarga(dto: DescargaDto, token: string) {
+  async registrarDescarga(dto: DescargaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('descargas')
-      .insert(dto)
+      .insert({ ...dto, created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)
@@ -51,7 +51,7 @@ export const viajesService = {
     // Marcar viaje como completado
     await supabase
       .from('viajes')
-      .update({ estado: 'completado' })
+      .update({ estado: 'completado', updated_by: userId })
       .eq('id', dto.viaje_id)
 
     return data

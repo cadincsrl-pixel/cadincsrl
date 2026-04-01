@@ -32,7 +32,8 @@ tarifas.get('/:obraCod', async (c) => {
 tarifas.put('/', zValidator('json', CreateTarifaSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await tarifasService.upsert(dto, token)
+  const userId = c.get('user').id
+  const data = await tarifasService.upsert(dto, token, userId)
   return c.json(data)
 })
 

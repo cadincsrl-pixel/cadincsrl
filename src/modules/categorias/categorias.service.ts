@@ -27,11 +27,11 @@ export const categoriasService = {
     return data
   },
 
-  async create(dto: CreateCategoriaDto, token: string) {
+  async create(dto: CreateCategoriaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('categorias')
-      .insert({ nom: dto.nom, vh: dto.vh })
+      .insert({ nom: dto.nom, vh: dto.vh, created_by: userId, updated_by: userId })
       .select()
       .single()
 
@@ -39,11 +39,11 @@ export const categoriasService = {
     return data
   },
 
-  async update(id: number, dto: UpdateCategoriaDto, token: string) {
+  async update(id: number, dto: UpdateCategoriaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('categorias')
-      .update({ ...dto })
+      .update({ ...dto, updated_by: userId })
       .eq('id', id)
       .select()
       .single()

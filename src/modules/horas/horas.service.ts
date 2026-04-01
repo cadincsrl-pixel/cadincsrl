@@ -31,7 +31,7 @@ export const horasService = {
   },
 
   // Upsert de una hora individual
-  async upsert(dto: UpsertHoraDto, token: string) {
+  async upsert(dto: UpsertHoraDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
     // Si horas es 0 o vacío, eliminar el registro
@@ -55,6 +55,9 @@ export const horasService = {
           fecha: dto.fecha,
           leg: dto.leg,
           horas: dto.horas,
+          // El trigger preserva created_by en UPDATE; en INSERT lo toma de aquí
+          created_by: userId,
+          updated_by: userId,
         },
         { onConflict: 'obra_cod,fecha,leg' }
       )
@@ -65,9 +68,8 @@ export const horasService = {
     return data
   },
 
-  // Upsert en lote — para autoFill o importación Excel
   // Upsert en lote — para autoFill, importación Excel, y agregar a semana
-  async upsertLote(dto: UpsertHorasLoteDto, token: string) {
+  async upsertLote(dto: UpsertHorasLoteDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
     const rows = dto.horas.map(h => ({
@@ -75,6 +77,8 @@ export const horasService = {
       fecha: h.fecha,
       leg: h.leg,
       horas: h.horas,
+      created_by: userId,
+      updated_by: userId,
     }))
 
     if (rows.length > 0) {

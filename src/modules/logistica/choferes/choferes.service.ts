@@ -12,22 +12,22 @@ export const choferesService = {
     return data
   },
 
-  async create(dto: CreateChoferDto, token: string) {
+  async create(dto: CreateChoferDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('choferes')
-      .insert(dto)
+      .insert({ ...dto, created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data
   },
 
-  async update(id: number, dto: UpdateChoferDto, token: string) {
+  async update(id: number, dto: UpdateChoferDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('choferes')
-      .update(dto)
+      .update({ ...dto, updated_by: userId })
       .eq('id', id)
       .select()
       .single()

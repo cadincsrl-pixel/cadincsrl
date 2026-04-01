@@ -26,7 +26,8 @@ categorias.get('/:id', async (c) => {
 categorias.post('/', zValidator('json', CreateCategoriaSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await categoriasService.create(dto, token)
+  const userId = c.get('user').id
+  const data = await categoriasService.create(dto, token, userId)
   return c.json(data, 201)
 })
 
@@ -35,7 +36,8 @@ categorias.patch('/:id', zValidator('json', UpdateCategoriaSchema), async (c) =>
   if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await categoriasService.update(id, dto, token)
+  const userId = c.get('user').id
+  const data = await categoriasService.update(id, dto, token, userId)
   return c.json(data)
 })
 

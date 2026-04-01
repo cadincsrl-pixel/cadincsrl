@@ -34,7 +34,8 @@ asignaciones.get('/:obraCod', async (c) => {
 asignaciones.post('/', zValidator('json', CreateAsignacionSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await asignacionesService.create(dto, token)
+  const userId = c.get('user').id
+  const data = await asignacionesService.create(dto, token, userId)
   return c.json(data, 201)
 })
 
@@ -44,7 +45,8 @@ asignaciones.patch('/:obraCod/:leg/baja', zValidator('json', BajaAsignacionSchem
   const leg = c.req.param('leg')
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await asignacionesService.baja(obraCod, leg, dto, token)
+  const userId = c.get('user').id
+  const data = await asignacionesService.baja(obraCod, leg, dto, token, userId)
   return c.json(data)
 })
 

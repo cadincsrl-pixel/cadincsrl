@@ -24,7 +24,8 @@ personal.get('/:leg', async (c) => {
 personal.post('/', zValidator('json', CreatePersonalSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await personalService.create(dto, token)
+  const userId = c.get('user').id
+  const data = await personalService.create(dto, token, userId)
   return c.json(data, 201)
 })
 
@@ -32,7 +33,8 @@ personal.patch('/:leg', zValidator('json', UpdatePersonalSchema), async (c) => {
   const leg = c.req.param('leg')
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await personalService.update(leg, dto, token)
+  const userId = c.get('user').id
+  const data = await personalService.update(leg, dto, token, userId)
   return c.json(data)
 })
 

@@ -28,7 +28,7 @@ export const cierresService = {
     return data
   },
 
-  async create(dto: CreateCierreDto, token: string) {
+  async create(dto: CreateCierreDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('cierres')
@@ -36,6 +36,8 @@ export const cierresService = {
         obra_cod: dto.obra_cod,
         sem_key: dto.sem_key,
         estado: 'pendiente',
+        created_by: userId,
+        updated_by: userId,
       })
       .select()
       .single()
@@ -44,13 +46,14 @@ export const cierresService = {
     return data
   },
 
-  async updateEstado(obraCod: string, semKey: string, dto: UpdateCierreDto, token: string) {
+  async updateEstado(obraCod: string, semKey: string, dto: UpdateCierreDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('cierres')
       .update({
         estado: dto.estado,
         cerrado_en: dto.estado === 'cerrado' ? new Date().toISOString() : null,
+        updated_by: userId,
       })
       .eq('obra_cod', obraCod)
       .eq('sem_key', semKey)

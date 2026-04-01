@@ -37,7 +37,8 @@ cierres.get('/:obraCod/:semKey', async (c) => {
 cierres.post('/', zValidator('json', CreateCierreSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await cierresService.create(dto, token)
+  const userId = c.get('user').id
+  const data = await cierresService.create(dto, token, userId)
   return c.json(data, 201)
 })
 
@@ -47,7 +48,8 @@ cierres.patch('/:obraCod/:semKey', zValidator('json', UpdateCierreSchema), async
   const semKey = c.req.param('semKey')
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await cierresService.updateEstado(obraCod, semKey, dto, token)
+  const userId = c.get('user').id
+  const data = await cierresService.updateEstado(obraCod, semKey, dto, token, userId)
   return c.json(data)
 })
 

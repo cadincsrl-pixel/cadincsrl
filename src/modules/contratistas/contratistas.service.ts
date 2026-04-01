@@ -31,11 +31,11 @@ export const contratistasService = {
     return data
   },
 
-  async create(dto: CreateContratistaDto, token: string) {
+  async create(dto: CreateContratistaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('contratistas')
-      .insert(dto)
+      .insert({ ...dto, created_by: userId, updated_by: userId })
       .select()
       .single()
 
@@ -43,11 +43,11 @@ export const contratistasService = {
     return data
   },
 
-  async update(id: number, dto: UpdateContratistaDto, token: string) {
+  async update(id: number, dto: UpdateContratistaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('contratistas')
-      .update(dto)
+      .update({ ...dto, updated_by: userId })
       .eq('id', id)
       .select()
       .single()
@@ -79,11 +79,11 @@ export const contratistasService = {
     return data
   },
 
-  async asignar(dto: AsigContratistaDto, token: string) {
+  async asignar(dto: AsigContratistaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('asig_contrat')
-      .insert(dto)
+      .insert({ ...dto, created_by: userId, updated_by: userId })
       .select()
       .single()
 
@@ -112,15 +112,18 @@ export const contratistasService = {
       .eq('obra_cod', obraCod)
       .order('sem_key', { ascending: false })
 
-    if (error) throw new Error(error.message) 
+    if (error) throw new Error(error.message)
     return data
   },
 
-  async upsertCert(dto: CertificacionDto, token: string) {
+  async upsertCert(dto: CertificacionDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('certificaciones')
-      .upsert(dto, { onConflict: 'obra_cod,contrat_id,sem_key' })
+      .upsert(
+        { ...dto, created_by: userId, updated_by: userId },
+        { onConflict: 'obra_cod,contrat_id,sem_key' }
+      )
       .select()
       .single()
 

@@ -13,17 +13,17 @@ viajes.get('/', async (c) => {
 })
 
 viajes.post('/', zValidator('json', CreateViajeSchema), async (c) => {
-  const data = await viajesService.create(c.req.valid('json'), c.get('accessToken'))
+  const data = await viajesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
 })
 
 viajes.post('/carga', zValidator('json', CargaSchema), async (c) => {
-  const data = await viajesService.registrarCarga(c.req.valid('json'), c.get('accessToken'))
+  const data = await viajesService.registrarCarga(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
 })
 
 viajes.post('/descarga', zValidator('json', DescargaSchema), async (c) => {
-  const data = await viajesService.registrarDescarga(c.req.valid('json'), c.get('accessToken'))
+  const data = await viajesService.registrarDescarga(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
 })
 

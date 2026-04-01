@@ -11,7 +11,7 @@ herramientas.use('*', authMiddleware)
 // GET /api/herramientas/config
 herramientas.get('/config', async (c) => {
   console.log('--- GET /config llamado ---')
-  
+
   const [tipos, estados, movTipos] = await Promise.all([
     supabase.from('herr_tipos').select('*').eq('activo', true).order('orden'),
     supabase.from('herr_estados').select('*').eq('activo', true).order('orden'),
@@ -93,6 +93,7 @@ const MovSchema = z.object({
 
 herramientas.post('/movimientos', zValidator('json', MovSchema), async (c) => {
   const dto = c.req.valid('json')
+  const userId = c.get('user').id
 
   // Estado según tipo
   const estadoMap: Record<string, string> = {
@@ -123,6 +124,8 @@ herramientas.post('/movimientos', zValidator('json', MovSchema), async (c) => {
       responsable:      dto.responsable ?? '',
       obs:              dto.obs         ?? '',
       fecha:            dto.fecha ?? new Date().toISOString(),
+      created_by:       userId,
+      updated_by:       userId,
     })
     .select()
     .single()
@@ -130,23 +133,23 @@ herramientas.post('/movimientos', zValidator('json', MovSchema), async (c) => {
   if (movErr) return c.json({ error: movErr.message }, 500)
 
   // Actualizar herramienta
-  const updatePayload: Record<string, any> = {}
-  if (nuevoEstado)           updatePayload.estado_key = nuevoEstado
+  const updatePayload: Record<string, any> = { updated_by: userId }
+  if (nuevoEstado)            updatePayload.estado_key = nuevoEstado
   if (nuevaObra !== undefined) updatePayload.obra_cod  = nuevaObra
-  if (dto.responsable)       updatePayload.responsable = dto.responsable
+  if (dto.responsable)        updatePayload.responsable = dto.responsable
 
-  if (Object.keys(updatePayload).length > 0) {
-    await supabase.from('herramientas').update(updatePayload).eq('id', dto.herramienta_id)
-  }
+  await supabase.from('herramientas').update(updatePayload).eq('id', dto.herramienta_id)
 
   return c.json(mov, 201)
 })
+
 // POST /api/herramientas/config/tipos
 herramientas.post('/config/tipos', async (c) => {
   const body = await c.req.json()
+  const userId = c.get('user').id
   const { data, error } = await supabase
     .from('herr_tipos')
-    .insert({ nom: body.nom, icono: body.icono ?? null, orden: body.orden ?? 99 })
+    .insert({ nom: body.nom, icono: body.icono ?? null, orden: body.orden ?? 99, created_by: userId, updated_by: userId })
     .select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data, 201)
@@ -156,9 +159,10 @@ herramientas.post('/config/tipos', async (c) => {
 herramientas.patch('/config/tipos/:id', async (c) => {
   const id   = Number(c.req.param('id'))
   const body = await c.req.json()
+  const userId = c.get('user').id
   const { data, error } = await supabase
     .from('herr_tipos')
-    .update({ nom: body.nom, icono: body.icono ?? null })
+    .update({ nom: body.nom, icono: body.icono ?? null, updated_by: userId })
     .eq('id', id).select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
@@ -176,9 +180,10 @@ herramientas.delete('/config/tipos/:id', async (c) => {
 herramientas.patch('/config/mov-tipos/:key', async (c) => {
   const key  = c.req.param('key')
   const body = await c.req.json()
+  const userId = c.get('user').id
   const { data, error } = await supabase
     .from('herr_mov_tipos')
-    .update({ nom: body.nom, icono: body.icono ?? null, descripcion: body.descripcion ?? null })
+    .update({ nom: body.nom, icono: body.icono ?? null, descripcion: body.descripcion ?? null, updated_by: userId })
     .eq('key', key).select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
@@ -219,10 +224,11 @@ const CreateSchema = z.object({
 
 herramientas.post('/', zValidator('json', CreateSchema), async (c) => {
   const dto = c.req.valid('json')
+  const userId = c.get('user').id
 
   const { data: herr, error: herrErr } = await supabase
     .from('herramientas')
-    .insert({ ...dto, estado_key: 'disponible' })
+    .insert({ ...dto, estado_key: 'disponible', created_by: userId, updated_by: userId })
     .select()
     .single()
 
@@ -233,6 +239,8 @@ herramientas.post('/', zValidator('json', CreateSchema), async (c) => {
     tipo_key:       'alta',
     responsable:    'Sistema',
     obs:            'Alta inicial en sistema',
+    created_by:     userId,
+    updated_by:     userId,
   })
 
   return c.json(herr, 201)
@@ -290,10 +298,11 @@ const UpdateSchema = z.object({
 herramientas.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
   const id  = Number(c.req.param('id'))
   const dto = c.req.valid('json')
+  const userId = c.get('user').id
 
   const { data, error } = await supabase
     .from('herramientas')
-    .update(dto)
+    .update({ ...dto, updated_by: userId })
     .eq('id', id)
     .select()
     .single()
@@ -305,10 +314,11 @@ herramientas.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
 // DELETE /api/herramientas/:id
 herramientas.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'))
+  const userId = c.get('user').id
 
   const { error } = await supabase
     .from('herramientas')
-    .update({ activo: false, estado_key: 'baja' })
+    .update({ activo: false, estado_key: 'baja', updated_by: userId })
     .eq('id', id)
 
   if (error) return c.json({ error: error.message }, 500)

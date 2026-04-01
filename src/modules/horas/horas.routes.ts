@@ -41,7 +41,8 @@ horas.get('/:obraCod', async (c) => {
 horas.put('/', zValidator('json', UpsertHoraSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await horasService.upsert(dto, token)
+  const userId = c.get('user').id
+  const data = await horasService.upsert(dto, token, userId)
   return c.json(data)
 })
 
@@ -49,11 +50,12 @@ horas.put('/', zValidator('json', UpsertHoraSchema), async (c) => {
 horas.put('/lote', zValidator('json', UpsertHorasLoteSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
-  const data = await horasService.upsertLote(dto, token)
+  const userId = c.get('user').id
+  const data = await horasService.upsertLote(dto, token, userId)
   return c.json(data)
 })
 
-// DELETE /api/horas/:obraCod/semana?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+// DELETE /api/horas/:obraCod/:leg/semana?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
 horas.delete('/:obraCod/:leg/semana', async (c) => {
   const obraCod = c.req.param('obraCod')
   const leg = c.req.param('leg')
