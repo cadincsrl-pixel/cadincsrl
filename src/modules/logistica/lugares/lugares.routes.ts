@@ -1,11 +1,16 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
+import { requirePermiso } from '../../../middleware/permission.js'
 import { lugaresService } from './lugares.service.js'
 import { CreateLugarSchema, UpdateLugarSchema, CreateRutaSchema } from './lugares.schema.js'
 
 const lugares = new Hono()
 lugares.use('*', authMiddleware)
+lugares.on(['GET'],            '*', requirePermiso('logistica', 'lectura'))
+lugares.on(['POST'],           '*', requirePermiso('logistica', 'creacion'))
+lugares.on(['PATCH', 'PUT'],   '*', requirePermiso('logistica', 'actualizacion'))
+lugares.on(['DELETE'],         '*', requirePermiso('logistica', 'eliminacion'))
 
 lugares.get('/canteras',  async (c) => c.json(await lugaresService.getCanteras(c.get('accessToken'))))
 lugares.get('/depositos', async (c) => c.json(await lugaresService.getDepositos(c.get('accessToken'))))

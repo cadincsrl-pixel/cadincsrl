@@ -1,11 +1,16 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
+import { requirePermiso } from '../../../middleware/permission.js'
 import { viajesService } from './viajes.service.js'
 import { CreateViajeSchema, CargaSchema, DescargaSchema } from './viajes.schema.js'
 
 const viajes = new Hono()
 viajes.use('*', authMiddleware)
+viajes.on(['GET'],                    '*', requirePermiso('logistica', 'lectura'))
+viajes.on(['POST'],                   '*', requirePermiso('logistica', 'creacion'))
+viajes.on(['PATCH', 'PUT'],           '*', requirePermiso('logistica', 'actualizacion'))
+viajes.on(['DELETE'],                 '*', requirePermiso('logistica', 'eliminacion'))
 
 viajes.get('/', async (c) => {
   const data = await viajesService.getAll(c.get('accessToken'))

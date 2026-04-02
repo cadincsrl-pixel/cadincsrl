@@ -13,7 +13,7 @@ auth.get('/profile', async (c) => {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, nombre, rol, modulos, activo')
+    .select('id, nombre, rol, modulos, activo, permisos')
     .eq('id', userId)
     .single()
 

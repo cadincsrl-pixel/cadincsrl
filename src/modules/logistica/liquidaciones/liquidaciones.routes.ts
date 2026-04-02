@@ -1,11 +1,16 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
+import { requirePermiso } from '../../../middleware/permission.js'
 import { liquidacionesService } from './liquidaciones.service.js'
 import { CreateLiquidacionSchema, CreateAdelantoSchema } from './liquidaciones.schema.js'
 
 const liquidaciones = new Hono()
 liquidaciones.use('*', authMiddleware)
+liquidaciones.on(['GET'],            '*', requirePermiso('logistica', 'lectura'))
+liquidaciones.on(['POST'],           '*', requirePermiso('logistica', 'creacion'))
+liquidaciones.on(['PATCH', 'PUT'],   '*', requirePermiso('logistica', 'actualizacion'))
+liquidaciones.on(['DELETE'],         '*', requirePermiso('logistica', 'eliminacion'))
 
 liquidaciones.get('/',          async (c) => c.json(await liquidacionesService.getAll(c.get('accessToken'))))
 liquidaciones.get('/adelantos', async (c) => c.json(await liquidacionesService.getAdelantos(c.get('accessToken'))))

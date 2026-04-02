@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
+import { requirePermiso } from '../../middleware/permission.js'
 import { contratistasService } from './contratistas.service.js'
 import {
   CreateContratistaSchema,
@@ -15,13 +16,13 @@ const contratistas = new Hono()
 contratistas.use('*', authMiddleware)
 
 // ── CRUD Contratistas ──
-contratistas.get('/', async (c) => {
+contratistas.get('/', requirePermiso('tarja', 'lectura'), async (c) => {
   const token = c.get('accessToken')
   const data = await contratistasService.getAll(token)
   return c.json(data)
 })
 
-contratistas.get('/:id', async (c) => {
+contratistas.get('/:id', requirePermiso('tarja', 'lectura'), async (c) => {
   const id = Number(c.req.param('id'))
   if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
   const token = c.get('accessToken')
@@ -29,7 +30,7 @@ contratistas.get('/:id', async (c) => {
   return c.json(data)
 })
 
-contratistas.post('/', zValidator('json', CreateContratistaSchema), async (c) => {
+contratistas.post('/', requirePermiso('tarja', 'creacion'), zValidator('json', CreateContratistaSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
@@ -37,7 +38,7 @@ contratistas.post('/', zValidator('json', CreateContratistaSchema), async (c) =>
   return c.json(data, 201)
 })
 
-contratistas.patch('/:id', zValidator('json', UpdateContratistaSchema), async (c) => {
+contratistas.patch('/:id', requirePermiso('tarja', 'actualizacion'), zValidator('json', UpdateContratistaSchema), async (c) => {
   const id = Number(c.req.param('id'))
   if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
   const dto = c.req.valid('json')
@@ -47,7 +48,7 @@ contratistas.patch('/:id', zValidator('json', UpdateContratistaSchema), async (c
   return c.json(data)
 })
 
-contratistas.delete('/:id', async (c) => {
+contratistas.delete('/:id', requirePermiso('tarja', 'eliminacion'), async (c) => {
   const id = Number(c.req.param('id'))
   if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
   const token = c.get('accessToken')
@@ -56,14 +57,14 @@ contratistas.delete('/:id', async (c) => {
 })
 
 // ── Asignaciones a obras ──
-contratistas.get('/asig/:obraCod', async (c) => {
+contratistas.get('/asig/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   const obraCod = c.req.param('obraCod')
   const token = c.get('accessToken')
   const data = await contratistasService.getAsigByObra(obraCod, token)
   return c.json(data)
 })
 
-contratistas.post('/asig', zValidator('json', AsigContratistaSchema), async (c) => {
+contratistas.post('/asig', requirePermiso('tarja', 'actualizacion'), zValidator('json', AsigContratistaSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
@@ -71,7 +72,7 @@ contratistas.post('/asig', zValidator('json', AsigContratistaSchema), async (c) 
   return c.json(data, 201)
 })
 
-contratistas.delete('/asig/:obraCod/:contratId', async (c) => {
+contratistas.delete('/asig/:obraCod/:contratId', requirePermiso('tarja', 'actualizacion'), async (c) => {
   const obraCod = c.req.param('obraCod')
   const contratId = Number(c.req.param('contratId'))
   if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
@@ -81,21 +82,21 @@ contratistas.delete('/asig/:obraCod/:contratId', async (c) => {
 })
 
 // ── Certificaciones ──
-contratistas.get('/cert/all', async (c) => {
+contratistas.get('/cert/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const supabase = createSupabaseClient(c.get('accessToken'))
   const { data, error } = await supabase.from('certificaciones').select('*')
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
 })
 
-contratistas.get('/cert/:obraCod', async (c) => {
+contratistas.get('/cert/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   const obraCod = c.req.param('obraCod')
   const token = c.get('accessToken')
   const data = await contratistasService.getCertByObra(obraCod, token)
   return c.json(data)
 })
 
-contratistas.put('/cert', zValidator('json', CertificacionSchema), async (c) => {
+contratistas.put('/cert', requirePermiso('tarja', 'actualizacion'), zValidator('json', CertificacionSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
+import { requirePermiso } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 
 const herramientas = new Hono()
@@ -9,7 +10,7 @@ herramientas.use('*', authMiddleware)
 
 
 // GET /api/herramientas/config
-herramientas.get('/config', async (c) => {
+herramientas.get('/config', requirePermiso('herramientas', 'lectura'), async (c) => {
   console.log('--- GET /config llamado ---')
 
   const [tipos, estados, movTipos] = await Promise.all([
@@ -31,7 +32,7 @@ herramientas.get('/config', async (c) => {
 })
 
 // GET /api/herramientas/stats
-herramientas.get('/stats', async (c) => {
+herramientas.get('/stats', requirePermiso('herramientas', 'lectura'), async (c) => {
   const { data: herrs } = await supabase
     .from('herramientas')
     .select('estado_key, obra_cod')
@@ -63,7 +64,7 @@ herramientas.get('/stats', async (c) => {
 })
 
 // GET /api/herramientas/movimientos/all
-herramientas.get('/movimientos/all', async (c) => {
+herramientas.get('/movimientos/all', requirePermiso('herramientas', 'lectura'), async (c) => {
   const { data, error } = await supabase
     .from('herr_movimientos')
     .select(`
@@ -91,7 +92,7 @@ const MovSchema = z.object({
   fecha:            z.string().optional(),
 })
 
-herramientas.post('/movimientos', zValidator('json', MovSchema), async (c) => {
+herramientas.post('/movimientos', requirePermiso('herramientas', 'actualizacion'), zValidator('json', MovSchema), async (c) => {
   const dto = c.req.valid('json')
   const userId = c.get('user').id
 
@@ -144,7 +145,7 @@ herramientas.post('/movimientos', zValidator('json', MovSchema), async (c) => {
 })
 
 // POST /api/herramientas/config/tipos
-herramientas.post('/config/tipos', async (c) => {
+herramientas.post('/config/tipos', requirePermiso('herramientas', 'creacion'), async (c) => {
   const body = await c.req.json()
   const userId = c.get('user').id
   const { data, error } = await supabase
@@ -156,7 +157,7 @@ herramientas.post('/config/tipos', async (c) => {
 })
 
 // PATCH /api/herramientas/config/tipos/:id
-herramientas.patch('/config/tipos/:id', async (c) => {
+herramientas.patch('/config/tipos/:id', requirePermiso('herramientas', 'actualizacion'), async (c) => {
   const id   = Number(c.req.param('id'))
   const body = await c.req.json()
   const userId = c.get('user').id
@@ -169,7 +170,7 @@ herramientas.patch('/config/tipos/:id', async (c) => {
 })
 
 // DELETE /api/herramientas/config/tipos/:id
-herramientas.delete('/config/tipos/:id', async (c) => {
+herramientas.delete('/config/tipos/:id', requirePermiso('herramientas', 'eliminacion'), async (c) => {
   const id = Number(c.req.param('id'))
   const { error } = await supabase.from('herr_tipos').delete().eq('id', id)
   if (error) return c.json({ error: error.message }, 500)
@@ -177,7 +178,7 @@ herramientas.delete('/config/tipos/:id', async (c) => {
 })
 
 // PATCH /api/herramientas/config/mov-tipos/:key
-herramientas.patch('/config/mov-tipos/:key', async (c) => {
+herramientas.patch('/config/mov-tipos/:key', requirePermiso('herramientas', 'actualizacion'), async (c) => {
   const key  = c.req.param('key')
   const body = await c.req.json()
   const userId = c.get('user').id
@@ -194,7 +195,7 @@ herramientas.patch('/config/mov-tipos/:key', async (c) => {
 // ══════════════════════════════════════════════════
 
 // GET /api/herramientas
-herramientas.get('/', async (c) => {
+herramientas.get('/', requirePermiso('herramientas', 'lectura'), async (c) => {
   const { data, error } = await supabase
     .from('herramientas')
     .select(`
@@ -222,7 +223,7 @@ const CreateSchema = z.object({
   obs:           z.string().optional(),
 })
 
-herramientas.post('/', zValidator('json', CreateSchema), async (c) => {
+herramientas.post('/', requirePermiso('herramientas', 'creacion'), zValidator('json', CreateSchema), async (c) => {
   const dto = c.req.valid('json')
   const userId = c.get('user').id
 
@@ -247,7 +248,7 @@ herramientas.post('/', zValidator('json', CreateSchema), async (c) => {
 })
 
 // GET /api/herramientas/:id/movimientos
-herramientas.get('/:id/movimientos', async (c) => {
+herramientas.get('/:id/movimientos', requirePermiso('herramientas', 'lectura'), async (c) => {
   const id = Number(c.req.param('id'))
 
   const { data, error } = await supabase
@@ -266,7 +267,7 @@ herramientas.get('/:id/movimientos', async (c) => {
 })
 
 // GET /api/herramientas/:id
-herramientas.get('/:id', async (c) => {
+herramientas.get('/:id', requirePermiso('herramientas', 'lectura'), async (c) => {
   const id = Number(c.req.param('id'))
 
   const { data, error } = await supabase
@@ -295,7 +296,7 @@ const UpdateSchema = z.object({
   obs:           z.string().optional(),
 })
 
-herramientas.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
+herramientas.patch('/:id', requirePermiso('herramientas', 'actualizacion'), zValidator('json', UpdateSchema), async (c) => {
   const id  = Number(c.req.param('id'))
   const dto = c.req.valid('json')
   const userId = c.get('user').id
@@ -312,7 +313,7 @@ herramientas.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
 })
 
 // DELETE /api/herramientas/:id
-herramientas.delete('/:id', async (c) => {
+herramientas.delete('/:id', requirePermiso('herramientas', 'eliminacion'), async (c) => {
   const id = Number(c.req.param('id'))
   const userId = c.get('user').id
 

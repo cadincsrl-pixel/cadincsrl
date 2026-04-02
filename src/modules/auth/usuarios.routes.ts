@@ -54,16 +54,27 @@ usuarios.get('/modulos', async (c) => {
 })
 
 // ── POST /api/usuarios — crear usuario ──
+const PermisosSchema = z.record(
+  z.string(),
+  z.object({
+    lectura:      z.boolean().optional(),
+    creacion:     z.boolean().optional(),
+    actualizacion: z.boolean().optional(),
+    eliminacion:  z.boolean().optional(),
+  })
+)
+
 const CreateUsuarioSchema = z.object({
   email:    z.string().email(),
   password: z.string().min(6, 'Mínimo 6 caracteres'),
   nombre:   z.string().min(1),
   rol:      z.enum(['admin', 'operador']),
   modulos:  z.array(z.string()),
+  permisos: PermisosSchema.optional(),
 })
 
 usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
-  const { email, password, nombre, rol, modulos } = c.req.valid('json')
+  const { email, password, nombre, rol, modulos, permisos } = c.req.valid('json')
 
   const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
     email,
@@ -79,7 +90,7 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
 
   const { data, error } = await supabase
     .from('profiles')
-    .update({ nombre, rol, modulos })
+    .update({ nombre, rol, modulos, permisos: permisos ?? {} })
     .eq('id', authData.user.id)
     .select()
     .single()
@@ -94,10 +105,11 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
 
 // ── PATCH /api/usuarios/:id — actualizar perfil ──
 const UpdateSchema = z.object({
-  nombre:  z.string().min(1).optional(),
-  rol:     z.enum(['admin', 'operador']).optional(),
-  modulos: z.array(z.string()).optional(),
-  activo:  z.boolean().optional(),
+  nombre:   z.string().min(1).optional(),
+  rol:      z.enum(['admin', 'operador']).optional(),
+  modulos:  z.array(z.string()).optional(),
+  activo:   z.boolean().optional(),
+  permisos: PermisosSchema.optional(),
 })
 
 usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {

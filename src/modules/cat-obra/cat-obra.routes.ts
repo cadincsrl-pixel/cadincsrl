@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware } from '../../middleware/auth.js'
+import { requirePermiso } from '../../middleware/permission.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 
 const catObra = new Hono()
@@ -9,7 +10,7 @@ const catObra = new Hono()
 catObra.use('*', authMiddleware)
 
 // GET /api/cat-obra/all
-catObra.get('/all', async (c) => {
+catObra.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const supabase = createSupabaseClient(c.get('accessToken'))
   const { data, error } = await supabase
     .from('cat_obra')
@@ -19,7 +20,7 @@ catObra.get('/all', async (c) => {
 })
 
 
-catObra.get('/:obraCod', async (c) => {
+catObra.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   const obraCod = c.req.param('obraCod')
   const semKey = c.req.query('sem_key')
   if (!semKey) return c.json({ error: 'Falta parámetro sem_key' }, 400)
@@ -44,7 +45,7 @@ const UpsertSchema = z.object({
 })
 
 // PUT /api/cat-obra — asignar categoría a un trabajador en una obra+semana
-catObra.put('/', zValidator('json', UpsertSchema), async (c) => {
+catObra.put('/', requirePermiso('tarja', 'actualizacion'), zValidator('json', UpsertSchema), async (c) => {
   const dto = c.req.valid('json')
   const supabase = createSupabaseClient(c.get('accessToken'))
   const userId = c.get('user').id
