@@ -4,7 +4,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { horasService } from './horas.service.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { supabase, createSupabaseClient } from '../../lib/supabase.js'
 
 const horas = new Hono()
 
@@ -12,17 +12,32 @@ horas.use('*', authMiddleware)
 
 
 horas.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
-  const supabase = createSupabaseClient(c.get('accessToken'))
+  // Usar cliente admin + paginación para superar el max-rows de PostgREST (1000 por defecto).
   const desde = c.req.query('desde')
   const hasta  = c.req.query('hasta')
 
-  let query = supabase.from('horas').select('*').order('fecha').limit(50000)
-  if (desde) query = query.gte('fecha', desde)
-  if (hasta)  query = query.lte('fecha', hasta)
+  const PAGE = 1000
+  const all: any[] = []
+  let from = 0
 
-  const { data, error } = await query
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json(data)
+  while (true) {
+    let q = supabase
+      .from('horas')
+      .select('*')
+      .order('fecha')
+      .range(from, from + PAGE - 1)
+    if (desde) q = q.gte('fecha', desde)
+    if (hasta)  q = q.lte('fecha', hasta)
+
+    const { data, error } = await q
+    if (error) return c.json({ error: error.message }, 500)
+    if (!data || data.length === 0) break
+    all.push(...data)
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+
+  return c.json(all)
 })
 
 
