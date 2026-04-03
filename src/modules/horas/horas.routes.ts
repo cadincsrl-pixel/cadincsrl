@@ -97,22 +97,26 @@ horas.put('/lote', requirePermiso('tarja', 'actualizacion'), zValidator('json', 
   return c.json(data)
 })
 
-// DELETE /api/horas/:obraCod/semana?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+// DELETE /api/horas/:obraCod/semana?desde=YYYY-MM-DD&hasta=YYYY-MM-DD[&leg=LEG]
 horas.delete('/:obraCod/semana', requirePermiso('tarja', 'eliminacion'), async (c) => {
   const obraCod = c.req.param('obraCod')
   const desde = c.req.query('desde')
   const hasta = c.req.query('hasta')
+  const leg = c.req.query('leg')
   if (!desde || !hasta) return c.json({ error: 'Faltan parámetros desde/hasta' }, 400)
   const token = c.get('accessToken')
   const supabase = createSupabaseClient(token)
 
-  const { error } = await supabase
+  let q = supabase
     .from('horas')
     .delete()
     .eq('obra_cod', obraCod)
     .gte('fecha', desde)
     .lte('fecha', hasta)
 
+  if (leg) q = q.eq('leg', leg)
+
+  const { error } = await q
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ success: true })
 })
