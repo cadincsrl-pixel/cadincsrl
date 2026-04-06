@@ -1,0 +1,43 @@
+services:
+  # ── PRODUCCIÓN (branch: main) ─────────────────────────────────────────────
+  - type: web
+    name: cadinc-backend-prod
+    runtime: node
+    branch: main
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+  # ── DESARROLLO (branch: develop) ─────────────────────────────────────────
+  - type: web
+    name: cadinc-backend-dev
+    runtime: node
+    branch: develop
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: development
+      - key: PORT
+        value: 10000
+      # Mismos valores de Supabase que producción
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # URL de preview fija de Vercel para la branch develop
+      # Formato: https://{proyecto}-git-develop-{org}.vercel.app
+      - key: FRONTEND_URL
+        sync: false

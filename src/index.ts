@@ -30,8 +30,15 @@ const app = new Hono()
 
 // ── Middleware global ──
 app.use('*', logger())
+
+// FRONTEND_URL acepta una URL o una lista separada por comas
+// Ej: https://prod.vercel.app,https://dev-preview.vercel.app
+const allowedOrigins = (process.env.FRONTEND_URL ?? 'http://localhost:3000')
+  .split(',')
+  .map((o) => o.trim())
+
 app.use('*', cors({
-  origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+  origin: (origin) => (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]),
   credentials: true,
 }))
 
