@@ -20,6 +20,8 @@ declare module 'hono' {
   }
 }
 
+console.log('test');
+
 export const authMiddleware = createMiddleware(async (c, next) => {
   const authorization = c.req.header('Authorization')
 
