@@ -21,12 +21,16 @@ export const CreatePersonalSchema = z.object({
 })
 
 export const UpdatePersonalSchema = z.object({
-  nom: z.string().min(1).optional(),
-  dni: z.string().optional(),
-  cat_id: z.number().optional(),
-  tel: z.string().optional(),
-  dir: z.string().optional(),
-  obs: z.string().optional(),
+  nom:             z.string().min(1).optional(),
+  dni:             z.string().optional(),
+  cat_id:          z.number().optional(),
+  tel:             z.string().optional(),
+  dir:             z.string().optional(),
+  obs:             z.string().optional(),
+  talle_pantalon:  z.string().optional(),
+  talle_botines:   z.string().optional(),
+  talle_camisa:    z.string().optional(),
+  activo_override: z.boolean().nullable().optional(),
 })
 
 export type Personal = z.infer<typeof PersonalSchema>
