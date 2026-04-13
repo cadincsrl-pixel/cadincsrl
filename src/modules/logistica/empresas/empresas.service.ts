@@ -1,5 +1,5 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
-import type { CreateEmpresaDto, UpdateEmpresaDto, UpsertTarifaEmpresaDto } from './empresas.schema.js'
+import type { CreateEmpresaDto, UpdateEmpresaDto, CreateTarifaEmpresaDto } from './empresas.schema.js'
 
 export const empresasService = {
 
@@ -43,7 +43,7 @@ export const empresasService = {
     return { success: true }
   },
 
-  // ── Tarifas por empresa × cantera ──
+  // ── Tarifas históricas por empresa × cantera ──
 
   async getTarifas(token: string) {
     const supabase = createSupabaseClient(token)
@@ -51,29 +51,17 @@ export const empresasService = {
       .from('tarifas_empresa_cantera')
       .select('*, empresas_transportistas(nombre), canteras(nombre, localidad)')
       .order('empresa_id')
-    if (error) throw new Error(error.message)
-    return data
-  },
-
-  async getTarifasByEmpresa(empresaId: number, token: string) {
-    const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
-      .from('tarifas_empresa_cantera')
-      .select('*, canteras(nombre, localidad)')
-      .eq('empresa_id', empresaId)
       .order('cantera_id')
+      .order('vigente_desde', { ascending: false })
     if (error) throw new Error(error.message)
     return data
   },
 
-  async upsertTarifa(dto: UpsertTarifaEmpresaDto, token: string, userId: string) {
+  async createTarifa(dto: CreateTarifaEmpresaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('tarifas_empresa_cantera')
-      .upsert(
-        { ...dto, updated_by: userId, updated_at: new Date().toISOString() },
-        { onConflict: 'empresa_id,cantera_id' }
-      )
+      .insert({ ...dto, updated_by: userId, updated_at: new Date().toISOString() })
       .select()
       .single()
     if (error) throw new Error(error.message)

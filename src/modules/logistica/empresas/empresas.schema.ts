@@ -11,13 +11,14 @@ export const CreateEmpresaSchema = z.object({
 
 export const UpdateEmpresaSchema = CreateEmpresaSchema.partial()
 
-export const UpsertTarifaEmpresaSchema = z.object({
-  empresa_id: z.number(),
-  cantera_id: z.number(),
-  valor_ton:  z.number().min(0),
-  obs:        z.string().optional().default(''),
+export const CreateTarifaEmpresaSchema = z.object({
+  empresa_id:    z.number(),
+  cantera_id:    z.number(),
+  valor_ton:     z.number().min(0),
+  vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  obs:           z.string().optional().default(''),
 })
 
-export type CreateEmpresaDto        = z.infer<typeof CreateEmpresaSchema>
-export type UpdateEmpresaDto        = z.infer<typeof UpdateEmpresaSchema>
-export type UpsertTarifaEmpresaDto  = z.infer<typeof UpsertTarifaEmpresaSchema>
+export type CreateEmpresaDto       = z.infer<typeof CreateEmpresaSchema>
+export type UpdateEmpresaDto       = z.infer<typeof UpdateEmpresaSchema>
+export type CreateTarifaEmpresaDto = z.infer<typeof CreateTarifaEmpresaSchema>
