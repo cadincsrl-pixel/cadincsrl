@@ -1,12 +1,13 @@
 import { z } from 'zod'
 
 export const CreateChoferSchema = z.object({
-  nombre: z.string().min(1, 'El nombre es requerido'),
-  dni:    z.string().optional().default(''),
-  tel:    z.string().optional().default(''),
-  licencia: z.string().optional().default(''),
-  estado: z.enum(['activo', 'descanso', 'inactivo']).default('activo'),
-  obs:    z.string().optional().default(''),
+  nombre:    z.string().min(1, 'El nombre es requerido'),
+  dni:       z.string().optional().default(''),
+  tel:       z.string().optional().default(''),
+  licencia:  z.string().optional().default(''),
+  estado:    z.enum(['activo', 'descanso', 'inactivo']).default('activo'),
+  camion_id: z.number().nullable().optional(),
+  obs:       z.string().optional().default(''),
 })
 
 export const UpdateChoferSchema = CreateChoferSchema.partial()
