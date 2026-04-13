@@ -13,7 +13,7 @@ export const CreateLiquidacionSchema = z.object({
   total_adelantos: z.number(),
   total_neto:      z.number(),
   obs:             z.string().optional().default(''),
-  viaje_ids:       z.array(z.number()).optional().default([]),
+  tramo_ids:       z.array(z.number()).optional().default([]),
   adelanto_ids:    z.array(z.number()).optional().default([]),
 })
 

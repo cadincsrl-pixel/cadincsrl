@@ -20,6 +20,7 @@ import camionesRoutes     from './modules/logistica/camiones/camiones.routes.js'
 import lugaresRoutes      from './modules/logistica/lugares/lugares.routes.js'
 import viajesRoutes       from './modules/logistica/viajes/viajes.routes.js'
 import liquidacionesRoutes from './modules/logistica/liquidaciones/liquidaciones.routes.js'
+import tramosRoutes        from './modules/logistica/tramos/tramos.routes.js'
 import authRoutes from './modules/auth/auth.routes.js'
 import usuariosRoutes from './modules/auth/usuarios.routes.js'
 import herramientasRoutes from './modules/herramientas/herramientas.routes.js'
@@ -60,6 +61,7 @@ app.route('/api/logistica/camiones',      camionesRoutes)
 app.route('/api/logistica/lugares',       lugaresRoutes)
 app.route('/api/logistica/viajes',        viajesRoutes)
 app.route('/api/logistica/liquidaciones', liquidacionesRoutes)
+app.route('/api/logistica/tramos',        tramosRoutes)
 app.route('/api/me', authRoutes)
 app.route('/api/usuarios', usuariosRoutes)
 app.route('/api/herramientas', herramientasRoutes)

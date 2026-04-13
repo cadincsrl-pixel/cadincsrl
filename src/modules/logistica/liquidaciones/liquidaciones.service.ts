@@ -25,7 +25,7 @@ export const liquidacionesService = {
 
   async create(dto: CreateLiquidacionDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const { viaje_ids, adelanto_ids, ...rest } = dto
+    const { tramo_ids, adelanto_ids, ...rest } = dto
 
     const { data, error } = await supabase
       .from('liquidaciones')
@@ -35,11 +35,11 @@ export const liquidacionesService = {
 
     if (error) throw new Error(error.message)
 
-    // Vincular viajes
-    if (viaje_ids.length) {
+    // Vincular tramos
+    if (tramo_ids.length) {
       await supabase
-        .from('liquidacion_viajes')
-        .insert(viaje_ids.map(vid => ({ liquidacion_id: data.id, viaje_id: vid })))
+        .from('liquidacion_tramos')
+        .insert(tramo_ids.map(tid => ({ liquidacion_id: data.id, tramo_id: tid })))
     }
 
     // Vincular adelantos — marcarlos como liquidados
@@ -67,7 +67,7 @@ export const liquidacionesService = {
 
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
-    await supabase.from('liquidacion_viajes').delete().eq('liquidacion_id', id)
+    await supabase.from('liquidacion_tramos').delete().eq('liquidacion_id', id)
     const { error } = await supabase.from('liquidaciones').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }
