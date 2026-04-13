@@ -8,6 +8,7 @@ export const CreateChoferSchema = z.object({
   estado:    z.enum(['activo', 'descanso', 'inactivo']).default('activo'),
   camion_id: z.number().nullable().optional(),
   basico_dia: z.number().optional().default(0),
+  precio_km:  z.number().optional().default(0),
   obs:        z.string().optional().default(''),
 })
 
