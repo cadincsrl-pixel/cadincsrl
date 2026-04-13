@@ -80,6 +80,8 @@ export const liquidacionesService = {
 
   async reabrir(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    // Desligar tramos para que vuelvan al saldo corriente del chofer
+    await supabase.from('tramos').update({ liquidacion_id: null }).eq('liquidacion_id', id)
     const { data, error } = await supabase
       .from('liquidaciones')
       .update({ estado: 'borrador', updated_by: userId })
