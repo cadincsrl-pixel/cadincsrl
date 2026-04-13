@@ -14,6 +14,17 @@ export const CreateLiquidacionSchema = z.object({
   adelanto_ids:    z.array(z.number()).optional().default([]),
 })
 
+export const UpdateLiquidacionSchema = z.object({
+  fecha_desde:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  fecha_hasta:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  basico_dia:      z.number().min(0).optional(),
+  dias_trabajados: z.number().min(0).optional(),
+  subtotal_basico: z.number().optional(),
+  total_adelantos: z.number().optional(),
+  total_neto:      z.number().optional(),
+  obs:             z.string().optional(),
+})
+
 export const CreateAdelantoSchema = z.object({
   chofer_id:    z.number(),
   fecha:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -22,4 +33,5 @@ export const CreateAdelantoSchema = z.object({
 })
 
 export type CreateLiquidacionDto = z.infer<typeof CreateLiquidacionSchema>
+export type UpdateLiquidacionDto = z.infer<typeof UpdateLiquidacionSchema>
 export type CreateAdelantoDto    = z.infer<typeof CreateAdelantoSchema>

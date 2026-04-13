@@ -1,5 +1,5 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
-import type { CreateLiquidacionDto, CreateAdelantoDto } from './liquidaciones.schema.js'
+import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto } from './liquidaciones.schema.js'
 
 export const liquidacionesService = {
 
@@ -51,6 +51,19 @@ export const liquidacionesService = {
         .in('id', adelanto_ids)
     }
 
+    return data
+  },
+
+  async update(id: number, dto: UpdateLiquidacionDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('liquidaciones')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .eq('estado', 'borrador')  // solo se editan borradores
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
     return data
   },
 

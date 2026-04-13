@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { liquidacionesService } from './liquidaciones.service.js'
-import { CreateLiquidacionSchema, CreateAdelantoSchema } from './liquidaciones.schema.js'
+import { CreateLiquidacionSchema, UpdateLiquidacionSchema, CreateAdelantoSchema } from './liquidaciones.schema.js'
 
 const liquidaciones = new Hono()
 liquidaciones.use('*', authMiddleware)
@@ -18,6 +18,11 @@ liquidaciones.get('/adelantos', async (c) => c.json(await liquidacionesService.g
 liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) => {
   const data = await liquidacionesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
+})
+
+liquidaciones.patch('/:id', zValidator('json', UpdateLiquidacionSchema), async (c) => {
+  const data = await liquidacionesService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+  return c.json(data)
 })
 
 liquidaciones.patch('/:id/cerrar', async (c) => {
