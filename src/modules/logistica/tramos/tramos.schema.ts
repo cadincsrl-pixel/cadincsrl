@@ -20,6 +20,7 @@ export const CreateTramoSchema = z.object({
   // Vacío
   fecha_vacio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
+  empresa_id: z.number().nullable().optional(),
   obs: z.string().optional().default(''),
 })
 
