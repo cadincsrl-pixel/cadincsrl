@@ -60,7 +60,6 @@ export const liquidacionesService = {
       .from('liquidaciones')
       .update({ ...dto, updated_by: userId })
       .eq('id', id)
-      .eq('estado', 'borrador')  // solo se editan borradores
       .select()
       .single()
     if (error) throw new Error(error.message)
