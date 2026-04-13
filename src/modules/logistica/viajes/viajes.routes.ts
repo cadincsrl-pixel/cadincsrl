@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { viajesService } from './viajes.service.js'
-import { CreateViajeSchema, CargaSchema, DescargaSchema } from './viajes.schema.js'
+import { CreateViajeSchema, CargaSchema, DescargaSchema, UpdateViajeSchema, UpdateCargaSchema, UpdateDescargaSchema } from './viajes.schema.js'
 
 const viajes = new Hono()
 viajes.use('*', authMiddleware)
@@ -30,6 +30,21 @@ viajes.post('/carga', zValidator('json', CargaSchema), async (c) => {
 viajes.post('/descarga', zValidator('json', DescargaSchema), async (c) => {
   const data = await viajesService.registrarDescarga(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
+})
+
+viajes.patch('/:id', zValidator('json', UpdateViajeSchema), async (c) => {
+  const data = await viajesService.updateViaje(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+  return c.json(data)
+})
+
+viajes.patch('/carga/:id', zValidator('json', UpdateCargaSchema), async (c) => {
+  const data = await viajesService.updateCarga(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+  return c.json(data)
+})
+
+viajes.patch('/descarga/:id', zValidator('json', UpdateDescargaSchema), async (c) => {
+  const data = await viajesService.updateDescarga(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+  return c.json(data)
 })
 
 viajes.delete('/:id', async (c) => {

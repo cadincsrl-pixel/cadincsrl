@@ -1,5 +1,5 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
-import type { CreateViajeDto, CargaDto, DescargaDto } from './viajes.schema.js'
+import type { CreateViajeDto, CargaDto, DescargaDto, UpdateViajeDto, UpdateCargaDto, UpdateDescargaDto } from './viajes.schema.js'
 
 export const viajesService = {
 
@@ -54,6 +54,42 @@ export const viajesService = {
       .update({ estado: 'completado', updated_by: userId })
       .eq('id', dto.viaje_id)
 
+    return data
+  },
+
+  async updateViaje(id: number, dto: UpdateViajeDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('viajes')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateCarga(id: number, dto: UpdateCargaDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('cargas')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateDescarga(id: number, dto: UpdateDescargaDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('descargas')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
     return data
   },
 
