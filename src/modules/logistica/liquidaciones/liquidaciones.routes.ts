@@ -30,6 +30,11 @@ liquidaciones.patch('/:id/cerrar', async (c) => {
   return c.json(data)
 })
 
+liquidaciones.patch('/:id/reabrir', async (c) => {
+  const data = await liquidacionesService.reabrir(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
+  return c.json(data)
+})
+
 liquidaciones.delete('/:id', async (c) => {
   const data = await liquidacionesService.delete(Number(c.req.param('id')), c.get('accessToken'))
   return c.json(data)

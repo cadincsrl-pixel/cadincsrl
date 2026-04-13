@@ -78,6 +78,18 @@ export const liquidacionesService = {
     return data
   },
 
+  async reabrir(id: number, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('liquidaciones')
+      .update({ estado: 'borrador', updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
     // Desmarcar tramos de esta liquidación
