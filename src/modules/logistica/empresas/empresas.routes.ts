@@ -38,10 +38,6 @@ empresas.get('/tarifas', async (c) => {
   return c.json(data)
 })
 
-empresas.get('/:id/tarifas', async (c) => {
-  const data = await empresasService.getTarifasByEmpresa(Number(c.req.param('id')), c.get('accessToken'))
-  return c.json(data)
-})
 
 empresas.post('/tarifas', zValidator('json', CreateTarifaEmpresaSchema), async (c) => {
   const data = await empresasService.createTarifa(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
