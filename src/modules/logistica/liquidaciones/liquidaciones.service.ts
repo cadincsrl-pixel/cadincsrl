@@ -35,11 +35,12 @@ export const liquidacionesService = {
 
     if (error) throw new Error(error.message)
 
-    // Vincular tramos
+    // Vincular tramos — marcamos liquidacion_id directamente en el tramo
     if (tramo_ids.length) {
       await supabase
-        .from('liquidacion_tramos')
-        .insert(tramo_ids.map(tid => ({ liquidacion_id: data.id, tramo_id: tid })))
+        .from('tramos')
+        .update({ liquidacion_id: data.id, updated_by: userId })
+        .in('id', tramo_ids)
     }
 
     // Vincular adelantos — marcarlos como liquidados
@@ -67,7 +68,8 @@ export const liquidacionesService = {
 
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
-    await supabase.from('liquidacion_tramos').delete().eq('liquidacion_id', id)
+    // Desmarcar tramos de esta liquidación
+    await supabase.from('tramos').update({ liquidacion_id: null }).eq('liquidacion_id', id)
     const { error } = await supabase.from('liquidaciones').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }

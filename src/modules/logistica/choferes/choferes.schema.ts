@@ -7,7 +7,8 @@ export const CreateChoferSchema = z.object({
   licencia:  z.string().optional().default(''),
   estado:    z.enum(['activo', 'descanso', 'inactivo']).default('activo'),
   camion_id: z.number().nullable().optional(),
-  obs:       z.string().optional().default(''),
+  basico_dia: z.number().optional().default(0),
+  obs:        z.string().optional().default(''),
 })
 
 export const UpdateChoferSchema = CreateChoferSchema.partial()
