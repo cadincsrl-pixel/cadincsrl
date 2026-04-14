@@ -1,5 +1,5 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
-import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto } from './liquidaciones.schema.js'
+import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto, UpdateAdelantoDto } from './liquidaciones.schema.js'
 
 export const liquidacionesService = {
 
@@ -106,6 +106,18 @@ export const liquidacionesService = {
     const { data, error } = await supabase
       .from('adelantos')
       .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateAdelanto(id: number, dto: UpdateAdelantoDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('adelantos')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
       .select()
       .single()
     if (error) throw new Error(error.message)

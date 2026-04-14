@@ -32,6 +32,13 @@ export const CreateAdelantoSchema = z.object({
   descripcion:  z.string().optional().default(''),
 })
 
+export const UpdateAdelantoSchema = z.object({
+  fecha:       z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  monto:       z.number().min(0).optional(),
+  descripcion: z.string().optional(),
+})
+
 export type CreateLiquidacionDto = z.infer<typeof CreateLiquidacionSchema>
 export type UpdateLiquidacionDto = z.infer<typeof UpdateLiquidacionSchema>
 export type CreateAdelantoDto    = z.infer<typeof CreateAdelantoSchema>
+export type UpdateAdelantoDto    = z.infer<typeof UpdateAdelantoSchema>
