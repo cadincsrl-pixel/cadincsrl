@@ -94,8 +94,8 @@ export const liquidacionesService = {
 
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
-    // Desmarcar tramos de esta liquidación
     await supabase.from('tramos').update({ liquidacion_id: null }).eq('liquidacion_id', id)
+    await supabase.from('adelantos').update({ liquidacion_id: null }).eq('liquidacion_id', id)
     const { error } = await supabase.from('liquidaciones').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }
