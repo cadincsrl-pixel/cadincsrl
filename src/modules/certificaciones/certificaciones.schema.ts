@@ -11,6 +11,7 @@ export const CreateMaterialSchema = z.object({
   obs:            z.string().optional().default(''),
   adjunto_url:    z.string().optional().default(''),
   adjunto_nombre: z.string().optional().default(''),
+  compra_id:      z.string().optional().default(''),
 })
 
 export const UpdateMaterialSchema = CreateMaterialSchema.partial().omit({ obra_cod: true })
