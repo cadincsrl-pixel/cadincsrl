@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const CreateLugarSchema = z.object({
   nombre:    z.string().min(1),
   localidad: z.string().optional().default(''),
+  maps_url:  z.string().optional().default(''),
   obs:       z.string().optional().default(''),
 })
 
