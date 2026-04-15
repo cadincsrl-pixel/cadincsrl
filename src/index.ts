@@ -28,6 +28,7 @@ import authRoutes from './modules/auth/auth.routes.js'
 import usuariosRoutes from './modules/auth/usuarios.routes.js'
 import herramientasRoutes from './modules/herramientas/herramientas.routes.js'
 import catObraRoutes from './modules/cat-obra/cat-obra.routes.js'
+import certificacionesRoutes from './modules/certificaciones/certificaciones.routes.js'
 
 
 const app = new Hono()
@@ -72,6 +73,7 @@ app.route('/api/me', authRoutes)
 app.route('/api/usuarios', usuariosRoutes)
 app.route('/api/herramientas', herramientasRoutes)
 app.route('/api/cat-obra', catObraRoutes)
+app.route('/api/certificaciones', certificacionesRoutes)
 // ── Manejo global de errores ──
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
