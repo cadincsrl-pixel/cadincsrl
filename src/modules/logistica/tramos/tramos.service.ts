@@ -8,7 +8,7 @@ export const tramosService = {
     const { data, error } = await supabase
       .from('tramos')
       .select('*')
-      .order('created_at', { ascending: false })
+      .order('fecha_carga', { ascending: true, nullsFirst: false })
     if (error) throw new Error(error.message)
     return data
   },
