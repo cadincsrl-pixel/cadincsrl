@@ -28,9 +28,13 @@ export const tramosService = {
 
   async update(id: number, dto: UpdateTramoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    // Eliminar keys con valor undefined para no pisar campos existentes en Supabase
+    const patch = Object.fromEntries(
+      Object.entries(dto).filter(([, v]) => v !== undefined)
+    )
     const { data, error } = await supabase
       .from('tramos')
-      .update({ ...dto, updated_by: userId })
+      .update({ ...patch, updated_by: userId })
       .eq('id', id)
       .select()
       .single()

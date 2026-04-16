@@ -24,8 +24,22 @@ export const CreateTramoSchema = z.object({
   obs: z.string().optional().default(''),
 })
 
-export const UpdateTramoSchema = CreateTramoSchema.partial().extend({
-  estado: z.enum(['en_curso', 'completado']).optional(),
+export const UpdateTramoSchema = z.object({
+  chofer_id:          z.number().optional(),
+  camion_id:          z.number().optional(),
+  tipo:               z.enum(['cargado', 'vacio']).optional(),
+  cantera_id:         z.number().nullable().optional(),
+  deposito_id:        z.number().nullable().optional(),
+  empresa_id:         z.number().nullable().optional(),
+  fecha_carga:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  toneladas_carga:    z.number().optional(),
+  remito_carga:       z.string().optional(),
+  fecha_descarga:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  toneladas_descarga: z.number().optional(),
+  remito_descarga:    z.string().optional(),
+  fecha_vacio:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  obs:                z.string().optional(),
+  estado:             z.enum(['en_curso', 'completado']).optional(),
 })
 
 export const RegistrarDescargaSchema = z.object({
