@@ -14,6 +14,7 @@ export const CreatePersonalSchema = z.object({
   leg: z.string().min(1, 'El legajo es requerido'),
   nom: z.string().min(1, 'El nombre es requerido'),
   dni: z.string().optional().default(''),
+  condicion: z.enum(['blanco', 'asegurado']).optional(),
   cat_id: z.number({ error: 'La categoría es requerida' }),
   tel: z.string().optional().default(''),
   dir: z.string().optional().default(''),
@@ -23,6 +24,7 @@ export const CreatePersonalSchema = z.object({
 export const UpdatePersonalSchema = z.object({
   nom:             z.string().min(1).optional(),
   dni:             z.string().optional(),
+  condicion:       z.enum(['blanco', 'asegurado']).nullable().optional(),
   cat_id:          z.number().optional(),
   tel:             z.string().optional(),
   dir:             z.string().optional(),
