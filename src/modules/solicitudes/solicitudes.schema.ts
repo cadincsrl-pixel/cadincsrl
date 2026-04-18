@@ -5,6 +5,7 @@ const ItemSchema = z.object({
   cantidad:    z.number().min(0).default(1),
   unidad:      z.string().default('unid'),
   obs:         z.string().nullable().optional().default(null),
+  material_id: z.number().int().positive().nullable().optional().default(null),
 })
 
 export const CreateSolicitudSchema = z.object({
