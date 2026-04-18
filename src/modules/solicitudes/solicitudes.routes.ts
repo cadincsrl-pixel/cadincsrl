@@ -26,8 +26,15 @@ solicitudes.get('/:id', async (c) => {
 })
 
 solicitudes.post('/', zValidator('json', CreateSolicitudSchema), async (c) => {
-  const data = await solicitudesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
-  return c.json(data, 201)
+  try {
+    const dto = c.req.valid('json')
+    console.log('[POST /solicitudes] dto:', JSON.stringify(dto))
+    const data = await solicitudesService.create(dto, c.get('accessToken'), c.get('user').id)
+    return c.json(data, 201)
+  } catch (err: any) {
+    console.error('[POST /solicitudes] ERROR:', err.message)
+    return c.json({ error: err.message }, 500)
+  }
 })
 
 solicitudes.patch('/:id', zValidator('json', UpdateSolicitudSchema), async (c) => {

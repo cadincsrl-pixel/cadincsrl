@@ -89,8 +89,8 @@ app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return c.json({ error: err.message }, err.status)
   }
-  console.error('Error no manejado:', err)
-  return c.json({ error: 'Error interno del servidor' }, 500)
+  console.error('Error no manejado:', err.message, err.stack)
+  return c.json({ error: err.message || 'Error interno del servidor' }, 500)
 })
 
 // ── 404 ──
