@@ -29,6 +29,7 @@ import usuariosRoutes from './modules/auth/usuarios.routes.js'
 import herramientasRoutes from './modules/herramientas/herramientas.routes.js'
 import catObraRoutes from './modules/cat-obra/cat-obra.routes.js'
 import certificacionesRoutes from './modules/certificaciones/certificaciones.routes.js'
+import solicitudesRoutes from './modules/solicitudes/solicitudes.routes.js'
 import { cajaRoutes } from './modules/caja/caja.routes.js'
 
 
@@ -75,6 +76,7 @@ app.route('/api/usuarios', usuariosRoutes)
 app.route('/api/herramientas', herramientasRoutes)
 app.route('/api/cat-obra', catObraRoutes)
 app.route('/api/certificaciones', certificacionesRoutes)
+app.route('/api/solicitudes', solicitudesRoutes)
 app.route('/api/caja', cajaRoutes)
 // ── Manejo global de errores ──
 app.onError((err, c) => {
