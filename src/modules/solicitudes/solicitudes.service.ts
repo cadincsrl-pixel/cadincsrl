@@ -74,15 +74,18 @@ export const solicitudesService = {
       .single()
     if (error) throw new Error(error.message)
 
-    const itemsData = items.map(it => ({
-      solicitud_id: solicitud.id,
-      descripcion:  it.descripcion,
-      cantidad:     it.cantidad,
-      unidad:       it.unidad,
-      obs:          it.obs ?? null,
-      material_id:  it.material_id ?? null,
-      estado:       'pendiente',
-    }))
+    const itemsData = items.map(it => {
+      const row: any = {
+        solicitud_id: solicitud.id,
+        descripcion:  it.descripcion,
+        cantidad:     it.cantidad,
+        unidad:       it.unidad,
+        obs:          it.obs ?? null,
+        estado:       'pendiente',
+      }
+      if (it.material_id) row.material_id = it.material_id
+      return row
+    })
 
     const { error: itemsErr } = await supabase
       .from('solicitud_compra_item')
