@@ -67,6 +67,15 @@ obras.patch('/:cod/archivar', requirePermiso('tarja', 'actualizacion'), async (c
   return c.json(data)
 })
 
+// PATCH /api/obras/:cod/desarchivar
+obras.patch('/:cod/desarchivar', requirePermiso('tarja', 'actualizacion'), async (c) => {
+  const cod = c.req.param('cod')
+  const token = c.get('accessToken')
+  const userId = c.get('user').id
+  const data = await obrasService.desarchivar(cod, token, userId)
+  return c.json(data)
+})
+
 // DELETE /api/obras/:cod
 obras.delete('/:cod', requirePermiso('tarja', 'eliminacion'), async (c) => {
   const cod = c.req.param('cod')

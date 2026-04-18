@@ -101,6 +101,18 @@ export const obrasService = {
     return data
   },
 
+  async desarchivar(cod: string, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('obras')
+      .update({ archivada: false, fecha_archivo: null, updated_by: userId })
+      .eq('cod', cod)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
   async autoArchivar(token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
