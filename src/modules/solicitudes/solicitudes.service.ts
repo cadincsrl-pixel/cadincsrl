@@ -149,6 +149,31 @@ export const solicitudesService = {
       .single()
     if (error) throw new Error(error.message)
 
+    // Descontar stock si el ítem tiene material_id vinculado
+    if (data.material_id) {
+      const { data: mat } = await supabase
+        .from('stock_materiales')
+        .select('stock_actual')
+        .eq('id', data.material_id)
+        .single()
+      if (mat) {
+        await supabase
+          .from('stock_materiales')
+          .update({ stock_actual: mat.stock_actual - data.cantidad, updated_by: userId })
+          .eq('id', data.material_id)
+      }
+      await supabase.from('stock_movimientos').insert({
+        material_id:       data.material_id,
+        tipo:              'salida',
+        cantidad:          data.cantidad,
+        motivo:            'despacho_obra',
+        obra_cod:          data.solicitud_compra?.obra_cod ?? null,
+        solicitud_item_id: itemId,
+        fecha:             new Date().toISOString().slice(0, 10),
+        created_by:        userId,
+      })
+    }
+
     await this._checkAndCreateMateriales(data.solicitud_id, token, userId)
     return data
   },

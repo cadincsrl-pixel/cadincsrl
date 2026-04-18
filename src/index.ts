@@ -32,6 +32,7 @@ import certificacionesRoutes from './modules/certificaciones/certificaciones.rou
 import solicitudesRoutes from './modules/solicitudes/solicitudes.routes.js'
 import proveedoresRoutes from './modules/proveedores/proveedores.routes.js'
 import facturasCompraRoutes from './modules/facturas-compra/facturas-compra.routes.js'
+import stockRoutes from './modules/stock/stock.routes.js'
 import { cajaRoutes } from './modules/caja/caja.routes.js'
 
 
@@ -81,6 +82,7 @@ app.route('/api/certificaciones', certificacionesRoutes)
 app.route('/api/solicitudes', solicitudesRoutes)
 app.route('/api/proveedores', proveedoresRoutes)
 app.route('/api/facturas-compra', facturasCompraRoutes)
+app.route('/api/stock', stockRoutes)
 app.route('/api/caja', cajaRoutes)
 // ── Manejo global de errores ──
 app.onError((err, c) => {
