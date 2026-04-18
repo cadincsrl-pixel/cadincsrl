@@ -29,7 +29,7 @@ export const solicitudesService = {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('solicitud_compra')
-      .select('*, items:solicitud_compra_item(*, proveedores(nombre), stock_materiales(nombre, stock_actual, precio_ref, unidad))')
+      .select('*, items:solicitud_compra_item(*, proveedores(nombre))')
       .order('fecha', { ascending: false })
     if (obra_cod) q = q.eq('obra_cod', obra_cod)
     const { data, error } = await q
@@ -46,7 +46,7 @@ export const solicitudesService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('solicitud_compra')
-      .select('*, items:solicitud_compra_item(*, proveedores(nombre), facturas_compra(numero, adjunto_url), stock_materiales(nombre, stock_actual, precio_ref, unidad))')
+      .select('*, items:solicitud_compra_item(*, proveedores(nombre), facturas_compra(numero, adjunto_url))')
       .eq('id', id)
       .single()
     if (error) throw new Error(error.message)
