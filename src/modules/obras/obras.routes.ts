@@ -23,6 +23,14 @@ obras.get('/archivadas', requirePermiso('tarja', 'lectura'), async (c) => {
   return c.json(data)
 })
 
+// POST /api/obras/auto-archivar
+obras.post('/auto-archivar', requirePermiso('tarja', 'actualizacion'), async (c) => {
+  const token = c.get('accessToken')
+  const userId = c.get('user').id
+  const data = await obrasService.autoArchivar(token, userId)
+  return c.json(data)
+})
+
 // GET /api/obras/:cod
 obras.get('/:cod', requirePermiso('tarja', 'lectura'), async (c) => {
   const cod = c.req.param('cod')

@@ -101,6 +101,48 @@ export const obrasService = {
     return data
   },
 
+  async autoArchivar(token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+
+    // Fecha de corte: hoy - 21 días
+    const corte = new Date()
+    corte.setDate(corte.getDate() - 21)
+    const corteISO = corte.toISOString().slice(0, 10)
+
+    // Obras activas
+    const { data: obras, error: errObras } = await supabase
+      .from('obras')
+      .select('cod')
+      .eq('archivada', false)
+    if (errObras) throw new Error(errObras.message)
+    if (!obras || obras.length === 0) return { archivadas: [] }
+
+    // Obras con horas en los últimos 21 días
+    const { data: horasRecientes, error: errHoras } = await supabase
+      .from('horas')
+      .select('obra_cod')
+      .gte('fecha', corteISO)
+    if (errHoras) throw new Error(errHoras.message)
+
+    const codsConHoras = new Set((horasRecientes ?? []).map((h: any) => h.obra_cod))
+
+    // Obras sin horas recientes
+    const codsArchivar = obras
+      .map(o => o.cod)
+      .filter(cod => !codsConHoras.has(cod))
+
+    if (codsArchivar.length === 0) return { archivadas: [] }
+
+    const hoy = new Date().toISOString().slice(0, 10)
+    const { error: errUpd } = await supabase
+      .from('obras')
+      .update({ archivada: true, fecha_archivo: hoy, updated_by: userId })
+      .in('cod', codsArchivar)
+    if (errUpd) throw new Error(errUpd.message)
+
+    return { archivadas: codsArchivar }
+  },
+
   async delete(cod: string, token: string) {
     const supabase = createSupabaseClient(token)
     const { error } = await supabase
