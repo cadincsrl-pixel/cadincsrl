@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import type { CreateObraDto, UpdateObraDto } from './obras.schema.js'
 
 export const obrasService = {
@@ -114,7 +114,9 @@ export const obrasService = {
   },
 
   async autoArchivar(token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
+    // Usar cliente admin para las lecturas — evita que RLS filtre filas
+    // y cause falsos "sin actividad" en obras que sí tienen horas/certs
+    const supabaseUser = createSupabaseClient(token)
 
     // Fecha de corte: hoy - 21 días
     const corte = new Date()
@@ -122,7 +124,7 @@ export const obrasService = {
     const corteISO = corte.toISOString().slice(0, 10)
 
     // Obras activas
-    const { data: obras, error: errObras } = await supabase
+    const { data: obras, error: errObras } = await supabaseAdmin
       .from('obras')
       .select('cod')
       .eq('archivada', false)
@@ -130,14 +132,14 @@ export const obrasService = {
     if (!obras || obras.length === 0) return { archivadas: [] }
 
     // Obras con horas de personal en los últimos 21 días
-    const { data: horasRecientes, error: errHoras } = await supabase
+    const { data: horasRecientes, error: errHoras } = await supabaseAdmin
       .from('horas')
       .select('obra_cod')
       .gte('fecha', corteISO)
     if (errHoras) throw new Error(errHoras.message)
 
     // Obras con certificaciones de contratistas en los últimos 21 días (sem_key es el viernes)
-    const { data: certRecientes, error: errCert } = await supabase
+    const { data: certRecientes, error: errCert } = await supabaseAdmin
       .from('certificaciones')
       .select('obra_cod')
       .gte('sem_key', corteISO)
@@ -156,7 +158,7 @@ export const obrasService = {
     if (codsArchivar.length === 0) return { archivadas: [] }
 
     const hoy = new Date().toISOString().slice(0, 10)
-    const { error: errUpd } = await supabase
+    const { error: errUpd } = await supabaseAdmin
       .from('obras')
       .update({ archivada: true, fecha_archivo: hoy, updated_by: userId })
       .in('cod', codsArchivar)
