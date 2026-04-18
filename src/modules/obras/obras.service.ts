@@ -117,19 +117,29 @@ export const obrasService = {
     if (errObras) throw new Error(errObras.message)
     if (!obras || obras.length === 0) return { archivadas: [] }
 
-    // Obras con horas en los últimos 21 días
+    // Obras con horas de personal en los últimos 21 días
     const { data: horasRecientes, error: errHoras } = await supabase
       .from('horas')
       .select('obra_cod')
       .gte('fecha', corteISO)
     if (errHoras) throw new Error(errHoras.message)
 
-    const codsConHoras = new Set((horasRecientes ?? []).map((h: any) => h.obra_cod))
+    // Obras con certificaciones de contratistas en los últimos 21 días (sem_key es el viernes)
+    const { data: certRecientes, error: errCert } = await supabase
+      .from('certificaciones')
+      .select('obra_cod')
+      .gte('sem_key', corteISO)
+    if (errCert) throw new Error(errCert.message)
 
-    // Obras sin horas recientes
+    const codsConActividad = new Set([
+      ...(horasRecientes ?? []).map((h: any) => h.obra_cod),
+      ...(certRecientes ?? []).map((c: any) => c.obra_cod),
+    ])
+
+    // Obras sin actividad reciente (ni personal ni contratistas)
     const codsArchivar = obras
       .map(o => o.cod)
-      .filter(cod => !codsConHoras.has(cod))
+      .filter(cod => !codsConActividad.has(cod))
 
     if (codsArchivar.length === 0) return { archivadas: [] }
 
