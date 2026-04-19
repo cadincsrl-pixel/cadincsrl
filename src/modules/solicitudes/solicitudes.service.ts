@@ -65,8 +65,10 @@ export const solicitudesService = {
       .from('solicitud_compra')
       .insert({
         ...cabecera,
+        estado: 'aprobada',
         fecha: new Date().toISOString().slice(0, 10),
         solicitante: userId,
+        aprobado_por: userId,
         created_by: userId,
         updated_by: userId,
       })
