@@ -30,15 +30,25 @@ usuarios.use('*', async (c, next) => {
   await next()
 })
 
-// ── GET /api/usuarios — listar todos ──
+// ── GET /api/usuarios — listar todos (con email) ──
 usuarios.get('/', async (c) => {
-  const { data, error } = await supabase
+  const { data: profiles, error } = await supabase
     .from('profiles')
     .select('*')
     .order('nombre')
 
   if (error) return c.json({ error: error.message }, 500)
-  return c.json(data)
+
+  // Traer emails de auth.users
+  const { data: { users } } = await supabaseAdmin.auth.admin.listUsers()
+  const emailMap = new Map(users.map(u => [u.id, u.email]))
+
+  const result = (profiles ?? []).map(p => ({
+    ...p,
+    email: emailMap.get(p.id) ?? null,
+  }))
+
+  return c.json(result)
 })
 
 // ── GET /api/usuarios/modulos ──
@@ -125,6 +135,21 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
 
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
+})
+
+// ── POST /api/usuarios/:id/reset-password — cambiar contraseña ──
+const ResetPasswordSchema = z.object({
+  password: z.string().min(6, 'Mínimo 6 caracteres'),
+})
+
+usuarios.post('/:id/reset-password', zValidator('json', ResetPasswordSchema), async (c) => {
+  const id = c.req.param('id')
+  const { password } = c.req.valid('json')
+
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(id, { password })
+  if (error) return c.json({ error: error.message }, 500)
+
+  return c.json({ success: true })
 })
 
 // ── DELETE /api/usuarios/:id — eliminar usuario ──
