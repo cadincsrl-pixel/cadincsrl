@@ -15,11 +15,22 @@ export const CreateSolicitudSchema = z.object({
   items:     z.array(ItemSchema).min(1),
 })
 
-// Solo aprobación a nivel solicitud
+const UpdateItemSchema = z.object({
+  id:          z.number().int().positive().optional(), // si tiene id, es update; si no, es nuevo
+  descripcion: z.string().min(1),
+  cantidad:    z.number().min(0).default(1),
+  unidad:      z.string().default('unid'),
+  obs:         z.string().nullable().optional().default(null),
+  material_id: z.number().int().positive().nullable().optional().default(null),
+})
+
 export const UpdateSolicitudSchema = z.object({
-  estado:    z.enum(['pendiente', 'aprobada', 'rechazada']).optional(),
-  prioridad: z.enum(['normal', 'urgente']).optional(),
-  obs:       z.string().nullable().optional(),
+  estado:       z.enum(['pendiente', 'aprobada', 'rechazada']).optional(),
+  prioridad:    z.enum(['normal', 'urgente']).optional(),
+  obs:          z.string().nullable().optional(),
+  obra_cod:     z.string().min(1).optional(),
+  items:        z.array(UpdateItemSchema).optional(), // si se envía, reemplaza ítems pendientes
+  remove_items: z.array(z.number().int().positive()).optional(), // IDs de ítems a eliminar
 })
 
 // Resolver ítem: comprar a proveedor

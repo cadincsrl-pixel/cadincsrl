@@ -99,14 +99,65 @@ export const solicitudesService = {
 
   async update(id: number, dto: UpdateSolicitudDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const updateData: any = { ...dto, updated_by: userId }
+
+    // Actualizar cabecera
+    const { items, remove_items, ...cabFields } = dto
+    const updateData: any = { ...cabFields, updated_by: userId }
     if (dto.estado === 'aprobada') updateData.aprobado_por = userId
 
-    const { error } = await supabase
-      .from('solicitud_compra')
-      .update(updateData)
-      .eq('id', id)
-    if (error) throw new Error(error.message)
+    // Solo actualizar cabecera si hay campos
+    if (Object.keys(cabFields).length > 0) {
+      const { error } = await supabase
+        .from('solicitud_compra')
+        .update(updateData)
+        .eq('id', id)
+      if (error) throw new Error(error.message)
+    }
+
+    // Eliminar ítems
+    if (remove_items && remove_items.length > 0) {
+      const { error } = await supabase
+        .from('solicitud_compra_item')
+        .delete()
+        .in('id', remove_items)
+        .eq('solicitud_id', id)
+        .eq('estado', 'pendiente') // solo pendientes se pueden borrar
+      if (error) throw new Error(error.message)
+    }
+
+    // Agregar/actualizar ítems
+    if (items && items.length > 0) {
+      for (const it of items) {
+        if (it.id) {
+          // Actualizar ítem existente (solo si pendiente)
+          const updateItem: any = {
+            descripcion: it.descripcion,
+            cantidad:    it.cantidad,
+            unidad:      it.unidad,
+            obs:         it.obs ?? null,
+          }
+          if (it.material_id) updateItem.material_id = it.material_id
+          await supabase
+            .from('solicitud_compra_item')
+            .update(updateItem)
+            .eq('id', it.id)
+            .eq('estado', 'pendiente')
+        } else {
+          // Nuevo ítem
+          const row: any = {
+            solicitud_id: id,
+            descripcion:  it.descripcion,
+            cantidad:     it.cantidad,
+            unidad:       it.unidad,
+            obs:          it.obs ?? null,
+            estado:       'pendiente',
+          }
+          if (it.material_id) row.material_id = it.material_id
+          await supabase.from('solicitud_compra_item').insert(row)
+        }
+      }
+    }
+
     return this.getById(id, token)
   },
 
