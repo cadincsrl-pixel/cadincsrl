@@ -5,6 +5,7 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from './middleware/auth.js'
+import { auditMiddleware } from './middleware/audit.js'
 
 
 import categoriasRoutes from './modules/categorias/categorias.routes.js'
@@ -33,6 +34,7 @@ import solicitudesRoutes from './modules/solicitudes/solicitudes.routes.js'
 import proveedoresRoutes from './modules/proveedores/proveedores.routes.js'
 import facturasCompraRoutes from './modules/facturas-compra/facturas-compra.routes.js'
 import stockRoutes from './modules/stock/stock.routes.js'
+import adminRoutes from './modules/admin/admin.routes.js'
 import { cajaRoutes } from './modules/caja/caja.routes.js'
 
 
@@ -83,7 +85,11 @@ app.route('/api/solicitudes', solicitudesRoutes)
 app.route('/api/proveedores', proveedoresRoutes)
 app.route('/api/facturas-compra', facturasCompraRoutes)
 app.route('/api/stock', stockRoutes)
+app.route('/api/admin', adminRoutes)
 app.route('/api/caja', cajaRoutes)
+
+// Audit middleware — loguea acciones POST/PATCH/DELETE exitosas
+app.use('/api/*', auditMiddleware)
 // ── Manejo global de errores ──
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
