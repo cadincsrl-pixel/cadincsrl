@@ -116,6 +116,7 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
 // ── PATCH /api/usuarios/:id — actualizar perfil ──
 const UpdateSchema = z.object({
   nombre:   z.string().min(1).optional(),
+  email:    z.string().email().optional(),
   rol:      z.enum(['admin', 'operador']).optional(),
   modulos:  z.array(z.string()).optional(),
   activo:   z.boolean().optional(),
@@ -124,17 +125,27 @@ const UpdateSchema = z.object({
 
 usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
   const id  = c.req.param('id')
-  const dto = c.req.valid('json')
+  const { email, ...profileDto } = c.req.valid('json')
 
-  const { data, error } = await supabase
-    .from('profiles')
-    .update(dto)
-    .eq('id', id)
-    .select()
-    .single()
+  // Actualizar email en auth.users si se envía
+  if (email) {
+    const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(id, { email })
+    if (authErr) return c.json({ error: authErr.message }, 500)
+  }
 
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json(data)
+  // Actualizar perfil solo si hay campos de perfil
+  if (Object.keys(profileDto).length > 0) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(profileDto)
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ ...data, email })
+  }
+
+  return c.json({ success: true })
 })
 
 // ── POST /api/usuarios/:id/reset-password — cambiar contraseña ──
