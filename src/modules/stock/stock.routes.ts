@@ -54,7 +54,20 @@ stock.get('/movimientos', async (c) => {
 })
 
 stock.post('/movimientos', zValidator('json', CreateMovimientoSchema), async (c) => {
-  return c.json(await stockService.createMovimiento(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+  const dto = c.req.valid('json')
+
+  // Ajustes requieren permiso de eliminación (más restrictivo)
+  if (dto.tipo === 'ajuste') {
+    const user = c.get('user')
+    if (user.rol !== 'admin') {
+      const permisos = user.permisos?.certificaciones
+      if (!permisos?.eliminacion) {
+        return c.json({ error: 'No tenés permisos para hacer ajustes de stock' }, 403)
+      }
+    }
+  }
+
+  return c.json(await stockService.createMovimiento(dto, c.get('accessToken'), c.get('user').id), 201)
 })
 
 export default stock
