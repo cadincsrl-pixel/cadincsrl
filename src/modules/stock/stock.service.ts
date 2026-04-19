@@ -34,7 +34,7 @@ export const stockService = {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('stock_materiales')
-      .select('*, stock_rubros(nombre, icono)')
+      .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
       .eq('activo', true)
       .order('nombre')
     if (rubro_id) q = q.eq('rubro_id', rubro_id)
@@ -48,7 +48,7 @@ export const stockService = {
     const { data, error } = await supabase
       .from('stock_materiales')
       .insert({ ...dto, created_by: userId, updated_by: userId })
-      .select('*, stock_rubros(nombre, icono)')
+      .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
       .single()
     if (error) throw new Error(error.message)
     return data
@@ -60,7 +60,7 @@ export const stockService = {
       .from('stock_materiales')
       .update({ ...dto, updated_by: userId })
       .eq('id', id)
-      .select('*, stock_rubros(nombre, icono)')
+      .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
       .single()
     if (error) throw new Error(error.message)
     return data

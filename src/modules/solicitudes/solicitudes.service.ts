@@ -188,6 +188,42 @@ export const solicitudesService = {
     if (error) throw new Error(error.message)
     if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
 
+    // Si la obra es depósito y el ítem tiene material_id, sumar stock
+    if (data.material_id && data.solicitud_compra?.obra_cod) {
+      const { data: obra } = await supabase
+        .from('obras')
+        .select('es_deposito')
+        .eq('cod', data.solicitud_compra.obra_cod)
+        .maybeSingle()
+      if (obra?.es_deposito) {
+        const { data: mat } = await supabase
+          .from('stock_materiales')
+          .select('stock_actual')
+          .eq('id', data.material_id)
+          .maybeSingle()
+        if (mat) {
+          await supabase
+            .from('stock_materiales')
+            .update({
+              stock_actual: mat.stock_actual + data.cantidad,
+              precio_ref: dto.precio_unit,
+              updated_by: userId,
+            })
+            .eq('id', data.material_id)
+        }
+        await supabase.from('stock_movimientos').insert({
+          material_id:       data.material_id,
+          tipo:              'entrada',
+          cantidad:          data.cantidad,
+          motivo:            'compra',
+          obra_cod:          data.solicitud_compra.obra_cod,
+          solicitud_item_id: itemId,
+          fecha:             new Date().toISOString().slice(0, 10),
+          created_by:        userId,
+        })
+      }
+    }
+
     await this._checkAndCreateMateriales(data.solicitud_id, token, userId)
     return data
   },

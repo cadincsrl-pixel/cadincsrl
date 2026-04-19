@@ -15,6 +15,7 @@ export const CreateMaterialSchema = z.object({
   unidad:        z.string().default('unid'),
   stock_minimo:  z.number().min(0).default(0),
   precio_ref:    z.number().min(0).default(0),
+  proveedor_id:  z.number().int().positive().nullable().optional().default(null),
   obs:           z.string().optional().default(''),
 })
 export const UpdateMaterialSchema = CreateMaterialSchema.partial()
