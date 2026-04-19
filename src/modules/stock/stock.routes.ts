@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
+import { createSupabaseClient } from '../../lib/supabase.js'
 import { stockService } from './stock.service.js'
 import {
   CreateRubroSchema, UpdateRubroSchema,
@@ -58,9 +59,14 @@ stock.post('/movimientos', zValidator('json', CreateMovimientoSchema), async (c)
 
   // Ajustes requieren permiso de eliminación (más restrictivo)
   if (dto.tipo === 'ajuste') {
-    const user = c.get('user')
-    if (user.rol !== 'admin') {
-      const permisos = user.permisos?.certificaciones
+    const supabase = createSupabaseClient(c.get('accessToken'))
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('rol, permisos')
+      .eq('id', c.get('user').id)
+      .single()
+    if (profile?.rol !== 'admin') {
+      const permisos = (profile?.permisos as any)?.certificaciones
       if (!permisos?.eliminacion) {
         return c.json({ error: 'No tenés permisos para hacer ajustes de stock' }, 403)
       }

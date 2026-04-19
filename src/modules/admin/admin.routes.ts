@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { authMiddleware } from '../../middleware/auth.js'
+import { supabase } from '../../lib/supabase.js'
 import { auditService } from './audit.service.js'
 
 const admin = new Hono()
@@ -7,8 +8,12 @@ admin.use('*', authMiddleware)
 
 // Solo admins
 admin.use('*', async (c, next) => {
-  const user = c.get('user')
-  if (user.rol !== 'admin') {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('rol')
+    .eq('id', c.get('user').id)
+    .single()
+  if (profile?.rol !== 'admin') {
     return c.json({ error: 'Acceso denegado' }, 403)
   }
   await next()
