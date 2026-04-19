@@ -184,8 +184,9 @@ export const solicitudesService = {
       .eq('id', itemId)
       .eq('estado', 'pendiente')
       .select('*, solicitud_compra(id, obra_cod)')
-      .single()
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
 
     await this._checkAndCreateMateriales(data.solicitud_id, token, userId)
     return data
@@ -203,8 +204,9 @@ export const solicitudesService = {
       .eq('id', itemId)
       .eq('estado', 'pendiente')
       .select('*, solicitud_compra(id, obra_cod)')
-      .single()
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
 
     // Descontar stock si el ítem tiene material_id vinculado
     if (data.material_id) {
@@ -212,7 +214,7 @@ export const solicitudesService = {
         .from('stock_materiales')
         .select('stock_actual')
         .eq('id', data.material_id)
-        .single()
+        .maybeSingle()
       if (mat) {
         await supabase
           .from('stock_materiales')
@@ -246,8 +248,9 @@ export const solicitudesService = {
       .eq('id', itemId)
       .in('estado', ['comprado', 'de_deposito'])
       .select()
-      .single()
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!data) throw new Error('Ítem no encontrado o no está listo para enviar')
     return data
   },
 
@@ -259,8 +262,9 @@ export const solicitudesService = {
       .eq('id', itemId)
       .eq('estado', 'pendiente')
       .select()
-      .single()
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
     return data
   },
 
@@ -279,8 +283,9 @@ export const solicitudesService = {
       .eq('id', itemId)
       .in('estado', ['comprado', 'de_deposito', 'rechazado'])
       .select()
-      .single()
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!data) throw new Error('Ítem no encontrado o no se puede revertir')
 
     // Borrar registro de materiales_a_cuenta_cliente si existía
     await supabase.from('materiales_a_cuenta_cliente').delete().eq('item_id', itemId)
@@ -295,8 +300,9 @@ export const solicitudesService = {
       .eq('id', itemId)
       .in('estado', ['comprado', 'de_deposito', 'enviado'])
       .select('*, solicitud_compra(id, obra_cod)')
-      .single()
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!data) throw new Error('Ítem no encontrado o no se puede editar')
 
     // Actualizar materiales_a_cuenta_cliente si existe
     const updates: any = {}
