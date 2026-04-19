@@ -32,23 +32,37 @@ export const stockService = {
   // ── Materiales ──
   async getMateriales(token: string, rubro_id?: number) {
     const supabase = createSupabaseClient(token)
+    // Intentar con proveedores, fallback sin
     let q = supabase
       .from('stock_materiales')
       .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
       .eq('activo', true)
       .order('nombre')
     if (rubro_id) q = q.eq('rubro_id', rubro_id)
-    const { data, error } = await q
-    if (error) throw new Error(error.message)
+    let { data, error } = await q
+    if (error) {
+      // Fallback sin proveedores (columna puede no existir aún)
+      let q2 = supabase
+        .from('stock_materiales')
+        .select('*, stock_rubros(nombre, icono)')
+        .eq('activo', true)
+        .order('nombre')
+      if (rubro_id) q2 = q2.eq('rubro_id', rubro_id)
+      const res = await q2
+      if (res.error) throw new Error(res.error.message)
+      data = res.data
+    }
     return data
   },
 
   async createMaterial(dto: CreateMaterialDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    const insertData: any = { ...dto, created_by: userId, updated_by: userId }
+    if (!insertData.proveedor_id) delete insertData.proveedor_id
     const { data, error } = await supabase
       .from('stock_materiales')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
-      .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
+      .insert(insertData)
+      .select('*, stock_rubros(nombre, icono)')
       .single()
     if (error) throw new Error(error.message)
     return data
@@ -56,11 +70,13 @@ export const stockService = {
 
   async updateMaterial(id: number, dto: UpdateMaterialDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    const updateData: any = { ...dto, updated_by: userId }
+    if (updateData.proveedor_id === null || updateData.proveedor_id === undefined) delete updateData.proveedor_id
     const { data, error } = await supabase
       .from('stock_materiales')
-      .update({ ...dto, updated_by: userId })
+      .update(updateData)
       .eq('id', id)
-      .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
+      .select('*, stock_rubros(nombre, icono)')
       .single()
     if (error) throw new Error(error.message)
     return data

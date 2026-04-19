@@ -46,44 +46,54 @@ solicitudes.delete('/:id', async (c) => {
   return c.json(await solicitudesService.delete(Number(c.req.param('id')), c.get('accessToken')))
 })
 
+// Helper: las acciones de ítems devuelven 404 si no encuentran el ítem
+function itemHandler(fn: (c: any) => Promise<any>) {
+  return async (c: any) => {
+    try {
+      const data = await fn(c)
+      return c.json(data)
+    } catch (err: any) {
+      if (err.message?.includes('no encontrado') || err.message?.includes('ya fue')) {
+        return c.json({ error: err.message }, 404)
+      }
+      return c.json({ error: err.message }, 500)
+    }
+  }
+}
+
 // ── Acciones sobre ítems ──
-solicitudes.post('/items/:itemId/comprar', zValidator('json', ComprarItemSchema), async (c) => {
-  const data = await solicitudesService.comprarItem(
+solicitudes.post('/items/:itemId/comprar', zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
+  return solicitudesService.comprarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
-  return c.json(data)
-})
+}))
 
-solicitudes.post('/items/:itemId/despachar', zValidator('json', DespacharItemSchema), async (c) => {
-  const data = await solicitudesService.despacharItem(
+solicitudes.post('/items/:itemId/despachar', zValidator('json', DespacharItemSchema), itemHandler(async (c) => {
+  return solicitudesService.despacharItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
-  return c.json(data)
-})
+}))
 
-solicitudes.post('/items/:itemId/enviar', zValidator('json', EnviarItemSchema), async (c) => {
-  const data = await solicitudesService.enviarItem(
+solicitudes.post('/items/:itemId/enviar', zValidator('json', EnviarItemSchema), itemHandler(async (c) => {
+  return solicitudesService.enviarItem(
     Number(c.req.param('itemId')), c.req.valid('json').fecha_envio, c.get('accessToken')
   )
-  return c.json(data)
-})
+}))
 
-solicitudes.post('/items/:itemId/rechazar', async (c) => {
-  const data = await solicitudesService.rechazarItem(
+solicitudes.post('/items/:itemId/rechazar', itemHandler(async (c) => {
+  return solicitudesService.rechazarItem(
     Number(c.req.param('itemId')), c.get('accessToken')
   )
-  return c.json(data)
-})
+}))
 
-solicitudes.post('/items/:itemId/revertir', async (c) => {
-  const data = await solicitudesService.revertirItem(
+solicitudes.post('/items/:itemId/revertir', itemHandler(async (c) => {
+  return solicitudesService.revertirItem(
     Number(c.req.param('itemId')), c.get('accessToken')
   )
-  return c.json(data)
-})
+}))
 
-solicitudes.patch('/items/:itemId', zValidator('json', EditarItemSchema), async (c) => {
-  const data = await solicitudesService.editarItem(
+solicitudes.patch('/items/:itemId', zValidator('json', EditarItemSchema), itemHandler(async (c) => {
+  return solicitudesService.editarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
   return c.json(data)
