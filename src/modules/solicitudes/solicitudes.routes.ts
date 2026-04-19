@@ -96,7 +96,6 @@ solicitudes.patch('/items/:itemId', zValidator('json', EditarItemSchema), itemHa
   return solicitudesService.editarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
-  return c.json(data)
-})
+}))
 
 export default solicitudes
