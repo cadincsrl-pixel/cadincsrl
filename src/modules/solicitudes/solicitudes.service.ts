@@ -259,7 +259,7 @@ export const solicitudesService = {
       }
     }
 
-    await this._checkAndCreateMateriales(data.solicitud_id, token, userId)
+    await this._registrarMaterialCliente(itemId, data.solicitud_id, token, userId)
     return data
   },
 
@@ -304,7 +304,7 @@ export const solicitudesService = {
       })
     }
 
-    await this._checkAndCreateMateriales(data.solicitud_id, token, userId)
+    await this._registrarMaterialCliente(itemId, data.solicitud_id, token, userId)
     return data
   },
 
@@ -392,64 +392,59 @@ export const solicitudesService = {
   },
 
   // ── Genera materiales_a_cuenta_cliente cuando todos los ítems están resueltos ──
-  async _checkAndCreateMateriales(solicitudId: number, token: string, userId: string) {
+  // Registra UN ítem resuelto en materiales_a_cuenta_cliente (se llama al comprar o despachar)
+  async _registrarMaterialCliente(itemId: number, solicitudId: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
-    const { data: items } = await supabase
+    const { data: item } = await supabase
       .from('solicitud_compra_item')
       .select('*')
-      .eq('solicitud_id', solicitudId)
+      .eq('id', itemId)
+      .maybeSingle()
+    if (!item || !['comprado', 'de_deposito', 'enviado'].includes(item.estado)) return
 
-    if (!items) return
-
-    const actionable = items.filter(i => i.estado !== 'rechazado')
-    const allResuelto = actionable.every(i => ['comprado', 'de_deposito', 'enviado'].includes(i.estado))
-    if (!allResuelto) return
-
-    // Obtener obra_cod de la solicitud
     const { data: sol } = await supabase
       .from('solicitud_compra')
       .select('obra_cod')
       .eq('id', solicitudId)
-      .single()
+      .maybeSingle()
     if (!sol) return
 
-    // Upsert cada ítem resuelto
-    for (const item of actionable) {
-      const registro = {
-        obra_cod:         sol.obra_cod,
-        solicitud_id:     solicitudId,
-        item_id:          item.id,
-        descripcion:      item.descripcion,
-        cantidad:         item.cantidad,
-        unidad:           item.unidad,
-        precio_unit:      item.precio_unit,
-        precio_total:     item.cantidad * item.precio_unit,
-        origen:           item.estado === 'comprado' ? 'proveedor' : 'deposito',
-        proveedor_id:     item.proveedor_id,
-        factura_id:       item.factura_id,
-        fecha_resolucion: item.fecha_resolucion,
-        created_by:       userId,
-        updated_by:       userId,
-      }
+    // No registrar si la obra es depósito (es reposición de stock, no a cuenta del cliente)
+    const { data: obra } = await supabase
+      .from('obras')
+      .select('es_deposito')
+      .eq('cod', sol.obra_cod)
+      .maybeSingle()
+    if (obra?.es_deposito) return
 
-      // Intentar update, si no existe, insert
-      const { data: existing } = await supabase
-        .from('materiales_a_cuenta_cliente')
-        .select('id')
-        .eq('item_id', item.id)
-        .maybeSingle()
+    const registro = {
+      obra_cod:         sol.obra_cod,
+      solicitud_id:     solicitudId,
+      item_id:          item.id,
+      descripcion:      item.descripcion,
+      cantidad:         item.cantidad,
+      unidad:           item.unidad,
+      precio_unit:      item.precio_unit ?? 0,
+      precio_total:     item.cantidad * (item.precio_unit ?? 0),
+      origen:           item.estado === 'comprado' ? 'proveedor' : 'deposito',
+      proveedor_id:     item.proveedor_id,
+      factura_id:       item.factura_id,
+      fecha_resolucion: item.fecha_resolucion ?? new Date().toISOString().slice(0, 10),
+      created_by:       userId,
+      updated_by:       userId,
+    }
 
-      if (existing) {
-        await supabase
-          .from('materiales_a_cuenta_cliente')
-          .update({ ...registro, updated_by: userId })
-          .eq('item_id', item.id)
-      } else {
-        await supabase
-          .from('materiales_a_cuenta_cliente')
-          .insert(registro)
-      }
+    const { data: existing } = await supabase
+      .from('materiales_a_cuenta_cliente')
+      .select('id')
+      .eq('item_id', item.id)
+      .maybeSingle()
+
+    if (existing) {
+      await supabase.from('materiales_a_cuenta_cliente').update({ ...registro, updated_by: userId }).eq('item_id', item.id)
+    } else {
+      await supabase.from('materiales_a_cuenta_cliente').insert(registro)
     }
   },
 }
