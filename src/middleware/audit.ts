@@ -10,12 +10,19 @@ function parseRoute(path: string, method: string): { modulo: string; entidad: st
   const modulo = parts[0] ?? ''
   const accion = method === 'POST' ? 'crear' : method === 'PATCH' || method === 'PUT' ? 'actualizar' : method === 'DELETE' ? 'eliminar' : method
 
+  // Rutas de mantenimiento/bulk: no loguear (se dispararían en cada mount)
+  if (parts.includes('auto-archivar')) return null
+
   // Acciones especiales de solicitudes
   if (parts.includes('comprar')) return { modulo: 'solicitudes', entidad: 'ítem', accion: 'comprar' }
   if (parts.includes('despachar')) return { modulo: 'solicitudes', entidad: 'ítem', accion: 'despachar de depósito' }
   if (parts.includes('enviar')) return { modulo: 'solicitudes', entidad: 'ítem', accion: 'marcar enviado' }
   if (parts.includes('rechazar')) return { modulo: 'solicitudes', entidad: 'ítem', accion: 'rechazar' }
   if (parts.includes('revertir')) return { modulo: 'solicitudes', entidad: 'ítem', accion: 'revertir' }
+
+  // Acciones especiales de obras (archivar/desarchivar individual)
+  if (parts.includes('archivar')) return { modulo: 'obras', entidad: 'obra', accion: 'archivar' }
+  if (parts.includes('desarchivar')) return { modulo: 'obras', entidad: 'obra', accion: 'desarchivar' }
 
   // Mapeo de módulos
   const ENTIDADES: Record<string, string> = {
@@ -54,9 +61,19 @@ export async function auditMiddleware(c: Context, next: Next) {
   const user = c.get('user') as { id: string } | undefined
   if (!user) return
 
-  // Extraer ID de entidad de la URL
+  // Extraer ID de entidad de la URL. Para rutas con verbo al final
+  // (/obras/:cod/archivar, /solicitudes/:id/comprar, etc.) el ID es el
+  // penúltimo segmento.
+  const VERBOS_SUFIJO = new Set([
+    'archivar', 'desarchivar',
+    'comprar', 'despachar', 'enviar', 'rechazar', 'revertir',
+  ])
   const urlParts = path.split('/')
-  const entidadId = urlParts.length > 3 ? urlParts[urlParts.length - 1] : undefined
+  const last = urlParts[urlParts.length - 1] ?? ''
+  const prev = urlParts[urlParts.length - 2] ?? ''
+  const entidadId = urlParts.length > 3
+    ? (VERBOS_SUFIJO.has(last) ? prev : last)
+    : undefined
 
   // Nombre del usuario (del perfil en el token o del contexto)
   const token = c.get('accessToken') as string
