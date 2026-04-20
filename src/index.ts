@@ -59,6 +59,10 @@ app.get('/api/me', authMiddleware, (c) => {
   return c.json({ user })
 })
 
+// Audit middleware — loguea acciones POST/PATCH/DELETE exitosas
+// Debe declararse ANTES de las rutas para que Hono lo encadene
+app.use('/api/*', auditMiddleware)
+
 // Rutas
 app.route('/api/categorias', categoriasRoutes)
 app.route('/api/obras', obrasRoutes)
@@ -90,8 +94,6 @@ app.route('/api/admin', adminRoutes)
 app.route('/api/remitos-envio', remitosEnvioRoutes)
 app.route('/api/caja', cajaRoutes)
 
-// Audit middleware — loguea acciones POST/PATCH/DELETE exitosas
-app.use('/api/*', auditMiddleware)
 // ── Manejo global de errores ──
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
