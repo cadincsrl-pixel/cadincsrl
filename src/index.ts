@@ -35,6 +35,7 @@ import proveedoresRoutes from './modules/proveedores/proveedores.routes.js'
 import facturasCompraRoutes from './modules/facturas-compra/facturas-compra.routes.js'
 import stockRoutes from './modules/stock/stock.routes.js'
 import adminRoutes from './modules/admin/admin.routes.js'
+import remitosEnvioRoutes from './modules/remitos-envio/remitos-envio.routes.js'
 import { cajaRoutes } from './modules/caja/caja.routes.js'
 
 
@@ -86,6 +87,7 @@ app.route('/api/proveedores', proveedoresRoutes)
 app.route('/api/facturas-compra', facturasCompraRoutes)
 app.route('/api/stock', stockRoutes)
 app.route('/api/admin', adminRoutes)
+app.route('/api/remitos-envio', remitosEnvioRoutes)
 app.route('/api/caja', cajaRoutes)
 
 // Audit middleware — loguea acciones POST/PATCH/DELETE exitosas
