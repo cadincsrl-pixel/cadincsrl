@@ -43,7 +43,7 @@ solicitudes.patch('/:id', zValidator('json', UpdateSolicitudSchema), async (c) =
 })
 
 solicitudes.delete('/:id', async (c) => {
-  return c.json(await solicitudesService.delete(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await solicitudesService.delete(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // Helper: las acciones de ítems devuelven 404 si no encuentran el ítem

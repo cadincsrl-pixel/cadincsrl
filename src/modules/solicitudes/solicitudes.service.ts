@@ -161,8 +161,43 @@ export const solicitudesService = {
     return this.getById(id, token)
   },
 
-  async delete(id: number, token: string) {
+  async delete(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Revertir stock de ítems despachados de depósito
+    const { data: items } = await supabase
+      .from('solicitud_compra_item')
+      .select('id, estado, material_id, cantidad')
+      .eq('solicitud_id', id)
+    if (items) {
+      for (const item of items) {
+        if (item.material_id && (item.estado === 'de_deposito' || item.estado === 'enviado')) {
+          const { data: mat } = await supabase
+            .from('stock_materiales')
+            .select('stock_actual')
+            .eq('id', item.material_id)
+            .maybeSingle()
+          if (mat) {
+            await supabase
+              .from('stock_materiales')
+              .update({ stock_actual: mat.stock_actual + item.cantidad, updated_by: userId })
+              .eq('id', item.material_id)
+            await supabase.from('stock_movimientos').insert({
+              material_id: item.material_id,
+              tipo: 'entrada',
+              cantidad: item.cantidad,
+              motivo: 'devolucion',
+              obs: `Devolución por eliminación de solicitud #${id}`,
+              fecha: new Date().toISOString().slice(0, 10),
+              created_by: userId,
+            })
+          }
+        }
+      }
+      // Borrar materiales_a_cuenta_cliente vinculados
+      await supabase.from('materiales_a_cuenta_cliente').delete().eq('solicitud_id', id)
+    }
+
     const { error } = await supabase.from('solicitud_compra').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }
