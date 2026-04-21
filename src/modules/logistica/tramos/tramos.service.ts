@@ -5,10 +5,14 @@ export const tramosService = {
 
   async getAll(token: string) {
     const supabase = createSupabaseClient(token)
+    // Orden estable: fecha_operacion DESC y, como desempate dentro del
+    // mismo día, id DESC (el creado más tarde queda arriba). Sin el
+    // tiebreaker, un UPDATE podía reordenar filas con la misma fecha.
     const { data, error } = await supabase
       .from('tramos')
       .select('*')
       .order('fecha_operacion', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: false })
     if (error) throw new Error(error.message)
     return data
   },
