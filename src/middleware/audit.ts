@@ -12,6 +12,7 @@ function parseRoute(path: string, method: string): { modulo: string; entidad: st
 
   // Rutas de mantenimiento/bulk: no loguear (se dispararían en cada mount)
   if (parts.includes('auto-archivar')) return null
+  if (parts.includes('mover')) return null
 
   // Acciones especiales de solicitudes
   if (parts.includes('comprar')) return { modulo: 'solicitudes', entidad: 'ítem', accion: 'comprar' }
@@ -67,6 +68,7 @@ export async function auditMiddleware(c: Context, next: Next) {
   const VERBOS_SUFIJO = new Set([
     'archivar', 'desarchivar',
     'comprar', 'despachar', 'enviar', 'rechazar', 'revertir',
+    'mover',
   ])
   const urlParts = path.split('/')
   const last = urlParts[urlParts.length - 1] ?? ''
