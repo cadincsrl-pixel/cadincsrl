@@ -48,13 +48,51 @@ function parseRoute(path: string, method: string): { modulo: string; entidad: st
   return { modulo, entidad, accion }
 }
 
+// Resume el body del request como texto plano: "campo=valor · campo=valor".
+// Omite claves sensibles, valores vacíos y valores demasiado largos (URLs).
+const CLAVES_OMITIDAS = new Set([
+  'password', 'token', 'access_token', 'refresh_token',
+  'created_by', 'updated_by',
+])
+function formatearBody(body: unknown): string {
+  if (!body || typeof body !== 'object') return ''
+  const partes: string[] = []
+  for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+    if (CLAVES_OMITIDAS.has(k)) continue
+    if (v === null || v === undefined || v === '') continue
+    let val: string
+    if (typeof v === 'string') {
+      if (v.length > 80) continue // URLs largas u observaciones extensas
+      val = v
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      val = String(v)
+    } else if (Array.isArray(v)) {
+      val = `[${v.length}]`
+    } else {
+      continue
+    }
+    partes.push(`${k}=${val}`)
+  }
+  const out = partes.join(' · ')
+  return out.length > 500 ? out.slice(0, 497) + '...' : out
+}
+
 export async function auditMiddleware(c: Context, next: Next) {
+  // Capturamos el body antes de que las rutas lo consuman (clonamos el Request)
+  let detalle = ''
+  const method = c.req.method
+  if (method === 'POST' || method === 'PATCH' || method === 'PUT') {
+    try {
+      const body = await c.req.raw.clone().json()
+      detalle = formatearBody(body)
+    } catch { /* body no-JSON o vacío → sin detalle */ }
+  }
+
   await next()
 
   // Solo loguear si la respuesta fue exitosa (2xx)
   if (c.res.status < 200 || c.res.status >= 300) return
 
-  const method = c.req.method
   const path = c.req.path
   const parsed = parseRoute(path, method)
   if (!parsed) return
@@ -88,6 +126,7 @@ export async function auditMiddleware(c: Context, next: Next) {
     accion: parsed.accion,
     entidad: parsed.entidad,
     entidad_id: entidadId !== parsed.modulo ? entidadId : undefined,
+    detalle: detalle || undefined,
     ip,
   }, token)
 }
