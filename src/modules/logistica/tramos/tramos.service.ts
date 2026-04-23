@@ -135,7 +135,9 @@ export const tramosService = {
       .update({
         fecha_descarga:          null,
         toneladas_descarga:      null,
-        remito_descarga:         null,
+        // remito_descarga tiene NOT NULL con default ''. Usamos '' en lugar
+        // de null para volver al valor "sin remito" sin violar la constraint.
+        remito_descarga:         '',
         remito_descarga_img_url: null,
         estado:                  'en_curso',
         updated_by:              userId,
