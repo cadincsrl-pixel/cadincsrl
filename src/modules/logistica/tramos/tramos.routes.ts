@@ -35,6 +35,26 @@ tramos.post('/:id/descarga', zValidator('json', RegistrarDescargaSchema), async 
   return c.json(data)
 })
 
+// Revertir el registro de descarga. Mapea errores del service a status HTTP:
+//   TRAMO_NO_EXISTE    → 404
+//   TRAMO_SIN_DESCARGA → 400
+//   TRAMO_LIQUIDADO    → 409
+//   TRAMO_COBRADO      → 409
+tramos.post('/:id/revertir-descarga', async (c) => {
+  try {
+    const data = await tramosService.revertirDescarga(
+      Number(c.req.param('id')), c.get('accessToken'), c.get('user').id,
+    )
+    return c.json(data)
+  } catch (err: any) {
+    if (err.code === 'TRAMO_NO_EXISTE')    return c.json({ error: err.code, message: err.message }, 404)
+    if (err.code === 'TRAMO_SIN_DESCARGA') return c.json({ error: err.code, message: err.message }, 400)
+    if (err.code === 'TRAMO_LIQUIDADO')    return c.json({ error: err.code, message: err.message }, 409)
+    if (err.code === 'TRAMO_COBRADO')      return c.json({ error: err.code, message: err.message }, 409)
+    return c.json({ error: err.message }, 500)
+  }
+})
+
 tramos.post('/:id/mover', zValidator('json', MoverSchema), async (c) => {
   const { dir } = c.req.valid('json')
   const data = await tramosService.mover(Number(c.req.param('id')), dir, c.get('accessToken'))
