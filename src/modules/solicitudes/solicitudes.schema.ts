@@ -42,7 +42,13 @@ export const ComprarItemSchema = z.object({
 
 // Resolver ítem: despachar de depósito
 export const DespacharItemSchema = z.object({
-  precio_unit: z.number().min(0),
+  precio_unit:        z.number().min(0),
+  // Flag para forzar el despacho cuando no hay stock suficiente.
+  // Requiere permiso extra `certificaciones.forzar_despacho` — lo valida
+  // el handler del route. El service NO lee este campo del dto: el route
+  // lo extrae, lo valida y lo pasa como argumento explícito a
+  // `solicitudesService.despacharItem(..., forzarSinStock)`.
+  forzar_sin_stock:   z.boolean().optional(),
 })
 
 // Enviar ítem

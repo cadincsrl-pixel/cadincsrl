@@ -1,3 +1,4 @@
+import type { PostgrestError } from '@supabase/supabase-js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
@@ -5,6 +6,62 @@ import type {
 } from './solicitudes.schema.js'
 
 type ItemEstado = 'pendiente' | 'comprado' | 'de_deposito' | 'enviado' | 'rechazado'
+
+// ── Feature flag ─────────────────────────────────────────────
+// Si USE_RPC_RESOLVER === 'true', resolverItem{Compra,Despacho} usan las
+// RPCs transaccionales en Postgres. Por defecto (flag ausente o distinto)
+// se mantiene el camino legacy no-transaccional para poder hacer rollback
+// instantáneo sin redeploy.
+function useRpcResolver(): boolean {
+  return process.env.USE_RPC_RESOLVER === 'true'
+}
+
+// ── HttpError + mapper de errores de RPC ──────────────────────
+// El handler de rutas (itemHandler) respeta esta clase: si se lanza,
+// devuelve status/code/detail como JSON. Si se lanza un Error común,
+// cae al flujo anterior (legacy).
+export class HttpError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    public detail?: unknown,
+  ) {
+    super(code)
+    this.name = 'HttpError'
+  }
+}
+
+function parseDetail(details: string | null | undefined): unknown {
+  if (!details) return undefined
+  try {
+    return JSON.parse(details)
+  } catch {
+    return details
+  }
+}
+
+export function mapRpcError(error: PostgrestError): HttpError {
+  const msg = error.message || ''
+  const code =
+    /ITEM_NO_EXISTE/.test(msg)      ? 'ITEM_NO_EXISTE' :
+    /ITEM_NO_DISPONIBLE/.test(msg)  ? 'ITEM_NO_DISPONIBLE' :
+    /PROVEEDOR_INVALIDO/.test(msg)  ? 'PROVEEDOR_INVALIDO' :
+    /FACTURA_INVALIDA/.test(msg)    ? 'FACTURA_INVALIDA' :
+    /STOCK_INSUFICIENTE/.test(msg)  ? 'STOCK_INSUFICIENTE' :
+    /ITEM_YA_REGISTRADO/.test(msg)  ? 'ITEM_YA_REGISTRADO' :
+    error.code || 'UNKNOWN'
+
+  switch (code) {
+    case 'ITEM_NO_EXISTE':     return new HttpError(404, code)
+    case 'ITEM_NO_DISPONIBLE': return new HttpError(404, code) // mantiene 404 legacy
+    case 'PROVEEDOR_INVALIDO': return new HttpError(400, code)
+    case 'FACTURA_INVALIDA':   return new HttpError(400, code)
+    case 'STOCK_INSUFICIENTE': return new HttpError(400, code, parseDetail(error.details))
+    case 'ITEM_YA_REGISTRADO': return new HttpError(409, code)
+    case '23503':              return new HttpError(500, 'INTEGRIDAD_REFERENCIAL')
+    default:                   return new HttpError(500, 'DB_ERROR', { dbMessage: msg })
+  }
+}
 
 function calcProgreso(items: Array<{ estado: ItemEstado }>): string {
   const actionable = items.filter(i => i.estado !== 'rechazado')
@@ -205,7 +262,94 @@ export const solicitudesService = {
 
   // ── Acciones sobre ítems ─────────────────────────────────
 
+  // Dispatcher: según feature flag, usa RPC transaccional o camino legacy.
   async comprarItem(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
+    if (useRpcResolver()) return this.comprarItemViaRPC(itemId, dto, token, userId)
+    return this.comprarItemLegacy(itemId, dto, token, userId)
+  },
+
+  // `forzarSinStock` es un parámetro **explícito** (no se lee del dto).
+  // La autorización de este modo se valida en el route (permiso
+  // `certificaciones.forzar_despacho`); cualquier caller directo del
+  // service debe pasar el flag a conciencia. Defensa en profundidad:
+  // el service no confía en que la capa de arriba haya validado.
+  async despacharItem(
+    itemId: number,
+    dto: DespacharItemDto,
+    token: string,
+    userId: string,
+    forzarSinStock: boolean = false,
+  ) {
+    if (useRpcResolver()) return this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
+    return this.despacharItemLegacy(itemId, dto, token, userId, forzarSinStock)
+  },
+
+  // Camino RPC — transaccional en Postgres (resolver_item_compra).
+  //
+  // Shape de respuesta elegido: (b) getById del item post-RPC.
+  // Razón: el frontend (useComprarItem/useDespacharItem) consume el row
+  // de solicitud_compra_item con join a solicitud_compra(id, obra_cod)
+  // tal como lo devuelve el legacy. La RPC devuelve 12 columnas con un
+  // shape distinto. Para no romper el contrato durante el rollout con
+  // flag, hacemos un SELECT extra tras la RPC y devolvemos el mismo
+  // shape que el legacy. Costo: un round-trip adicional (despreciable
+  // comparado con mantener estabilidad del frontend).
+  async comprarItemViaRPC(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.rpc('resolver_item_compra', {
+      p_item_id:      itemId,
+      p_proveedor_id: dto.proveedor_id,
+      p_precio_unit:  dto.precio_unit,
+      p_factura_id:   dto.factura_id ?? null,
+      p_user_id:      userId,
+    })
+    if (error) throw mapRpcError(error)
+    // La RPC ya registra en materiales_a_cuenta_cliente (y en stock,
+    // si corresponde) dentro de la transacción. NO llamar a
+    // _registrarMaterialCliente acá — sería doble registro.
+
+    const { data: item, error: selErr } = await supabase
+      .from('solicitud_compra_item')
+      .select('*, solicitud_compra(id, obra_cod)')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (selErr) throw new Error(selErr.message)
+    return item
+  },
+
+  async despacharItemViaRPC(
+    itemId: number,
+    dto: DespacharItemDto,
+    token: string,
+    userId: string,
+    forzarSinStock: boolean = false,
+  ) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.rpc('resolver_item_despacho', {
+      p_item_id:          itemId,
+      p_precio_unit:      dto.precio_unit,
+      p_user_id:          userId,
+      p_forzar_sin_stock: forzarSinStock,
+    })
+    if (error) throw mapRpcError(error)
+    // La RPC ya registra en materiales_a_cuenta_cliente (y en stock,
+    // si corresponde) dentro de la transacción. NO llamar a
+    // _registrarMaterialCliente acá — sería doble registro.
+
+    const { data: item, error: selErr } = await supabase
+      .from('solicitud_compra_item')
+      .select('*, solicitud_compra(id, obra_cod)')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (selErr) throw new Error(selErr.message)
+    return item
+  },
+
+  // ── Camino legacy (fallback de rollback) ──────────────────
+  // NO TOCAR sin coordinar: es el path que se activa cuando
+  // USE_RPC_RESOLVER no está en 'true'. Preserva el comportamiento
+  // histórico (múltiples llamadas no-transaccionales).
+  async comprarItemLegacy(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('solicitud_compra_item')
@@ -263,7 +407,16 @@ export const solicitudesService = {
     return data
   },
 
-  async despacharItem(itemId: number, dto: { precio_unit: number }, token: string, userId: string) {
+  // El legacy nunca validó saldo — siempre permitía quedar en negativo.
+  // El parámetro `forzarSinStock` se acepta por consistencia de firma
+  // con el dispatcher, pero no cambia el comportamiento.
+  async despacharItemLegacy(
+    itemId: number,
+    dto: DespacharItemDto,
+    token: string,
+    userId: string,
+    _forzarSinStock: boolean = false,
+  ) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('solicitud_compra_item')
@@ -391,7 +544,6 @@ export const solicitudesService = {
     return data
   },
 
-  // ── Genera materiales_a_cuenta_cliente cuando todos los ítems están resueltos ──
   // Registra UN ítem resuelto en materiales_a_cuenta_cliente (se llama al comprar o despachar)
   async _registrarMaterialCliente(itemId: number, solicitudId: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
