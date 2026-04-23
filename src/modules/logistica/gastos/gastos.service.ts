@@ -354,7 +354,48 @@ export const gastosService = {
     return data
   },
 
-  // ── Rechazar (Fase 1: solo lo dejo en service; endpoint en Fase 2) ──
+  // ── Marcar pagado ─────────────────────────────────────────────
+  // Flujo: aprobado → pagado. Solo para pagado_por='empresa' (los gastos
+  // del chofer se "pagan" al cerrarse la liquidación, eso vive en Fase 3).
+  // Separación de funciones: el que creó no puede marcar pagado (defensa
+  // simétrica al /aprobar).
+  async marcarPagado(id: number, token: string, userId: string) {
+    const sb = createSupabaseClient(token)
+
+    const { data: actual, error: e0 } = await sb
+      .from('gastos_logistica')
+      .select('id, estado, pagado_por, created_by, liquidacion_id')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .maybeSingle()
+    if (e0)     throw new HttpError(500, 'DB_ERROR', e0.message)
+    if (!actual) throw new HttpError(404, 'GASTO_NO_EXISTE')
+
+    if (actual.estado !== 'aprobado') {
+      throw new HttpError(409, 'GASTO_NO_APROBADO', { estado_actual: actual.estado })
+    }
+    if (actual.pagado_por !== 'empresa') {
+      throw new HttpError(400, 'SOLO_EMPRESA_SE_PAGA', {
+        message: 'Los gastos pagados por el chofer se reintegran al cerrar la liquidación, no se marcan como pagado aquí.',
+      })
+    }
+    if (actual.created_by === userId) {
+      throw new HttpError(403, 'NO_PUEDE_PAGAR_PROPIO', {
+        message: 'No podés marcar pagado un gasto que vos mismo creaste.',
+      })
+    }
+
+    const { data, error } = await sb
+      .from('gastos_logistica')
+      .update({ estado: 'pagado', updated_by: userId })
+      .eq('id', id)
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)')
+      .single()
+    if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+    return data
+  },
+
+  // ── Rechazar ─────────────────────────────────────────────────
   async rechazar(id: number, dto: RechazarGastoDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
 
@@ -384,6 +425,148 @@ export const gastosService = {
       .single()
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
     return data
+  },
+
+  // ── Reportes agregados ────────────────────────────────────────
+  // Todos operan sobre gastos no eliminados del rango [desde, hasta].
+  // Volumen PYME: agregación en JS es viable. Si crece, migrar a RPC.
+
+  async reporteResumen(desde: string, hasta: string, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data, error } = await sb
+      .from('gastos_logistica')
+      .select('monto, estado, pagado_por, metodo_pago, liquidacion_id')
+      .gte('fecha', desde)
+      .lte('fecha', hasta)
+      .is('deleted_at', null)
+    if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+
+    const rows = data ?? []
+    const num  = (v: any) => Number(v ?? 0)
+    const total = rows.reduce((s, g) => s + num(g.monto), 0)
+    const count = rows.length
+
+    const groupBy = (key: string) => {
+      const out: Record<string, { total: number; count: number }> = {}
+      for (const g of rows) {
+        const k = String((g as any)[key])
+        if (!out[k]) out[k] = { total: 0, count: 0 }
+        out[k].total += num(g.monto)
+        out[k].count += 1
+      }
+      return out
+    }
+
+    const reintegros_pendientes = rows
+      .filter(g => g.pagado_por === 'chofer' && g.estado === 'aprobado' && !g.liquidacion_id)
+      .reduce((s, g) => s + num(g.monto), 0)
+
+    const pendientes_aprobacion = rows
+      .filter(g => g.estado === 'pendiente')
+      .reduce((s, g) => s + num(g.monto), 0)
+
+    return {
+      total,
+      count,
+      promedio:               count > 0 ? total / count : 0,
+      reintegros_pendientes,
+      pendientes_aprobacion,
+      por_estado:      groupBy('estado'),
+      por_pagado_por:  groupBy('pagado_por'),
+      por_metodo_pago: groupBy('metodo_pago'),
+    }
+  },
+
+  async reportePorCamion(desde: string, hasta: string, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data, error } = await sb
+      .from('gastos_logistica')
+      .select('monto, camion_id, categoria:gastos_categorias(id,codigo,nombre), camion:camiones(id,patente)')
+      .gte('fecha', desde)
+      .lte('fecha', hasta)
+      .is('deleted_at', null)
+      .not('camion_id', 'is', null)
+    if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+
+    const map = new Map<number, { camion_id: number; patente: string; total: number; count: number; por_categoria: Record<string, number> }>()
+    for (const g of (data ?? []) as any[]) {
+      const id = g.camion_id as number
+      if (!map.has(id)) {
+        map.set(id, { camion_id: id, patente: g.camion?.patente ?? `#${id}`, total: 0, count: 0, por_categoria: {} })
+      }
+      const row = map.get(id)!
+      const monto = Number(g.monto ?? 0)
+      row.total += monto
+      row.count += 1
+      const cat = g.categoria?.codigo ?? 'desconocida'
+      row.por_categoria[cat] = (row.por_categoria[cat] ?? 0) + monto
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total)
+  },
+
+  async reportePorChofer(desde: string, hasta: string, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data, error } = await sb
+      .from('gastos_logistica')
+      .select('monto, chofer_id, pagado_por, liquidacion_id, estado, categoria:gastos_categorias(id,codigo,nombre), chofer:choferes(id,nombre)')
+      .gte('fecha', desde)
+      .lte('fecha', hasta)
+      .is('deleted_at', null)
+      .not('chofer_id', 'is', null)
+    if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+
+    const map = new Map<number, { chofer_id: number; nombre: string; total: number; count: number; reintegros_pendientes: number; por_categoria: Record<string, number> }>()
+    for (const g of (data ?? []) as any[]) {
+      const id = g.chofer_id as number
+      if (!map.has(id)) {
+        map.set(id, { chofer_id: id, nombre: g.chofer?.nombre ?? `#${id}`, total: 0, count: 0, reintegros_pendientes: 0, por_categoria: {} })
+      }
+      const row = map.get(id)!
+      const monto = Number(g.monto ?? 0)
+      row.total += monto
+      row.count += 1
+      if (g.pagado_por === 'chofer' && g.estado === 'aprobado' && !g.liquidacion_id) {
+        row.reintegros_pendientes += monto
+      }
+      const cat = g.categoria?.codigo ?? 'desconocida'
+      row.por_categoria[cat] = (row.por_categoria[cat] ?? 0) + monto
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total)
+  },
+
+  async reportePorCategoria(desde: string, hasta: string, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data, error } = await sb
+      .from('gastos_logistica')
+      .select('monto, categoria_id, categoria:gastos_categorias(id,codigo,nombre,orden)')
+      .gte('fecha', desde)
+      .lte('fecha', hasta)
+      .is('deleted_at', null)
+    if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+
+    const rows = (data ?? []) as any[]
+    const totalGeneral = rows.reduce((s, g) => s + Number(g.monto ?? 0), 0)
+
+    const map = new Map<number, { categoria_id: number; codigo: string; nombre: string; orden: number; total: number; count: number; pct: number }>()
+    for (const g of rows) {
+      const id = g.categoria_id as number
+      if (!map.has(id)) {
+        map.set(id, {
+          categoria_id: id,
+          codigo:  g.categoria?.codigo  ?? `#${id}`,
+          nombre:  g.categoria?.nombre  ?? `#${id}`,
+          orden:   g.categoria?.orden   ?? 0,
+          total: 0, count: 0, pct: 0,
+        })
+      }
+      const row = map.get(id)!
+      row.total += Number(g.monto ?? 0)
+      row.count += 1
+    }
+    for (const row of map.values()) {
+      row.pct = totalGeneral > 0 ? (row.total / totalGeneral) * 100 : 0
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total)
   },
 
   // ── Reintegros pendientes (usado por el cierre de liquidación) ──

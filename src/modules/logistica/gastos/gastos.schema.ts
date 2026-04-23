@@ -80,6 +80,15 @@ export const ListGastosQuerySchema = z.object({
   offset:         z.coerce.number().int().min(0).default(0),
 })
 
+// ── Rango de fechas para reportes ────────────────────────────────
+export const ReporteRangoQuerySchema = z.object({
+  desde: FechaISO,
+  hasta: FechaISO,
+}).refine(d => d.desde <= d.hasta, {
+  message: 'desde debe ser <= hasta',
+  path:    ['desde'],
+})
+
 // ── Upload de comprobante ────────────────────────────────────────
 export const UploadComprobanteSchema = z.object({
   filename:     z.string().min(1).max(200),
@@ -112,6 +121,7 @@ export type UpdateGastoDto        = z.infer<typeof UpdateGastoSchema>
 export type RechazarGastoDto      = z.infer<typeof RechazarGastoSchema>
 export type MarcarPagadoDto       = z.infer<typeof MarcarPagadoSchema>
 export type ListGastosQuery       = z.infer<typeof ListGastosQuerySchema>
+export type ReporteRangoQuery     = z.infer<typeof ReporteRangoQuerySchema>
 export type UploadComprobanteDto  = z.infer<typeof UploadComprobanteSchema>
 export type CreateCategoriaDto    = z.infer<typeof CreateCategoriaSchema>
 export type UpdateCategoriaDto    = z.infer<typeof UpdateCategoriaSchema>
