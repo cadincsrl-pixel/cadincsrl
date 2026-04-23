@@ -82,6 +82,85 @@ async function procesarComprobante(
   return { url: path, hash }
 }
 
+// Heurísticas de detección de odómetro sospechoso. Devuelven warnings
+// que se persisten en cargas_combustible.warnings (jsonb).
+async function detectarWarningsOdometro(
+  sb: ReturnType<typeof createSupabaseClient>,
+  camionId: number,
+  odometroNuevo: number,
+  fecha: string,
+  warnings: Array<{ code: string; detail?: unknown }>,
+) {
+  // Última carga del camión con odómetro registrado.
+  const { data: ultima } = await sb
+    .from('v_cargas_combustible')
+    .select('odometro_km, fecha')
+    .eq('camion_id', camionId)
+    .not('odometro_km', 'is', null)
+    .lte('fecha', fecha)
+    .order('fecha', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!ultima || ultima.odometro_km == null) return
+
+  const prev = Number(ultima.odometro_km)
+  const delta = odometroNuevo - prev
+
+  // Retroceso o estancado.
+  if (delta < 0) {
+    warnings.push({
+      code: 'ODOMETRO_RETROCEDE',
+      detail: { ultimo_km: prev, este_km: odometroNuevo, fecha_ultimo: ultima.fecha },
+    })
+    return
+  }
+  if (delta === 0) {
+    warnings.push({ code: 'ODOMETRO_ESTANCADO', detail: { km: prev } })
+    return
+  }
+
+  // Cross-check contra tramos: sumar km_ida_vuelta entre fecha_ultimo y fecha.
+  const { data: tramos } = await sb
+    .from('tramos')
+    .select('cantera_id, deposito_id')
+    .eq('camion_id', camionId)
+    .gt('fecha_operacion', ultima.fecha)
+    .lte('fecha_operacion', fecha)
+
+  if (tramos && tramos.length > 0) {
+    const canteraIds  = [...new Set(tramos.map((t: any) => t.cantera_id).filter(Boolean))]
+    const depositoIds = [...new Set(tramos.map((t: any) => t.deposito_id).filter(Boolean))]
+    if (canteraIds.length > 0 && depositoIds.length > 0) {
+      const { data: rutas } = await sb
+        .from('rutas')
+        .select('cantera_id, deposito_id, km_ida_vuelta')
+        .in('cantera_id', canteraIds)
+        .in('deposito_id', depositoIds)
+      const rutaMap = new Map<string, number>()
+      for (const r of (rutas ?? []) as any[]) {
+        rutaMap.set(`${r.cantera_id}_${r.deposito_id}`, Number(r.km_ida_vuelta ?? 0))
+      }
+      const kmTramos = tramos.reduce((s: number, t: any) =>
+        s + (rutaMap.get(`${t.cantera_id}_${t.deposito_id}`) ?? 0), 0)
+      if (kmTramos > 0) {
+        const discrepancia = Math.abs(delta - kmTramos) / kmTramos
+        if (discrepancia > 0.3) {
+          warnings.push({
+            code: 'ODOMETRO_VS_TRAMOS_DISCREPANCIA',
+            detail: {
+              delta_odometro: delta,
+              km_tramos: Math.round(kmTramos),
+              discrepancia_pct: Math.round(discrepancia * 100),
+              message: 'El km recorrido por odómetro difiere mucho de los km de tramos registrados.',
+            },
+          })
+        }
+      }
+    }
+  }
+}
+
 export const gastosService = {
 
   // ── Catálogo de categorías ───────────────────────────────────
@@ -137,7 +216,7 @@ export const gastosService = {
     const sb = createSupabaseClient(token)
     let q = sb
       .from('gastos_logistica')
-      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)', { count: 'exact' })
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)', { count: 'exact' })
       .is('deleted_at', null)
 
     if (filters.camion_id)     q = q.eq('camion_id',    filters.camion_id)
@@ -179,7 +258,7 @@ export const gastosService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('gastos_logistica')
-      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)')
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .eq('id', id)
       .is('deleted_at', null)
       .maybeSingle()
@@ -193,6 +272,9 @@ export const gastosService = {
   // entran directo a 'aprobado' (caso típico en PYMEs donde el admin es
   // el único que carga gastos). Operadores siguen entrando a 'pendiente'
   // y requieren que OTRO usuario los apruebe (separación de funciones).
+  //
+  // Si categoría = 'combustible' y viene carga_combustible, usamos la RPC
+  // sp_crear_gasto_con_carga para que ambos inserts sean atómicos.
   async create(dto: CreateGastoDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
 
@@ -208,6 +290,100 @@ export const gastosService = {
       .maybeSingle()
     const esAdmin = profile?.rol === 'admin'
 
+    // Resolver codigo de categoría para validación cruzada con carga de
+    // combustible (RPC también valida, pero queremos feedback rápido sin
+    // ir al RPC si es obvio).
+    const { data: cat } = await sb
+      .from('gastos_categorias')
+      .select('codigo')
+      .eq('id', dto.categoria_id)
+      .maybeSingle()
+    const esCombustible = cat?.codigo === 'combustible'
+
+    if (esCombustible && !dto.carga_combustible) {
+      throw new HttpError(400, 'CARGA_REQUERIDA', {
+        message: 'Los gastos de combustible requieren litros. Completá la sección de carga.',
+      })
+    }
+    if (!esCombustible && dto.carga_combustible) {
+      throw new HttpError(400, 'CARGA_NO_PERMITIDA', {
+        categoria_codigo: cat?.codigo,
+        message: 'Solo los gastos de combustible admiten metadata de carga.',
+      })
+    }
+
+    // Validación opcional contra capacidad del tanque del camión.
+    if (esCombustible && dto.carga_combustible && dto.camion_id) {
+      const { data: cam } = await sb
+        .from('camiones')
+        .select('capacidad_tanque_l')
+        .eq('id', dto.camion_id)
+        .maybeSingle()
+      const cap = cam?.capacidad_tanque_l ? Number(cam.capacidad_tanque_l) : null
+      if (cap && dto.carga_combustible.litros > cap * 1.05) {
+        throw new HttpError(400, 'LITROS_EXCEDE_TANQUE', {
+          litros: dto.carga_combustible.litros,
+          capacidad_tanque: cap,
+          message: `La carga supera en más del 5% la capacidad del tanque (${cap} L).`,
+        })
+      }
+    }
+
+    // Recolección de warnings no-bloqueantes antes del insert.
+    const warnings: Array<{ code: string; detail?: unknown }> = []
+    if (esCombustible && dto.carga_combustible?.odometro_km != null && dto.camion_id) {
+      await detectarWarningsOdometro(sb, dto.camion_id, dto.carga_combustible.odometro_km, dto.fecha, warnings)
+    }
+
+    // Rama A — RPC atómica (combustible con carga)
+    if (esCombustible && dto.carga_combustible) {
+      const gastoPayload = {
+        camion_id:        dto.camion_id ?? null,
+        chofer_id:        dto.chofer_id ?? null,
+        tramo_id:         dto.tramo_id ?? null,
+        lugar_id:         dto.lugar_id ?? null,
+        categoria_id:     dto.categoria_id,
+        fecha:            dto.fecha,
+        monto:            dto.monto,
+        descripcion:      dto.descripcion ?? '',
+        proveedor:        dto.proveedor ?? null,
+        metodo_pago:      dto.metodo_pago ?? 'efectivo',
+        pagado_por:       dto.pagado_por ?? 'empresa',
+        comprobante_url:  comp?.url  ?? null,
+        comprobante_hash: comp?.hash ?? null,
+        comprobante_nro:  dto.comprobante_nro ?? '',
+        obs:              dto.obs ?? '',
+      }
+      const cargaPayload = {
+        litros:           dto.carga_combustible.litros,
+        odometro_km:      dto.carga_combustible.odometro_km ?? null,
+        tipo_combustible: dto.carga_combustible.tipo_combustible ?? 'gasoil',
+        tanque_lleno:     dto.carga_combustible.tanque_lleno ?? true,
+        warnings,
+        obs:              dto.carga_combustible.obs ?? '',
+      }
+
+      const { data, error } = await sb.rpc('sp_crear_gasto_con_carga', {
+        p_gasto:        gastoPayload,
+        p_carga:        cargaPayload,
+        p_user_id:      userId,
+        p_auto_aprobar: esAdmin,
+      })
+      if (error) {
+        const msg = error.message || ''
+        if (msg.includes('CARGA_REQUERIDA'))    throw new HttpError(400, 'CARGA_REQUERIDA', msg)
+        if (msg.includes('CARGA_NO_PERMITIDA')) throw new HttpError(400, 'CARGA_NO_PERMITIDA', msg)
+        if (msg.includes('CATEGORIA_INVALIDA')) throw new HttpError(400, 'CATEGORIA_INVALIDA', msg)
+        throw new HttpError(500, 'DB_ERROR', msg)
+      }
+      // data es { gasto, carga_combustible }. Devolvemos el gasto con la
+      // carga anidada + warnings para que el front muestre toasts amarillos.
+      const response: Record<string, unknown> = { ...(data as any).gasto, carga_combustible: (data as any).carga_combustible }
+      if (warnings.length > 0) response.warnings = warnings
+      return response
+    }
+
+    // Rama B — insert simple (no-combustible)
     const row = {
       camion_id:       dto.camion_id ?? null,
       chofer_id:       dto.chofer_id ?? null,
@@ -234,7 +410,7 @@ export const gastosService = {
     const { data, error } = await sb
       .from('gastos_logistica')
       .insert(row)
-      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)')
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .single()
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
     return data
@@ -297,7 +473,7 @@ export const gastosService = {
       .from('gastos_logistica')
       .update(patch)
       .eq('id', id)
-      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)')
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .single()
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
     return data
@@ -362,7 +538,7 @@ export const gastosService = {
         updated_by:   userId,
       })
       .eq('id', id)
-      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)')
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .single()
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
     return data
@@ -403,7 +579,7 @@ export const gastosService = {
       .from('gastos_logistica')
       .update({ estado: 'pagado', updated_by: userId })
       .eq('id', id)
-      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)')
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .single()
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
     return data
@@ -435,7 +611,7 @@ export const gastosService = {
         updated_by:     userId,
       })
       .eq('id', id)
-      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a)')
+      .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .single()
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
     return data

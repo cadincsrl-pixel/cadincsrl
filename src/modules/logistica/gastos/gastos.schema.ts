@@ -1,12 +1,26 @@
 import { z } from 'zod'
 
 // ── Enums compartidos ────────────────────────────────────────────
-export const MetodoPagoEnum  = z.enum(['efectivo', 'transferencia', 'tarjeta', 'cheque', 'cta_cte', 'otro'])
-export const PagadoPorEnum   = z.enum(['empresa', 'chofer'])
-export const EstadoGastoEnum = z.enum(['pendiente', 'aprobado', 'rechazado', 'pagado'])
-export const AplicaAEnum     = z.enum(['camion', 'chofer', 'ambos'])
+export const MetodoPagoEnum     = z.enum(['efectivo', 'transferencia', 'tarjeta', 'cheque', 'cta_cte', 'otro'])
+export const PagadoPorEnum      = z.enum(['empresa', 'chofer'])
+export const EstadoGastoEnum    = z.enum(['pendiente', 'aprobado', 'rechazado', 'pagado'])
+export const AplicaAEnum        = z.enum(['camion', 'chofer', 'ambos'])
+export const TipoCombustibleEnum = z.enum(['gasoil', 'nafta', 'nafta_super', 'adblue'])
 
 const FechaISO = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato requerido: YYYY-MM-DD')
+
+// ── Metadata anidada de carga de combustible ─────────────────────
+// Se incluye en el body de POST /gastos cuando categoria.codigo = 'combustible'.
+// La validación cruzada (categoria ↔ presencia de carga) vive en el service.
+export const CargaCombustibleMetaSchema = z.object({
+  litros:           z.number().positive().multipleOf(0.001).max(9999.999),
+  odometro_km:      z.number().int().min(0).max(9_999_999).nullable().optional(),
+  tipo_combustible: TipoCombustibleEnum.default('gasoil'),
+  tanque_lleno:     z.boolean().default(true),
+  obs:              z.string().max(500).optional().default(''),
+})
+
+export type CargaCombustibleMetaDto = z.infer<typeof CargaCombustibleMetaSchema>
 
 // ── Crear gasto ──────────────────────────────────────────────────
 export const CreateGastoSchema = z.object({
@@ -24,6 +38,9 @@ export const CreateGastoSchema = z.object({
   comprobante_path: z.string().max(500).nullable().optional(),  // path en bucket (si hubo upload previo)
   comprobante_nro: z.string().max(100).optional().default(''),
   obs:             z.string().max(1000).optional().default(''),
+  // Metadata de combustible (solo cuando categoria.codigo='combustible').
+  // La validación cruzada vive en el service (requiere SELECT al catálogo).
+  carga_combustible: CargaCombustibleMetaSchema.optional(),
 }).refine(
   d => d.camion_id != null || d.chofer_id != null || d.tramo_id != null || d.lugar_id != null,
   { message: 'Debe especificar al menos camion_id, chofer_id, tramo_id o lugar_id', path: ['camion_id'] },
