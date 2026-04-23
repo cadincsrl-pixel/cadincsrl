@@ -16,8 +16,18 @@ liquidaciones.get('/',          async (c) => c.json(await liquidacionesService.g
 liquidaciones.get('/adelantos', async (c) => c.json(await liquidacionesService.getAdelantos(c.get('accessToken'))))
 
 liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) => {
-  const data = await liquidacionesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
-  return c.json(data, 201)
+  try {
+    const data = await liquidacionesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+    return c.json(data, 201)
+  } catch (err: any) {
+    // El RPC lanza TRAMO_INVALIDO / ADELANTO_INVALIDO / GASTO_INVALIDO cuando
+    // los IDs no pertenecen al chofer o ya están liquidados. Mapeo a 400.
+    const msg = err?.message ?? ''
+    if (msg.includes('TRAMO_INVALIDO'))    return c.json({ error: 'TRAMO_INVALIDO',    detail: err.detail }, 400)
+    if (msg.includes('ADELANTO_INVALIDO')) return c.json({ error: 'ADELANTO_INVALIDO', detail: err.detail }, 400)
+    if (msg.includes('GASTO_INVALIDO'))    return c.json({ error: 'GASTO_INVALIDO',    detail: err.detail }, 400)
+    return c.json({ error: msg || 'UNKNOWN' }, 500)
+  }
 })
 
 liquidaciones.patch('/:id', zValidator('json', UpdateLiquidacionSchema), async (c) => {
