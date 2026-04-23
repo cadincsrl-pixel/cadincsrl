@@ -1,6 +1,14 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
 import type { CreateTramoDto, UpdateTramoDto, RegistrarDescargaDto } from './tramos.schema.js'
 
+// Helper para errores con código que el handler HTTP mapea a status
+// específicos (ver tramos.routes.ts).
+function codedError(code: string, message: string): Error {
+  const e = new Error(message) as Error & { code?: string }
+  e.code = code
+  return e
+}
+
 export const tramosService = {
 
   async getAll(token: string) {
@@ -95,6 +103,43 @@ export const tramosService = {
     const { data, error } = await supabase
       .from('tramos')
       .update({ ...dto, estado: 'completado', updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  // Revertir el registro de descarga de un tramo: borra fecha, toneladas,
+  // nº de remito e imagen de descarga, y deja el estado en 'en_curso'.
+  // Bloquea si el tramo está liquidado o cobrado (rompería la contabilidad
+  // aguas abajo). No toca el archivo físico en Storage — queda huérfano y
+  // se limpia con un job aparte si hace falta.
+  async revertirDescarga(id: number, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+
+    // Cargar precondiciones.
+    const { data: tramo, error: e0 } = await supabase
+      .from('tramos')
+      .select('id, fecha_descarga, liquidacion_id, cobro_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (e0) throw new Error(e0.message)
+    if (!tramo)                 throw codedError('TRAMO_NO_EXISTE',    'Tramo no encontrado')
+    if (!tramo.fecha_descarga)  throw codedError('TRAMO_SIN_DESCARGA', 'El tramo no tiene descarga registrada')
+    if (tramo.liquidacion_id)   throw codedError('TRAMO_LIQUIDADO',    'No se puede revertir: el tramo está liquidado')
+    if (tramo.cobro_id)         throw codedError('TRAMO_COBRADO',      'No se puede revertir: el tramo está cobrado')
+
+    const { data, error } = await supabase
+      .from('tramos')
+      .update({
+        fecha_descarga:          null,
+        toneladas_descarga:      null,
+        remito_descarga:         null,
+        remito_descarga_img_url: null,
+        estado:                  'en_curso',
+        updated_by:              userId,
+      })
       .eq('id', id)
       .select()
       .single()
