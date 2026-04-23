@@ -188,13 +188,25 @@ export const gastosService = {
     return data
   },
 
-  // ── Crear gasto (siempre en estado='pendiente') ──────────────
+  // ── Crear gasto ──────────────────────────────────────────────
+  // Admin auto-aprueba: los gastos creados por un usuario con rol='admin'
+  // entran directo a 'aprobado' (caso típico en PYMEs donde el admin es
+  // el único que carga gastos). Operadores siguen entrando a 'pendiente'
+  // y requieren que OTRO usuario los apruebe (separación de funciones).
   async create(dto: CreateGastoDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
 
     // Procesar comprobante si viene en el body (ya está en el bucket desde
     // /upload-comprobante). Calcula hash + valida duplicados.
     const comp = await procesarComprobante(dto.comprobante_path ?? null)
+
+    // Chequear rol del usuario para decidir estado inicial.
+    const { data: profile } = await sb
+      .from('profiles')
+      .select('rol')
+      .eq('id', userId)
+      .maybeSingle()
+    const esAdmin = profile?.rol === 'admin'
 
     const row = {
       camion_id:       dto.camion_id ?? null,
@@ -212,7 +224,9 @@ export const gastosService = {
       comprobante_hash: comp?.hash ?? null,
       comprobante_nro: dto.comprobante_nro ?? '',
       obs:             dto.obs ?? '',
-      estado:          'pendiente', // siempre — nunca confiar en lo que venga en el body
+      estado:          esAdmin ? 'aprobado' : 'pendiente',
+      aprobado_por:    esAdmin ? userId : null,
+      aprobado_at:     esAdmin ? new Date().toISOString() : null,
       created_by:      userId,
       updated_by:      userId,
     }
