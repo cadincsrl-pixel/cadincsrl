@@ -5,7 +5,7 @@ import { requirePermiso } from '../../../middleware/permission.js'
 import { gastosService, HttpError } from './gastos.service.js'
 import {
   CreateGastoSchema, UpdateGastoSchema, RechazarGastoSchema,
-  ListGastosQuerySchema, UploadComprobanteSchema,
+  ListGastosQuerySchema, UploadComprobanteSchema, ReporteRangoQuerySchema,
 } from './gastos.schema.js'
 
 const gastos = new Hono()
@@ -49,6 +49,41 @@ gastos.post('/upload-comprobante',
 gastos.get('/:id/comprobante-url', handler(async (c) => {
   return gastosService.getComprobanteUrl(Number(c.req.param('id')), c.get('accessToken'))
 }))
+
+// ── Reportes agregados ─────────────────────────────────────────
+// IMPORTANTE: estas rutas van ANTES de /:id para que /reportes/X no sea
+// capturado como parámetro id.
+gastos.get('/reportes/resumen',
+  zValidator('query', ReporteRangoQuerySchema),
+  handler(async (c) => {
+    const { desde, hasta } = c.req.valid('query')
+    return gastosService.reporteResumen(desde, hasta, c.get('accessToken'))
+  }),
+)
+
+gastos.get('/reportes/por-camion',
+  zValidator('query', ReporteRangoQuerySchema),
+  handler(async (c) => {
+    const { desde, hasta } = c.req.valid('query')
+    return gastosService.reportePorCamion(desde, hasta, c.get('accessToken'))
+  }),
+)
+
+gastos.get('/reportes/por-chofer',
+  zValidator('query', ReporteRangoQuerySchema),
+  handler(async (c) => {
+    const { desde, hasta } = c.req.valid('query')
+    return gastosService.reportePorChofer(desde, hasta, c.get('accessToken'))
+  }),
+)
+
+gastos.get('/reportes/por-categoria',
+  zValidator('query', ReporteRangoQuerySchema),
+  handler(async (c) => {
+    const { desde, hasta } = c.req.valid('query')
+    return gastosService.reportePorCategoria(desde, hasta, c.get('accessToken'))
+  }),
+)
 
 // ── Reintegros pendientes (usado por liquidaciones) ────────────
 // IMPORTANTE: esta ruta debe ir ANTES de /:id para evitar que el
@@ -95,5 +130,11 @@ gastos.post('/:id/rechazar',
     )
   }),
 )
+
+gastos.post('/:id/marcar-pagado', handler(async (c) => {
+  return gastosService.marcarPagado(
+    Number(c.req.param('id')), c.get('accessToken'), c.get('user').id,
+  )
+}))
 
 export default gastos
