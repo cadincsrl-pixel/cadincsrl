@@ -34,6 +34,7 @@ function parseRoute(path: string, method: string): { modulo: string; entidad: st
     obras: 'obra',
     personal: 'personal',
     horas: 'hora',
+    'hs-extras': 'hs extra',
     categorias: 'categoría',
     tarifas: 'tarifa',
     contratistas: 'contratista',

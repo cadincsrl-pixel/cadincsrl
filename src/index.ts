@@ -12,6 +12,7 @@ import categoriasRoutes from './modules/categorias/categorias.routes.js'
 import obrasRoutes from './modules/obras/obras.routes.js'
 import personalRoutes from './modules/personal/personal.routes.js'
 import horasRoutes from './modules/horas/horas.routes.js'
+import hsExtrasRoutes from './modules/hs-extras/hs-extras.routes.js'
 import asignacionesRoutes from './modules/asignaciones/asignaciones.routes.js'
 import cierresRoutes from './modules/cierres/cierres.routes.js'
 import tarifasRoutes from './modules/tarifas/tarifas.routes.js'
@@ -69,6 +70,7 @@ app.route('/api/categorias', categoriasRoutes)
 app.route('/api/obras', obrasRoutes)
 app.route('/api/personal', personalRoutes)
 app.route('/api/horas', horasRoutes)
+app.route('/api/hs-extras', hsExtrasRoutes)
 app.route('/api/asignaciones', asignacionesRoutes)
 app.route('/api/cierres', cierresRoutes)
 app.route('/api/tarifas', tarifasRoutes)
