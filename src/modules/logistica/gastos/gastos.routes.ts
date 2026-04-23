@@ -7,6 +7,11 @@ import {
   CreateGastoSchema, UpdateGastoSchema, RechazarGastoSchema,
   ListGastosQuerySchema, UploadComprobanteSchema, ReporteRangoQuerySchema,
 } from './gastos.schema.js'
+import { combustibleService } from './combustible.service.js'
+import {
+  ListCargasQuerySchema, ConsumoCamionQuerySchema,
+  ConsumoChoferMesQuerySchema, RankingChoferesQuerySchema,
+} from './combustible.schema.js'
 
 const gastos = new Hono()
 
@@ -82,6 +87,42 @@ gastos.get('/reportes/por-categoria',
   handler(async (c) => {
     const { desde, hasta } = c.req.valid('query')
     return gastosService.reportePorCategoria(desde, hasta, c.get('accessToken'))
+  }),
+)
+
+// ── Submódulo combustible ──────────────────────────────────────
+// Los reportes de consumo son info gerencial. El middleware global
+// ya aplica requirePermiso('logistica','lectura'), pero hacemos el
+// gateo extra: solo usuarios con 'actualizacion' ven rankings entre
+// choferes (defensa server-side, no confiar solo en el frontend).
+gastos.get('/reportes/consumo-camion',
+  requirePermiso('logistica', 'actualizacion'),
+  zValidator('query', ConsumoCamionQuerySchema),
+  handler(async (c) => {
+    return combustibleService.consumoCamion(c.req.valid('query'), c.get('accessToken'))
+  }),
+)
+
+gastos.get('/reportes/consumo-chofer-mes',
+  requirePermiso('logistica', 'actualizacion'),
+  zValidator('query', ConsumoChoferMesQuerySchema),
+  handler(async (c) => {
+    return combustibleService.consumoChoferMes(c.req.valid('query'), c.get('accessToken'))
+  }),
+)
+
+gastos.get('/reportes/ranking-choferes',
+  requirePermiso('logistica', 'actualizacion'),
+  zValidator('query', RankingChoferesQuerySchema),
+  handler(async (c) => {
+    return combustibleService.rankingChoferes(c.req.valid('query'), c.get('accessToken'))
+  }),
+)
+
+gastos.get('/combustible',
+  zValidator('query', ListCargasQuerySchema),
+  handler(async (c) => {
+    return combustibleService.listCargas(c.req.valid('query'), c.get('accessToken'))
   }),
 )
 
