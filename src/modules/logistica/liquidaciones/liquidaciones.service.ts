@@ -1,5 +1,35 @@
+import type { PostgrestError } from '@supabase/supabase-js'
 import { createSupabaseClient } from '../../../lib/supabase.js'
 import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto, UpdateAdelantoDto } from './liquidaciones.schema.js'
+
+// Mapeo mínimo de errores de RPC (reabrir/eliminar). Usa la misma forma
+// de HttpError que solicitudes.service: status numérico + code + detail.
+export class LiqHttpError extends Error {
+  constructor(public status: number, public code: string, public detail?: unknown) {
+    super(code)
+    this.name = 'LiqHttpError'
+  }
+}
+
+function mapLiqRpcError(error: PostgrestError): LiqHttpError {
+  const msg = error.message || ''
+  const code =
+    /NO_AUTH/.test(msg)                   ? 'NO_AUTH' :
+    /SIN_PERFIL/.test(msg)                ? 'SIN_PERFIL' :
+    /SIN_PERMISO/.test(msg)               ? 'SIN_PERMISO' :
+    /LIQUIDACION_NO_EXISTE/.test(msg)     ? 'LIQUIDACION_NO_EXISTE' :
+    /LIQUIDACION_YA_EN_BORRADOR/.test(msg) ? 'LIQUIDACION_YA_EN_BORRADOR' :
+    error.code || 'UNKNOWN'
+
+  switch (code) {
+    case 'NO_AUTH':                     return new LiqHttpError(401, code)
+    case 'SIN_PERFIL':                  return new LiqHttpError(403, code)
+    case 'SIN_PERMISO':                 return new LiqHttpError(403, code, error.details ?? undefined)
+    case 'LIQUIDACION_NO_EXISTE':       return new LiqHttpError(404, code)
+    case 'LIQUIDACION_YA_EN_BORRADOR':  return new LiqHttpError(409, code)
+    default:                            return new LiqHttpError(500, 'DB_ERROR', { dbMessage: msg })
+  }
+}
 
 export const liquidacionesService = {
 
@@ -96,37 +126,40 @@ export const liquidacionesService = {
 
   async reabrir(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    // RPC transaccional: desliga tramos/adelantos/gastos y pone estado='borrador'
+    // atómicamente con FOR UPDATE. Migración 20260424_rpc_reabrir_eliminar_liquidacion.
+    const { data, error } = await supabase.rpc('reabrir_liquidacion', {
+      p_liquidacion_id: id,
+      p_user_id:        userId,
+    })
+    if (error) throw mapLiqRpcError(error)
 
-    // Desligar tramos y adelantos para que vuelvan al saldo corriente
-    await supabase.from('tramos').update({ liquidacion_id: null, updated_by: userId }).eq('liquidacion_id', id)
-    await supabase.from('adelantos').update({ liquidacion_id: null, updated_by: userId }).eq('liquidacion_id', id)
-
-    // Gastos: revertir estado 'pagado' → 'aprobado' y desvincular
-    // para que puedan re-incluirse en otra liquidación o editarse.
-    await supabase.from('gastos_logistica')
-      .update({ estado: 'aprobado', liquidacion_id: null, updated_by: userId })
-      .eq('liquidacion_id', id)
-
-    const { data, error } = await supabase
+    // Para mantener el shape del endpoint (el frontend espera la liquidación
+    // actualizada, no el conteo), hacemos un getById post-RPC.
+    const { data: liq, error: selErr } = await supabase
       .from('liquidaciones')
-      .update({ estado: 'borrador', updated_by: userId })
+      .select('*')
       .eq('id', id)
-      .select()
-      .single()
-    if (error) throw new Error(error.message)
-    return data
+      .maybeSingle()
+    if (selErr) throw new Error(selErr.message)
+    return liq ?? data
   },
 
   async delete(id: number, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
-    await supabase.from('tramos')    .update({ liquidacion_id: null, updated_by: userId ?? null }).eq('liquidacion_id', id)
-    await supabase.from('adelantos') .update({ liquidacion_id: null, updated_by: userId ?? null }).eq('liquidacion_id', id)
-    await supabase.from('gastos_logistica')
-      .update({ liquidacion_id: null, estado: 'aprobado', updated_by: userId ?? null })
-      .eq('liquidacion_id', id)
-    const { error } = await supabase.from('liquidaciones').delete().eq('id', id)
-    if (error) throw new Error(error.message)
-    return { success: true }
+    // RPC transaccional: desliga children y borra.
+    const { data, error } = await supabase.rpc('eliminar_liquidacion', {
+      p_liquidacion_id: id,
+      p_user_id:        userId ?? null,
+    })
+    if (error) throw mapLiqRpcError(error)
+    return data as {
+      success: boolean
+      liquidacion_id: number
+      tramos_desligados: number
+      adelantos_desligados: number
+      gastos_revertidos: number
+    }
   },
 
   async createAdelanto(dto: CreateAdelantoDto, token: string, userId: string) {
