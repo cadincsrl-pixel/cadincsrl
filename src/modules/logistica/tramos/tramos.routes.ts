@@ -57,8 +57,24 @@ tramos.post('/:id/revertir-descarga', async (c) => {
 
 tramos.post('/:id/mover', zValidator('json', MoverSchema), async (c) => {
   const { dir } = c.req.valid('json')
-  const data = await tramosService.mover(Number(c.req.param('id')), dir, c.get('accessToken'))
-  return c.json(data)
+  try {
+    const data = await tramosService.mover(
+      Number(c.req.param('id')),
+      dir,
+      c.get('accessToken'),
+      c.get('user').id,
+    )
+    return c.json(data)
+  } catch (err) {
+    const e = err as Error & { code?: string }
+    switch (e.code) {
+      case 'TRAMO_NO_EXISTE': return c.json({ error: e.code }, 404)
+      case 'TRAMO_SIN_FECHA':
+      case 'DIR_INVALIDA':    return c.json({ error: e.code }, 400)
+      case 'SIN_PERMISO':     return c.json({ error: e.code }, 403)
+      default:                return c.json({ error: e.message || 'UNKNOWN' }, 500)
+    }
+  }
 })
 
 tramos.delete('/:id', async (c) => {
