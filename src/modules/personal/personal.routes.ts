@@ -4,10 +4,16 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermisoOr } from '../../middleware/permission.js'
 import { personalService } from './personal.service.js'
 import { CreatePersonalSchema, UpdatePersonalSchema } from './personal.schema.js'
+import documentosRoutes from './documentos.routes.js'
 
 const personal = new Hono()
 
 personal.use('*', authMiddleware)
+
+// Sub-router para documentos del legajo (DNI, alta temprana, baja, telegrama).
+// Monta /:leg/documentos/... bajo /api/personal → rutas finales
+// /api/personal/:leg/documentos, .../upload-url, .../:id/signed-url, .../:id.
+personal.route('/', documentosRoutes)
 
 personal.get('/', requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]), async (c) => {
   const token = c.get('accessToken')
