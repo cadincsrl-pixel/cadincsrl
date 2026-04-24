@@ -128,7 +128,10 @@ export const tramosService = {
 
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
-    await supabase.from('liquidacion_tramos').delete().eq('tramo_id', id)
+    // liquidacion_tramos era del modelo paralelo viejo — tabla eliminada
+    // en la migración 20260424_drop_modelo_paralelo. El CASCADE de la FK
+    // tramos.liquidacion_id se maneja arriba (los tramos a liquidar se
+    // desligan primero en eliminar_liquidacion).
     const { error } = await supabase.from('tramos').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }
