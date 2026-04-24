@@ -46,6 +46,8 @@ export function mapRpcError(error: PostgrestError): HttpError {
     /NO_AUTH/.test(msg)             ? 'NO_AUTH' :
     /SIN_PERFIL/.test(msg)          ? 'SIN_PERFIL' :
     /SIN_PERMISO/.test(msg)         ? 'SIN_PERMISO' :
+    /SOLICITUD_NO_EXISTE/.test(msg) ? 'SOLICITUD_NO_EXISTE' :
+    /SOLICITUD_TIENE_REMITOS/.test(msg) ? 'SOLICITUD_TIENE_REMITOS' :
     /ITEM_NO_EXISTE/.test(msg)      ? 'ITEM_NO_EXISTE' :
     /ITEM_NO_DISPONIBLE/.test(msg)  ? 'ITEM_NO_DISPONIBLE' :
     /PROVEEDOR_INVALIDO/.test(msg)  ? 'PROVEEDOR_INVALIDO' :
@@ -55,17 +57,19 @@ export function mapRpcError(error: PostgrestError): HttpError {
     error.code || 'UNKNOWN'
 
   switch (code) {
-    case 'NO_AUTH':            return new HttpError(401, code)
-    case 'SIN_PERFIL':         return new HttpError(403, code)
-    case 'SIN_PERMISO':        return new HttpError(403, code, parseDetail(error.details))
-    case 'ITEM_NO_EXISTE':     return new HttpError(404, code)
-    case 'ITEM_NO_DISPONIBLE': return new HttpError(404, code) // mantiene 404 legacy
-    case 'PROVEEDOR_INVALIDO': return new HttpError(400, code)
-    case 'FACTURA_INVALIDA':   return new HttpError(400, code)
-    case 'STOCK_INSUFICIENTE': return new HttpError(400, code, parseDetail(error.details))
-    case 'ITEM_YA_REGISTRADO': return new HttpError(409, code)
-    case '23503':              return new HttpError(500, 'INTEGRIDAD_REFERENCIAL')
-    default:                   return new HttpError(500, 'DB_ERROR', { dbMessage: msg })
+    case 'NO_AUTH':               return new HttpError(401, code)
+    case 'SIN_PERFIL':            return new HttpError(403, code)
+    case 'SIN_PERMISO':           return new HttpError(403, code, parseDetail(error.details))
+    case 'SOLICITUD_NO_EXISTE':   return new HttpError(404, code)
+    case 'SOLICITUD_TIENE_REMITOS': return new HttpError(409, code)
+    case 'ITEM_NO_EXISTE':        return new HttpError(404, code)
+    case 'ITEM_NO_DISPONIBLE':    return new HttpError(404, code) // mantiene 404 legacy
+    case 'PROVEEDOR_INVALIDO':    return new HttpError(400, code)
+    case 'FACTURA_INVALIDA':      return new HttpError(400, code)
+    case 'STOCK_INSUFICIENTE':    return new HttpError(400, code, parseDetail(error.details))
+    case 'ITEM_YA_REGISTRADO':    return new HttpError(409, code)
+    case '23503':                 return new HttpError(500, 'INTEGRIDAD_REFERENCIAL')
+    default:                      return new HttpError(500, 'DB_ERROR', { dbMessage: msg })
   }
 }
 
@@ -200,11 +204,12 @@ export const solicitudesService = {
             obs:         it.obs ?? null,
           }
           if (it.material_id) updateItem.material_id = it.material_id
-          await supabase
+          const { error: updErr } = await supabase
             .from('solicitud_compra_item')
             .update(updateItem)
             .eq('id', it.id)
             .eq('estado', 'pendiente')
+          if (updErr) throw new Error(`Error actualizando ítem ${it.id}: ${updErr.message}`)
         } else {
           // Nuevo ítem
           const row: any = {
@@ -216,7 +221,8 @@ export const solicitudesService = {
             estado:       'pendiente',
           }
           if (it.material_id) row.material_id = it.material_id
-          await supabase.from('solicitud_compra_item').insert(row)
+          const { error: insErr } = await supabase.from('solicitud_compra_item').insert(row)
+          if (insErr) throw new Error(`Error insertando ítem: ${insErr.message}`)
         }
       }
     }
@@ -226,44 +232,15 @@ export const solicitudesService = {
 
   async delete(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-
-    // Revertir stock de ítems despachados de depósito
-    const { data: items } = await supabase
-      .from('solicitud_compra_item')
-      .select('id, estado, material_id, cantidad')
-      .eq('solicitud_id', id)
-    if (items) {
-      for (const item of items) {
-        if (item.material_id && (item.estado === 'de_deposito' || item.estado === 'enviado')) {
-          const { data: mat } = await supabase
-            .from('stock_materiales')
-            .select('stock_actual')
-            .eq('id', item.material_id)
-            .maybeSingle()
-          if (mat) {
-            await supabase
-              .from('stock_materiales')
-              .update({ stock_actual: mat.stock_actual + item.cantidad, updated_by: userId })
-              .eq('id', item.material_id)
-            await supabase.from('stock_movimientos').insert({
-              material_id: item.material_id,
-              tipo: 'entrada',
-              cantidad: item.cantidad,
-              motivo: 'devolucion',
-              obs: `Devolución por eliminación de solicitud #${id}`,
-              fecha: new Date().toISOString().slice(0, 10),
-              created_by: userId,
-            })
-          }
-        }
-      }
-      // Borrar materiales_a_cuenta_cliente vinculados
-      await supabase.from('materiales_a_cuenta_cliente').delete().eq('solicitud_id', id)
-    }
-
-    const { error } = await supabase.from('solicitud_compra').delete().eq('id', id)
-    if (error) throw new Error(error.message)
-    return { success: true }
+    // RPC transaccional: revierte stock con FOR UPDATE, valida remitos_envio,
+    // y borra solicitud_compra (CASCADE borra items + MCC).
+    // Migración 20260424_rpc_eliminar_solicitud.
+    const { data, error } = await supabase.rpc('eliminar_solicitud', {
+      p_solicitud_id: id,
+      p_user_id:      userId,
+    })
+    if (error) throw mapRpcError(error)
+    return data as { success: boolean; solicitud_id: number; items_revertidos: number }
   },
 
   // ── Acciones sobre ítems ─────────────────────────────────
