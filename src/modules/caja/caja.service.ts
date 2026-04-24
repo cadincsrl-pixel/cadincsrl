@@ -19,50 +19,25 @@ export const cajaService = {
   async createMovimiento(dto: CreateMovimientoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
-    // Calcular saldo acumulado: obtener el último movimiento en orden ASC
-    const { data: todos } = await supabase
-      .from('movimientos_caja')
-      .select('id, fecha, saldo_acum, tipo, monto')
-      .order('fecha', { ascending: true })
-      .order('id',    { ascending: true })
-
-    const lista = todos ?? []
-
-    // Encontrar la posición donde va el nuevo movimiento
-    let saldoAnterior = 0
-    let insertPos = lista.length
-    for (let i = lista.length - 1; i >= 0; i--) {
-      const m = lista[i]!
-      if (m.fecha <= dto.fecha) {
-        saldoAnterior = m.saldo_acum ?? 0
-        insertPos = i + 1
-        break
-      }
-      if (i === 0) {
-        insertPos = 0
-      }
-    }
-
-    const delta = dto.tipo === 'ingreso' ? dto.monto : -dto.monto
-    const saldo_acum = saldoAnterior + delta
-
+    // Insertamos con saldo_acum = 0 como placeholder; el RPC lo recalcula
+    // junto con todos los posteriores en una sola query atómica con window
+    // function. Así evitamos el loop N+1 que tenía race condition.
     const { data, error } = await supabase
       .from('movimientos_caja')
-      .insert({ ...dto, saldo_acum, creado_por: userId })
+      .insert({ ...dto, saldo_acum: 0, creado_por: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)
 
-    // Recalcular saldos de los movimientos posteriores
-    const posteriores = lista.slice(insertPos)
-    let saldoActual = saldo_acum
-    for (const m of posteriores) {
-      const d = m.tipo === 'ingreso' ? m.monto : -m.monto
-      saldoActual += d
-      await supabase.from('movimientos_caja').update({ saldo_acum: saldoActual }).eq('id', m.id)
-    }
+    await cajaService._recalcularTodos(token)
 
-    return data
+    // Re-leer el row con el saldo actualizado por el RPC.
+    const { data: refreshed } = await supabase
+      .from('movimientos_caja')
+      .select('*')
+      .eq('id', data.id)
+      .single()
+    return refreshed ?? data
   },
 
   async updateMovimiento(id: number, dto: UpdateMovimientoDto, token: string) {
@@ -76,9 +51,15 @@ export const cajaService = {
       .single()
     if (error) throw new Error(error.message)
 
-    // Recalcular todos los saldos desde el inicio
     await cajaService._recalcularTodos(token)
-    return data
+
+    // Re-leer para devolver el saldo recalculado.
+    const { data: refreshed } = await supabase
+      .from('movimientos_caja')
+      .select('*')
+      .eq('id', id)
+      .single()
+    return refreshed ?? data
   },
 
   async deleteMovimiento(id: number, token: string) {
@@ -89,19 +70,15 @@ export const cajaService = {
     return { success: true }
   },
 
+  /**
+   * Recalcula saldo_acum de todos los movimientos vía RPC transaccional con
+   * window function (migración 20260424_rpc_recalcular_saldos_caja).
+   * Reemplaza el loop N+1 anterior que tenía race condition bajo concurrencia.
+   */
   async _recalcularTodos(token: string) {
     const supabase = createSupabaseClient(token)
-    const { data } = await supabase
-      .from('movimientos_caja')
-      .select('id, fecha, tipo, monto')
-      .order('fecha', { ascending: true })
-      .order('id',    { ascending: true })
-
-    let saldo = 0
-    for (const m of (data ?? [])) {
-      saldo += m.tipo === 'ingreso' ? m.monto : -m.monto
-      await supabase.from('movimientos_caja').update({ saldo_acum: saldo }).eq('id', m.id)
-    }
+    const { error } = await supabase.rpc('sp_recalcular_saldos_caja')
+    if (error) throw new Error(`Error recalculando saldos: ${error.message}`)
   },
 
   // ── Conceptos ──────────────────────────────────────────────────────────
