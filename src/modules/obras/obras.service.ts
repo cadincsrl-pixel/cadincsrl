@@ -123,19 +123,24 @@ export const obrasService = {
     corte.setDate(corte.getDate() - 21)
     const corteISO = corte.toISOString().slice(0, 10)
 
-    // Obras activas
+    // Obras activas con más de 21 días de antigüedad (las recién creadas
+    // aún no tienen horas ni certs cargadas; sin este filtro se archivarían solas)
     const { data: obras, error: errObras } = await supabaseAdmin
       .from('obras')
       .select('cod')
       .eq('archivada', false)
+      .lt('created_at', corteISO)
     if (errObras) throw new Error(errObras.message)
     if (!obras || obras.length === 0) return { archivadas: [] }
 
-    // Obras con horas de personal en los últimos 21 días
+    // Obras con horas de personal en los últimos 21 días.
+    // .limit alto: PostgREST trunca a 1000 filas por default y, con varias
+    // obras activas, ese tope se pasa fácil → falsos "sin actividad" → archivado erróneo.
     const { data: horasRecientes, error: errHoras } = await supabaseAdmin
       .from('horas')
       .select('obra_cod')
       .gte('fecha', corteISO)
+      .limit(100000)
     if (errHoras) throw new Error(errHoras.message)
 
     // Obras con certificaciones de contratistas en los últimos 21 días (sem_key es el viernes)
@@ -143,6 +148,7 @@ export const obrasService = {
       .from('certificaciones')
       .select('obra_cod')
       .gte('sem_key', corteISO)
+      .limit(100000)
     if (errCert) throw new Error(errCert.message)
 
     const codsConActividad = new Set([
