@@ -92,10 +92,10 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
     email_confirm: true,
   })
 
-  console.log('authData:', authData)
-  console.log('authError:', authError)
-
-  if (authError) return c.json({ error: authError.message }, 500)
+  if (authError) {
+    console.error('[POST /usuarios] auth.admin.createUser failed:', authError.message)
+    return c.json({ error: authError.message }, 500)
+  }
   if (!authData.user) return c.json({ error: 'No se pudo crear el usuario' }, 500)
 
   const { data, error } = await supabase
@@ -105,10 +105,10 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
     .select()
     .single()
 
-  console.log('profile data:', data)
-  console.log('profile error:', error)
-
-  if (error) return c.json({ error: error.message }, 500)
+  if (error) {
+    console.error('[POST /usuarios] profile update failed for', authData.user.id, error.message)
+    return c.json({ error: error.message }, 500)
+  }
 
   return c.json(data, 201)
 })

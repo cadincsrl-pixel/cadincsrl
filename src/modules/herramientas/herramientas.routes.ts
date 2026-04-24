@@ -11,18 +11,17 @@ herramientas.use('*', authMiddleware)
 
 // GET /api/herramientas/config
 herramientas.get('/config', requirePermiso('herramientas', 'lectura'), async (c) => {
-  console.log('--- GET /config llamado ---')
-
   const [tipos, estados, movTipos] = await Promise.all([
     supabase.from('herr_tipos').select('*').eq('activo', true).order('orden'),
     supabase.from('herr_estados').select('*').eq('activo', true).order('orden'),
     supabase.from('herr_mov_tipos').select('*').eq('activo', true).order('orden'),
   ])
 
-  console.log('tipos data:', tipos.data)
-  console.log('tipos error:', tipos.error)
-  console.log('movTipos data:', movTipos.data)
-  console.log('movTipos error:', movTipos.error)
+  if (tipos.error || estados.error || movTipos.error) {
+    console.error('[GET /herramientas/config] db error:', {
+      tipos: tipos.error?.message, estados: estados.error?.message, movTipos: movTipos.error?.message,
+    })
+  }
 
   return c.json({
     tipos:    tipos.data    ?? [],
