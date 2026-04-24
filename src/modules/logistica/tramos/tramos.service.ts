@@ -25,48 +25,25 @@ export const tramosService = {
     return data
   },
 
-  async mover(id: number, dir: 'up' | 'down', token: string) {
+  async mover(id: number, dir: 'up' | 'down', token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
-    // Cargamos el tramo objetivo
-    const { data: actual, error: e1 } = await supabase
-      .from('tramos')
-      .select('id, fecha_operacion, orden_dia')
-      .eq('id', id)
-      .single()
-    if (e1) throw new Error(e1.message)
-    if (!actual?.fecha_operacion) throw new Error('El tramo no tiene fecha asignada')
-
-    // Buscamos el vecino dentro del mismo día.
-    // up  → vecino con orden_dia > actual.orden_dia (el inmediato superior).
-    // down→ vecino con orden_dia < actual.orden_dia (el inmediato inferior).
-    const baseOrden = actual.orden_dia ?? actual.id
-    const vecinoQ = supabase
-      .from('tramos')
-      .select('id, orden_dia')
-      .eq('fecha_operacion', actual.fecha_operacion)
-      .neq('id', id)
-      .limit(1)
-
-    const { data: vecinos, error: e2 } = dir === 'up'
-      ? await vecinoQ.gt('orden_dia', baseOrden).order('orden_dia', { ascending: true })
-      : await vecinoQ.lt('orden_dia', baseOrden).order('orden_dia', { ascending: false })
-    if (e2) throw new Error(e2.message)
-    const vecino = vecinos?.[0]
-    if (!vecino) return { moved: false }
-
-    // Swap atómico de orden_dia entre ambos tramos
-    const vecinoOrden = vecino.orden_dia ?? vecino.id
-    const { error: e3 } = await supabase
-      .from('tramos')
-      .update({ orden_dia: vecinoOrden })
-      .eq('id', actual.id)
-    if (e3) throw new Error(e3.message)
-    const { error: e4 } = await supabase
-      .from('tramos')
-      .update({ orden_dia: baseOrden })
-      .eq('id', vecino.id)
-    if (e4) throw new Error(e4.message)
-    return { moved: true }
+    // RPC transaccional con FOR UPDATE sobre ambos tramos — evita
+    // duplicados de orden_dia bajo concurrencia. Migración
+    // 20260424_rpc_mover_tramo_orden.
+    const { data, error } = await supabase.rpc('mover_tramo_orden', {
+      p_tramo_id: id,
+      p_dir:      dir,
+      p_user_id:  userId ?? null,
+    })
+    if (error) {
+      const msg = error.message || ''
+      if (/TRAMO_NO_EXISTE/.test(msg))   throw codedError('TRAMO_NO_EXISTE', 'Tramo no encontrado')
+      if (/TRAMO_SIN_FECHA/.test(msg))   throw codedError('TRAMO_SIN_FECHA', 'El tramo no tiene fecha asignada')
+      if (/DIR_INVALIDA/.test(msg))      throw codedError('DIR_INVALIDA', 'Dirección inválida')
+      if (/SIN_PERMISO/.test(msg))       throw codedError('SIN_PERMISO', 'Sin permiso para reordenar')
+      throw new Error(msg)
+    }
+    return data as { moved: boolean; actual_id?: number; vecino_id?: number }
   },
 
   async create(dto: CreateTramoDto, token: string, userId: string) {
