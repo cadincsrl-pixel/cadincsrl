@@ -43,6 +43,28 @@ async function sha256OfBlob(blob: Blob): Promise<string> {
   return createHash('sha256').update(buf).digest('hex')
 }
 
+// La tabla tiene UNIQUE partial sobre (comprobante_hash) WHERE deleted_at
+// IS NULL. Si dos requests concurrentes pasan el pre-check SELECT y ambos
+// intentan insertar, el segundo falla con SQLSTATE 23505. Este helper
+// traduce ese error al COMPROBANTE_DUPLICADO limpio y borra el archivo
+// huérfano del bucket.
+async function handleCompHashViolation(
+  error: { code?: string; message?: string },
+  comprobantePath: string | null | undefined,
+): Promise<never | void> {
+  const is23505 = error.code === '23505' || /23505|unique_violation/i.test(error.message ?? '')
+  const isHashCollision = /comprobante_hash/i.test(error.message ?? '')
+  if (!is23505 || !isHashCollision) return  // no es el caso, caller continúa
+
+  // Cleanup del huérfano (igual que en procesarComprobante).
+  if (comprobantePath) {
+    await supabase.storage.from(BUCKET).remove([comprobantePath]).catch(() => undefined)
+  }
+  throw new HttpError(409, 'COMPROBANTE_DUPLICADO', {
+    message: 'Ya existe un gasto con este comprobante (detectado por hash en el INSERT).',
+  })
+}
+
 // Procesa un comprobante recién subido: descarga, calcula sha256, valida
 // uniqueness. Si el hash ya existe en otro gasto (no eliminado), lanza
 // COMPROBANTE_DUPLICADO y borra el archivo huérfano del bucket.
@@ -370,6 +392,8 @@ export const gastosService = {
         p_auto_aprobar: esAdmin,
       })
       if (error) {
+        // Race: otra request insertó el mismo hash entre pre-check y este RPC.
+        await handleCompHashViolation(error, comp?.url ?? null)
         const msg = error.message || ''
         if (msg.includes('CARGA_REQUERIDA'))    throw new HttpError(400, 'CARGA_REQUERIDA', msg)
         if (msg.includes('CARGA_NO_PERMITIDA')) throw new HttpError(400, 'CARGA_NO_PERMITIDA', msg)
@@ -412,7 +436,11 @@ export const gastosService = {
       .insert(row)
       .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .single()
-    if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+    if (error) {
+      // Race: otra request insertó el mismo hash entre pre-check y este insert.
+      await handleCompHashViolation(error, comp?.url ?? null)
+      throw new HttpError(500, 'DB_ERROR', error.message)
+    }
     return data
   },
 
@@ -475,7 +503,14 @@ export const gastosService = {
       .eq('id', id)
       .select('*, categoria:gastos_categorias(id,codigo,nombre,aplica_a), carga_combustible:cargas_combustible!cargas_combustible_gasto_id_fkey(litros,odometro_km,tipo_combustible,tanque_lleno,warnings,obs)')
       .single()
-    if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+    if (error) {
+      // Race: otro gasto tomó este hash entre el pre-check y este update.
+      // Limpieza solo si el comprobante es nuevo (no reutilizamos el path
+      // anterior del mismo gasto).
+      const nuevoPath = dto.comprobante_path ?? null
+      await handleCompHashViolation(error, nuevoPath)
+      throw new HttpError(500, 'DB_ERROR', error.message)
+    }
     return data
   },
 
