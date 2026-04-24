@@ -79,19 +79,19 @@ function formatearBody(body: unknown): string {
 }
 
 export async function auditMiddleware(c: Context, next: Next) {
-  // Capturamos el body antes de que las rutas lo consuman (clonamos el Request)
-  let detalle = ''
   const method = c.req.method
+
+  // Clonamos el request antes del next() (el handler puede consumir el body).
+  // El parse JSON lo diferimos a después del next() — así no pagamos
+  // JSON.parse en requests que terminan en 4xx (validación zod, etc.).
+  let rawBodyClone: Request | null = null
   if (method === 'POST' || method === 'PATCH' || method === 'PUT') {
-    try {
-      const body = await c.req.raw.clone().json()
-      detalle = formatearBody(body)
-    } catch { /* body no-JSON o vacío → sin detalle */ }
+    try { rawBodyClone = c.req.raw.clone() } catch { /* noop */ }
   }
 
   await next()
 
-  // Solo loguear si la respuesta fue exitosa (2xx)
+  // Solo loguear si la respuesta fue exitosa (2xx).
   if (c.res.status < 200 || c.res.status >= 300) return
 
   const path = c.req.path
@@ -100,6 +100,15 @@ export async function auditMiddleware(c: Context, next: Next) {
 
   const user = c.get('user') as { id: string } | undefined
   if (!user) return
+
+  // Parse del body diferido: solo ejecutamos JSON.parse si vamos a loguear.
+  let detalle = ''
+  if (rawBodyClone) {
+    try {
+      const body = await rawBodyClone.json()
+      detalle = formatearBody(body)
+    } catch { /* body no-JSON o vacío */ }
+  }
 
   // Extraer ID de entidad de la URL. Para rutas con verbo al final
   // (/obras/:cod/archivar, /solicitudes/:id/comprar, etc.) el ID es el
@@ -116,18 +125,21 @@ export async function auditMiddleware(c: Context, next: Next) {
     ? (VERBOS_SUFIJO.has(last) ? prev : last)
     : undefined
 
-  // Nombre del usuario (del perfil en el token o del contexto)
   const token = c.get('accessToken') as string
   const ip = c.req.header('x-forwarded-for') ?? c.req.header('x-real-ip') ?? ''
 
+  // Fire-and-forget: la Promise se ejecuta en el event loop mientras la
+  // response ya se devuelve al cliente. auditService.log tiene su propio
+  // try/catch; el .catch() acá es solo para evitar el warning de
+  // "unhandled promise rejection" en algunas versiones de Node.
   auditService.log({
     user_id: user.id,
-    user_nombre: '', // Se llena desde el perfil si se necesita
+    user_nombre: '',
     modulo: parsed.modulo,
     accion: parsed.accion,
     entidad: parsed.entidad,
     entidad_id: entidadId !== parsed.modulo ? entidadId : undefined,
     detalle: detalle || undefined,
     ip,
-  }, token)
+  }, token).catch(() => {/* service ya loguea errores con console.error */})
 }
