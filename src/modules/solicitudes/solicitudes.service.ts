@@ -43,6 +43,9 @@ function parseDetail(details: string | null | undefined): unknown {
 export function mapRpcError(error: PostgrestError): HttpError {
   const msg = error.message || ''
   const code =
+    /NO_AUTH/.test(msg)             ? 'NO_AUTH' :
+    /SIN_PERFIL/.test(msg)          ? 'SIN_PERFIL' :
+    /SIN_PERMISO/.test(msg)         ? 'SIN_PERMISO' :
     /ITEM_NO_EXISTE/.test(msg)      ? 'ITEM_NO_EXISTE' :
     /ITEM_NO_DISPONIBLE/.test(msg)  ? 'ITEM_NO_DISPONIBLE' :
     /PROVEEDOR_INVALIDO/.test(msg)  ? 'PROVEEDOR_INVALIDO' :
@@ -52,6 +55,9 @@ export function mapRpcError(error: PostgrestError): HttpError {
     error.code || 'UNKNOWN'
 
   switch (code) {
+    case 'NO_AUTH':            return new HttpError(401, code)
+    case 'SIN_PERFIL':         return new HttpError(403, code)
+    case 'SIN_PERMISO':        return new HttpError(403, code, parseDetail(error.details))
     case 'ITEM_NO_EXISTE':     return new HttpError(404, code)
     case 'ITEM_NO_DISPONIBLE': return new HttpError(404, code) // mantiene 404 legacy
     case 'PROVEEDOR_INVALIDO': return new HttpError(400, code)
