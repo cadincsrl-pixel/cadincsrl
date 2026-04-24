@@ -30,12 +30,14 @@ export const cierresService = {
 
   async create(dto: CreateCierreDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    const estado = dto.estado ?? 'pendiente'
     const { data, error } = await supabase
       .from('cierres')
       .insert({
-        obra_cod: dto.obra_cod,
-        sem_key: dto.sem_key,
-        estado: 'pendiente',
+        obra_cod:   dto.obra_cod,
+        sem_key:    dto.sem_key,
+        estado,
+        cerrado_en: estado === 'cerrado' ? new Date().toISOString() : null,
         created_by: userId,
         updated_by: userId,
       })
