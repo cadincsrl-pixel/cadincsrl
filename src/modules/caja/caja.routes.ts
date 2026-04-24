@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
+import { requirePermiso } from '../../middleware/permission.js'
 import { cajaService } from './caja.service.js'
 import {
   CreateMovimientoSchema, UpdateMovimientoSchema,
@@ -9,6 +10,10 @@ import {
 
 const caja = new Hono()
 caja.use('*', authMiddleware)
+caja.on(['GET'],          '*', requirePermiso('caja', 'lectura'))
+caja.on(['POST'],         '*', requirePermiso('caja', 'creacion'))
+caja.on(['PATCH', 'PUT'], '*', requirePermiso('caja', 'actualizacion'))
+caja.on(['DELETE'],       '*', requirePermiso('caja', 'eliminacion'))
 
 // ── Movimientos ────────────────────────────────────────────────────────────
 
