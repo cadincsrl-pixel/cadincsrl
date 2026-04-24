@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
-import { liquidacionesService } from './liquidaciones.service.js'
+import { liquidacionesService, LiqHttpError } from './liquidaciones.service.js'
 import { CreateLiquidacionSchema, UpdateLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema } from './liquidaciones.schema.js'
 
 const liquidaciones = new Hono()
@@ -41,13 +41,31 @@ liquidaciones.patch('/:id/cerrar', async (c) => {
 })
 
 liquidaciones.patch('/:id/reabrir', async (c) => {
-  const data = await liquidacionesService.reabrir(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
-  return c.json(data)
+  try {
+    const data = await liquidacionesService.reabrir(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  } catch (err) {
+    if (err instanceof LiqHttpError) {
+      const body: Record<string, unknown> = { error: err.code }
+      if (err.detail !== undefined) body.detail = err.detail
+      return c.json(body, err.status as any)
+    }
+    throw err
+  }
 })
 
 liquidaciones.delete('/:id', async (c) => {
-  const data = await liquidacionesService.delete(Number(c.req.param('id')), c.get('accessToken'))
-  return c.json(data)
+  try {
+    const data = await liquidacionesService.delete(Number(c.req.param('id')), c.get('accessToken'))
+    return c.json(data)
+  } catch (err) {
+    if (err instanceof LiqHttpError) {
+      const body: Record<string, unknown> = { error: err.code }
+      if (err.detail !== undefined) body.detail = err.detail
+      return c.json(body, err.status as any)
+    }
+    throw err
+  }
 })
 
 liquidaciones.post('/adelantos', zValidator('json', CreateAdelantoSchema), async (c) => {
