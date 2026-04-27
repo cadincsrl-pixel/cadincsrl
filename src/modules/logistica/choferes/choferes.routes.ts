@@ -4,9 +4,14 @@ import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { choferesService } from './choferes.service.js'
 import { CreateChoferSchema, UpdateChoferSchema } from './choferes.schema.js'
+import documentosRoutes from './documentos.routes.js'
 
 const choferes = new Hono()
 choferes.use('*', authMiddleware)
+
+// Sub-router de documentos del legajo (DNI, licencia, alta temprana, etc.).
+// Monta /:id/documentos/... → /api/logistica/choferes/:id/documentos
+choferes.route('/', documentosRoutes)
 
 choferes.get('/', requirePermiso('logistica', 'lectura'), async (c) => {
   const data = await choferesService.getAll(c.get('accessToken'))
