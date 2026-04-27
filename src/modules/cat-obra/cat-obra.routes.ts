@@ -20,6 +20,9 @@ catObra.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
 })
 
 
+// Categoría efectiva (override de cat_obra) para cada leg en una obra,
+// vigente al sem_key. cat_obra es persistente: una vez seteado para un leg,
+// aplica hacia adelante hasta que se cargue otro override más reciente.
 catObra.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   const obraCod = c.req.param('obraCod')
   const semKey = c.req.query('sem_key')
@@ -31,10 +34,19 @@ catObra.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
     .from('cat_obra')
     .select('*')
     .eq('obra_cod', obraCod)
-    .eq('desde', semKey)
+    .lte('desde', semKey)
+    .order('desde', { ascending: false })
 
   if (error) return c.json({ error: error.message }, 500)
-  return c.json(data)
+
+  // Quedarse con el más reciente por leg
+  const seen = new Set<string>()
+  const ultimoPorLeg = (data ?? []).filter((row: { leg: string }) => {
+    if (seen.has(row.leg)) return false
+    seen.add(row.leg)
+    return true
+  })
+  return c.json(ultimoPorLeg)
 })
 
 const UpsertSchema = z.object({
