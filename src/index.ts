@@ -19,6 +19,7 @@ import tarifasRoutes from './modules/tarifas/tarifas.routes.js'
 import contratistasRoutes from './modules/contratistas/contratistas.routes.js'
 import choferesRoutes     from './modules/logistica/choferes/choferes.routes.js'
 import camionesRoutes     from './modules/logistica/camiones/camiones.routes.js'
+import bateasRoutes        from './modules/logistica/bateas/bateas.routes.js'
 import lugaresRoutes      from './modules/logistica/lugares/lugares.routes.js'
 import viajesRoutes       from './modules/logistica/viajes/viajes.routes.js'
 import liquidacionesRoutes from './modules/logistica/liquidaciones/liquidaciones.routes.js'
@@ -77,6 +78,7 @@ app.route('/api/tarifas', tarifasRoutes)
 app.route('/api/contratistas', contratistasRoutes)
 app.route('/api/logistica/choferes',      choferesRoutes)
 app.route('/api/logistica/camiones',      camionesRoutes)
+app.route('/api/logistica/bateas',         bateasRoutes)
 app.route('/api/logistica/lugares',       lugaresRoutes)
 app.route('/api/logistica/viajes',        viajesRoutes)
 app.route('/api/logistica/liquidaciones', liquidacionesRoutes)
