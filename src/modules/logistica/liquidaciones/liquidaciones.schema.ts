@@ -31,16 +31,24 @@ export const UpdateLiquidacionSchema = z.object({
 })
 
 export const CreateAdelantoSchema = z.object({
-  chofer_id:    z.number(),
-  fecha:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  monto:        z.number().min(0),
-  descripcion:  z.string().optional().default(''),
+  chofer_id:         z.number(),
+  fecha:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  monto:             z.number().min(0),
+  descripcion:       z.string().optional().default(''),
+  comprobante_path:  z.string().optional().nullable(),
 })
 
 export const UpdateAdelantoSchema = z.object({
-  fecha:       z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  monto:       z.number().min(0).optional(),
-  descripcion: z.string().optional(),
+  fecha:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  monto:             z.number().min(0).optional(),
+  descripcion:       z.string().optional(),
+  comprobante_path:  z.string().optional().nullable(),
+})
+
+export const UploadComprobanteAdelantoSchema = z.object({
+  filename:     z.string().min(1).max(200),
+  content_type: z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+  size_bytes:   z.number().int().positive().max(10 * 1024 * 1024),  // 10 MB
 })
 
 export type CreateLiquidacionDto = z.infer<typeof CreateLiquidacionSchema>

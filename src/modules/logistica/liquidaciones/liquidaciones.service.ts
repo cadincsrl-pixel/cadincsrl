@@ -1,6 +1,60 @@
 import type { PostgrestError } from '@supabase/supabase-js'
-import { createSupabaseClient } from '../../../lib/supabase.js'
+import { createHash, randomUUID } from 'node:crypto'
+import { createSupabaseClient, supabase } from '../../../lib/supabase.js'
 import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto, UpdateAdelantoDto } from './liquidaciones.schema.js'
+
+const BUCKET_ADELANTOS = 'adelantos-logistica'
+
+function extFromMime(mime: string): string {
+  if (mime === 'image/jpeg') return 'jpg'
+  if (mime === 'image/png')  return 'png'
+  if (mime === 'image/webp') return 'webp'
+  if (mime === 'application/pdf') return 'pdf'
+  return 'bin'
+}
+
+function pathForUploadAdelanto(contentType: string): string {
+  const d = new Date()
+  const yyyy = d.getUTCFullYear()
+  const mm   = String(d.getUTCMonth() + 1).padStart(2, '0')
+  return `adelantos/${yyyy}/${mm}/${randomUUID()}.${extFromMime(contentType)}`
+}
+
+async function sha256OfBlob(blob: Blob): Promise<string> {
+  const buf = Buffer.from(await blob.arrayBuffer())
+  return createHash('sha256').update(buf).digest('hex')
+}
+
+// Descarga el archivo recién subido, calcula sha256 y valida uniqueness
+// contra `adelantos.comprobante_hash` (UNIQUE parcial WHERE NOT NULL).
+// Si el hash ya existe, borra el huérfano del bucket y lanza error.
+async function procesarComprobanteAdelanto(
+  path: string | null | undefined,
+  adelantoIdExcluir?: number,
+): Promise<{ url: string; hash: string } | null> {
+  if (!path) return null
+
+  const dl = await supabase.storage.from(BUCKET_ADELANTOS).download(path)
+  if (dl.error || !dl.data) {
+    throw new LiqHttpError(400, 'COMPROBANTE_INEXISTENTE', { path, supabaseError: dl.error?.message })
+  }
+  const hash = await sha256OfBlob(dl.data)
+
+  let q = supabase
+    .from('adelantos')
+    .select('id')
+    .eq('comprobante_hash', hash)
+    .limit(1)
+  if (adelantoIdExcluir != null) q = q.neq('id', adelantoIdExcluir)
+  const { data: dup, error: e } = await q
+  if (e) throw new LiqHttpError(500, 'DB_ERROR', e.message)
+
+  if (dup && dup.length > 0) {
+    await supabase.storage.from(BUCKET_ADELANTOS).remove([path]).catch(() => undefined)
+    throw new LiqHttpError(409, 'COMPROBANTE_DUPLICADO', { adelanto_id_existente: dup[0]!.id, hash })
+  }
+  return { url: path, hash }
+}
 
 // Mapeo mínimo de errores de RPC (reabrir/eliminar). Usa la misma forma
 // de HttpError que solicitudes.service: status numérico + code + detail.
@@ -163,21 +217,64 @@ export const liquidacionesService = {
   },
 
   async createAdelanto(dto: CreateAdelantoDto, token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
+    const sb = createSupabaseClient(token)
+    const { comprobante_path, ...rest } = dto
+    const comp = await procesarComprobanteAdelanto(comprobante_path)
+    const { data, error } = await sb
       .from('adelantos')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .insert({
+        ...rest,
+        comprobante_url:  comp?.url  ?? null,
+        comprobante_hash: comp?.hash ?? null,
+        created_by: userId,
+        updated_by: userId,
+      })
       .select()
       .single()
-    if (error) throw new Error(error.message)
+    if (error) {
+      // Si el INSERT falla (raro tras la pre-check) limpiar el huérfano.
+      if (comprobante_path) {
+        await supabase.storage.from(BUCKET_ADELANTOS).remove([comprobante_path]).catch(() => undefined)
+      }
+      throw new Error(error.message)
+    }
     return data
   },
 
   async updateAdelanto(id: number, dto: UpdateAdelantoDto, token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
+    const sb = createSupabaseClient(token)
+    const patch: Record<string, unknown> = { updated_by: userId }
+    for (const [k, v] of Object.entries(dto)) {
+      if (v === undefined) continue
+      if (k === 'comprobante_path') continue  // se procesa abajo
+      patch[k] = v
+    }
+    if (dto.comprobante_path !== undefined) {
+      // Trae el comprobante anterior para borrarlo del bucket si va a ser
+      // reemplazado o quitado.
+      const { data: prev } = await sb
+        .from('adelantos')
+        .select('comprobante_url')
+        .eq('id', id)
+        .maybeSingle()
+      const prevPath = prev?.comprobante_url ?? null
+
+      if (dto.comprobante_path === null) {
+        patch.comprobante_url  = null
+        patch.comprobante_hash = null
+      } else {
+        const comp = await procesarComprobanteAdelanto(dto.comprobante_path, id)
+        patch.comprobante_url  = comp?.url  ?? null
+        patch.comprobante_hash = comp?.hash ?? null
+      }
+
+      if (prevPath && prevPath !== dto.comprobante_path) {
+        await supabase.storage.from(BUCKET_ADELANTOS).remove([prevPath]).catch(() => undefined)
+      }
+    }
+    const { data, error } = await sb
       .from('adelantos')
-      .update({ ...dto, updated_by: userId })
+      .update(patch)
       .eq('id', id)
       .select()
       .single()
@@ -186,9 +283,49 @@ export const liquidacionesService = {
   },
 
   async deleteAdelanto(id: number, token: string) {
-    const supabase = createSupabaseClient(token)
-    const { error } = await supabase.from('adelantos').delete().eq('id', id)
+    const sb = createSupabaseClient(token)
+    // Recuperar el path del comprobante para limpiar el bucket post-delete.
+    const { data: prev } = await sb
+      .from('adelantos')
+      .select('comprobante_url')
+      .eq('id', id)
+      .maybeSingle()
+    const { error } = await sb.from('adelantos').delete().eq('id', id)
     if (error) throw new Error(error.message)
+    if (prev?.comprobante_url) {
+      await supabase.storage.from(BUCKET_ADELANTOS).remove([prev.comprobante_url]).catch(() => undefined)
+    }
     return { success: true }
+  },
+
+  // ── Comprobante: signed URL para upload (5 min) ─────────────────
+  async firmarUploadComprobanteAdelanto(contentType: string) {
+    const path = pathForUploadAdelanto(contentType)
+    const { data, error } = await supabase.storage
+      .from(BUCKET_ADELANTOS)
+      .createSignedUploadUrl(path)
+    if (error || !data) {
+      throw new LiqHttpError(500, 'STORAGE_ERROR', error?.message)
+    }
+    return { path, signedUrl: data.signedUrl, token: data.token, expiresIn: 300 }
+  },
+
+  // ── Comprobante: signed URL para descargar (15 min) ─────────────
+  async getAdelantoComprobanteUrl(id: number, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data: row, error: e0 } = await sb
+      .from('adelantos')
+      .select('comprobante_url')
+      .eq('id', id)
+      .maybeSingle()
+    if (e0) throw new LiqHttpError(500, 'DB_ERROR', e0.message)
+    if (!row || !row.comprobante_url) {
+      throw new LiqHttpError(404, 'COMPROBANTE_NO_EXISTE')
+    }
+    const { data, error } = await supabase.storage
+      .from(BUCKET_ADELANTOS)
+      .createSignedUrl(row.comprobante_url, 900)
+    if (error || !data) throw new LiqHttpError(500, 'STORAGE_ERROR', error?.message)
+    return { signedUrl: data.signedUrl, expiresIn: 900 }
   },
 }
