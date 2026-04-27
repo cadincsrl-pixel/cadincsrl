@@ -25,6 +25,12 @@ export const CreateTramoSchema = z.object({
   empresa_id: z.number().nullable().optional(),
   obs: z.string().optional().default(''),
 })
+.refine(
+  // Tramos cargados requieren empresa transportista (para facturar después).
+  // Vacíos quedan exentos.
+  data => data.tipo !== 'cargado' || (data.empresa_id != null),
+  { message: 'empresa_id es requerido cuando tipo=cargado', path: ['empresa_id'] },
+)
 
 export const UpdateTramoSchema = z.object({
   chofer_id:          z.number().optional(),
