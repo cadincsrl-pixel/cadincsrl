@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const CreateChoferSchema = z.object({
   nombre:    z.string().min(1, 'El nombre es requerido'),
-  dni:       z.string().optional().default(''),
+  cuil:      z.string().optional().default(''),
   tel:       z.string().optional().default(''),
   licencia:  z.string().optional().default(''),
   estado:    z.enum(['activo', 'descanso', 'inactivo']).default('activo'),
