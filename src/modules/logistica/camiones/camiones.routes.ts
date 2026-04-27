@@ -4,9 +4,13 @@ import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { camionesService } from './camiones.service.js'
 import { CreateCamionSchema, UpdateCamionSchema } from './camiones.schema.js'
+import { buildVehiculoDocsRoutes } from '../bateas/vehiculo-docs.routes.js'
 
 const camiones = new Hono()
 camiones.use('*', authMiddleware)
+
+// Sub-router de documentos del camión: /api/logistica/camiones/:id/documentos/...
+camiones.route('/', buildVehiculoDocsRoutes('camion'))
 
 camiones.get('/', requirePermiso('logistica', 'lectura'), async (c) => {
   const data = await camionesService.getAll(c.get('accessToken'))
