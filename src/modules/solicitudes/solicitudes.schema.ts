@@ -33,11 +33,16 @@ export const UpdateSolicitudSchema = z.object({
   remove_items: z.array(z.number().int().positive()).optional(), // IDs de ítems a eliminar
 })
 
-// Resolver ítem: comprar a proveedor
+// Resolver ítem: comprar a proveedor.
+// Si `queda_en_proveedor=true`, el material no llega a CADINC ni a la
+// obra todavía: queda en el galpón del proveedor hasta que se haga un
+// remito de retiro. El item pasa a estado 'en_proveedor' (vs 'comprado'),
+// no se inserta en `materiales_a_cuenta_cliente` hasta que se retire.
 export const ComprarItemSchema = z.object({
-  proveedor_id: z.number().int().positive(),
-  precio_unit:  z.number().min(0),
-  factura_id:   z.number().int().positive().nullable().optional(),
+  proveedor_id:        z.number().int().positive(),
+  precio_unit:         z.number().min(0),
+  factura_id:          z.number().int().positive().nullable().optional(),
+  queda_en_proveedor:  z.boolean().optional().default(false),
 })
 
 // Resolver ítem: despachar de depósito

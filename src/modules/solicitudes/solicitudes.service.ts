@@ -246,9 +246,35 @@ export const solicitudesService = {
   // ── Acciones sobre ítems ─────────────────────────────────
 
   // Dispatcher: según feature flag, usa RPC transaccional o camino legacy.
+  // Si dto.queda_en_proveedor=true, en cambio dispara la RPC de
+  // 'en_proveedor' (no hay camino legacy: feature nuevo).
   async comprarItem(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
+    if (dto.queda_en_proveedor) return this.comprarItemEnProveedor(itemId, dto, token, userId)
     if (useRpcResolver()) return this.comprarItemViaRPC(itemId, dto, token, userId)
     return this.comprarItemLegacy(itemId, dto, token, userId)
+  },
+
+  // RPC `resolver_item_en_proveedor`: marca item='en_proveedor' + suma
+  // entrada en stock_proveedor_movimientos. NO inserta en MCC todavía
+  // (la facturación al cliente espera al retiro real, decisión B).
+  async comprarItemEnProveedor(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.rpc('resolver_item_en_proveedor', {
+      p_item_id:      itemId,
+      p_proveedor_id: dto.proveedor_id,
+      p_precio_unit:  dto.precio_unit,
+      p_factura_id:   dto.factura_id ?? null,
+      p_user_id:      userId,
+    })
+    if (error) throw mapRpcError(error)
+
+    const { data: item, error: selErr } = await supabase
+      .from('solicitud_compra_item')
+      .select('*, solicitud_compra(id, obra_cod)')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (selErr) throw new Error(selErr.message)
+    return item
   },
 
   // `forzarSinStock` es un parámetro **explícito** (no se lee del dto).
