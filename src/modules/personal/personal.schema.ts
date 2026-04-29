@@ -19,6 +19,7 @@ export const CreatePersonalSchema = z.object({
   tel: z.string().optional().default(''),
   dir: z.string().optional().default(''),
   obs: z.string().optional().default(''),
+  fecha_nacimiento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 })
 
 export const UpdatePersonalSchema = z.object({
@@ -33,6 +34,7 @@ export const UpdatePersonalSchema = z.object({
   talle_botines:   z.string().optional(),
   talle_camisa:    z.string().optional(),
   activo_override: z.boolean().nullable().optional(),
+  fecha_nacimiento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 })
 
 export type Personal = z.infer<typeof PersonalSchema>

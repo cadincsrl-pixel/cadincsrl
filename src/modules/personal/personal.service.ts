@@ -51,6 +51,7 @@ export const personalService = {
         tel: dto.tel,
         dir: dto.dir,
         obs: dto.obs,
+        fecha_nacimiento: dto.fecha_nacimiento ?? null,
         created_by: userId,
         updated_by: userId,
       })
