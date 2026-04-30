@@ -11,14 +11,14 @@ hsExtras.use('*', authMiddleware)
 
 // GET /api/hs-extras/all — todas las hs extras (vistas globales).
 // Debe declararse ANTES de /:obra_cod para que Hono no lo matchee como "obra_cod='all'".
-hsExtras.get('/all', requirePermiso('horas', 'lectura'), async (c) => {
+hsExtras.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const token = c.get('accessToken')
   const data = await hsExtrasService.getAll(token)
   return c.json(data)
 })
 
 // GET /api/hs-extras/:obra_cod?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
-hsExtras.get('/:obra_cod', requirePermiso('horas', 'lectura'), async (c) => {
+hsExtras.get('/:obra_cod', requirePermiso('tarja', 'lectura'), async (c) => {
   const obraCod = c.req.param('obra_cod')
   const desde = c.req.query('desde')
   const hasta = c.req.query('hasta')
@@ -33,7 +33,7 @@ hsExtras.get('/:obra_cod', requirePermiso('horas', 'lectura'), async (c) => {
 // resuelva con este y devuelva 400 de zod (body distinto). Lo cumple el orden abajo.
 hsExtras.put(
   '/lote',
-  requirePermiso('horas', 'actualizacion'),
+  requirePermiso('tarja', 'actualizacion'),
   zValidator('json', UpsertHsExtrasLoteSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -46,7 +46,7 @@ hsExtras.put(
 
 hsExtras.put(
   '/',
-  requirePermiso('horas', 'actualizacion'),
+  requirePermiso('tarja', 'actualizacion'),
   zValidator('json', UpsertHsExtraSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -58,7 +58,7 @@ hsExtras.put(
 )
 
 // DELETE /api/hs-extras/:id
-hsExtras.delete('/:id', requirePermiso('horas', 'eliminacion'), async (c) => {
+hsExtras.delete('/:id', requirePermiso('tarja', 'eliminacion'), async (c) => {
   const idParam = c.req.param('id')
   const id = Number(idParam)
   if (!Number.isInteger(id) || id <= 0) {
