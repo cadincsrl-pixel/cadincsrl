@@ -113,64 +113,29 @@ export const obrasService = {
     return data
   },
 
-  async autoArchivar(token: string, userId: string) {
-    // Usar cliente admin para las lecturas — evita que RLS filtre filas
-    // y cause falsos "sin actividad" en obras que sí tienen horas/certs
-    const supabaseUser = createSupabaseClient(token)
+  // Auto-archiva obras sin actividad en los últimos N días.
+  //
+  // Implementación vía RPC `obras_a_auto_archivar` (ver migración
+  // 20260430): el cálculo corre del lado del servidor con NOT EXISTS
+  // contra los índices de horas/certificaciones, así no depende del cap
+  // de filas de PostgREST (~1000) que en la implementación anterior
+  // generaba falsos "sin actividad" → obras archivadas por error.
+  async autoArchivar(_token: string, userId: string) {
+    const { data: candidatas, error: errRpc } = await supabaseAdmin
+      .rpc('obras_a_auto_archivar', { p_dias_atras: 21 })
+    if (errRpc) throw new Error(errRpc.message)
 
-    // Fecha de corte: hoy - 21 días
-    const corte = new Date()
-    corte.setDate(corte.getDate() - 21)
-    const corteISO = corte.toISOString().slice(0, 10)
-
-    // Obras activas con más de 21 días de antigüedad (las recién creadas
-    // aún no tienen horas ni certs cargadas; sin este filtro se archivarían solas)
-    const { data: obras, error: errObras } = await supabaseAdmin
-      .from('obras')
-      .select('cod')
-      .eq('archivada', false)
-      .lt('created_at', corteISO)
-    if (errObras) throw new Error(errObras.message)
-    if (!obras || obras.length === 0) return { archivadas: [] }
-
-    // Obras con horas de personal en los últimos 21 días.
-    // .limit alto: PostgREST trunca a 1000 filas por default y, con varias
-    // obras activas, ese tope se pasa fácil → falsos "sin actividad" → archivado erróneo.
-    const { data: horasRecientes, error: errHoras } = await supabaseAdmin
-      .from('horas')
-      .select('obra_cod')
-      .gte('fecha', corteISO)
-      .limit(100000)
-    if (errHoras) throw new Error(errHoras.message)
-
-    // Obras con certificaciones de contratistas en los últimos 21 días (sem_key es el viernes)
-    const { data: certRecientes, error: errCert } = await supabaseAdmin
-      .from('certificaciones')
-      .select('obra_cod')
-      .gte('sem_key', corteISO)
-      .limit(100000)
-    if (errCert) throw new Error(errCert.message)
-
-    const codsConActividad = new Set([
-      ...(horasRecientes ?? []).map((h: any) => h.obra_cod),
-      ...(certRecientes ?? []).map((c: any) => c.obra_cod),
-    ])
-
-    // Obras sin actividad reciente (ni personal ni contratistas)
-    const codsArchivar = obras
-      .map(o => o.cod)
-      .filter(cod => !codsConActividad.has(cod))
-
-    if (codsArchivar.length === 0) return { archivadas: [] }
+    const cods = (candidatas ?? []).map((r: { cod: string }) => r.cod)
+    if (cods.length === 0) return { archivadas: [] }
 
     const hoy = new Date().toISOString().slice(0, 10)
     const { error: errUpd } = await supabaseAdmin
       .from('obras')
       .update({ archivada: true, fecha_archivo: hoy, updated_by: userId })
-      .in('cod', codsArchivar)
+      .in('cod', cods)
     if (errUpd) throw new Error(errUpd.message)
 
-    return { archivadas: codsArchivar }
+    return { archivadas: cods }
   },
 
   async delete(cod: string, token: string) {
