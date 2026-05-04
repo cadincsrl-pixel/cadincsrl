@@ -30,6 +30,7 @@ import cobrosRoutes        from './modules/logistica/cobros/cobros.routes.js'
 import gastosLogRoutes     from './modules/logistica/gastos/gastos.routes.js'
 import rentabilidadRoutes  from './modules/logistica/rentabilidad/rentabilidad.routes.js'
 import logNotifRoutes      from './modules/logistica/notificaciones/notificaciones.routes.js'
+import camionServicesRoutes from './modules/logistica/camion-services/camion-services.routes.js'
 import authRoutes from './modules/auth/auth.routes.js'
 import usuariosRoutes from './modules/auth/usuarios.routes.js'
 import herramientasRoutes from './modules/herramientas/herramientas.routes.js'
@@ -92,6 +93,7 @@ app.route('/api/logistica/cobros',        cobrosRoutes)
 app.route('/api/logistica/gastos',        gastosLogRoutes)
 app.route('/api/logistica/rentabilidad',  rentabilidadRoutes)
 app.route('/api/logistica/notificaciones', logNotifRoutes)
+app.route('/api/logistica/camion-services', camionServicesRoutes)
 app.route('/api/me', authRoutes)
 app.route('/api/usuarios', usuariosRoutes)
 app.route('/api/herramientas', herramientasRoutes)

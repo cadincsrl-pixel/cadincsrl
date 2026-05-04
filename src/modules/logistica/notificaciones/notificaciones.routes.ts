@@ -59,4 +59,20 @@ notif.get('/documentos-choferes', async (c) => {
   return c.json(data ?? [])
 })
 
+// GET /api/logistica/notificaciones/camion-services
+// Camiones con service "próximo" (≤ 2000 km del próximo) o "vencido"
+// (km_actuales >= km_proximo). El umbral está hardcodeado en la vista
+// v_camion_service_estado para mantenerlo en SQL y consistente.
+notif.get('/camion-services', async (c) => {
+  const sb = createSupabaseClient(c.get('accessToken'))
+  const { data, error } = await sb
+    .from('v_camion_service_estado')
+    .select('*')
+    .in('estado', ['proximo', 'vencido'])
+    .order('km_restantes', { ascending: true })
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data ?? [])
+})
+
 export default notif
