@@ -1,0 +1,37 @@
+################################################################################
+# Render IaC — Solo el cron job de GPS por ahora.
+#
+# El web service principal (Hono) está creado manualmente desde el dashboard,
+# por eso NO lo replicamos acá (evitamos conflicto con el servicio existente).
+# Si en el futuro queremos consolidar, agregamos un `- type: web` con la
+# config actual.
+#
+# Para que esto funcione hay que setear en el Render dashboard:
+# 1) BACKEND_URL en este cron     → URL pública del web service
+#    (ej: https://cadincsrl.onrender.com — sin barra final)
+# 2) CRON_SECRET en este cron     → debe ser EL MISMO valor que en el web service
+# 3) CRON_SECRET en el web service (Environment tab del web service existente)
+#
+# Generar el secret con:  openssl rand -hex 32
+################################################################################
+
+services:
+  - type: cron
+    name: gps-sync-mobilequest
+    runtime: image
+    image:
+      url: docker.io/curlimages/curl:latest
+    # Cada 6 horas (00, 06, 12, 18 UTC = 21, 03, 09, 15 ART).
+    # Render usa cron syntax estándar 5 campos: minuto hora dom mes dow
+    schedule: "0 */6 * * *"
+    # `--fail-with-body` (-f) hace exit code != 0 si el server devuelve >=400,
+    # así Render marca el run como failed y queda en el log.
+    startCommand: |
+      sh -c 'curl --fail-with-body --retry 2 --max-time 120 -X POST \
+        -H "Authorization: Bearer $CRON_SECRET" \
+        "$BACKEND_URL/api/internal/sync-gps"'
+    envVars:
+      - key: BACKEND_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
