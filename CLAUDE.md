@@ -128,10 +128,14 @@ Códigos de error como constantes, mensajes en español para el usuario, `detall
 Todas las ~68 tablas tienen RLS con `using(true) with check(true)`. La seguridad real está en este backend. No proponer migrar a RLS estricta sin coordinar — rompería el modelo.
 
 ### 7.2 Resolución de items (certificaciones)
-- Un `solicitud_compra_item` se resuelve por **compra externa** (`origen='compra'`, estado final `comprado`) o **despacho de depósito** (estado final `de_deposito`).
-- Ambos caminos deben insertar en `materiales_a_cuenta_cliente`, **EXCEPTO** cuando la obra de destino es depósito interno (`obra.es_deposito = true`) — ahí es reposición, no facturable.
-- En `materiales_a_cuenta_cliente`, el campo `origen` usa `'proveedor'` o `'deposito'` (NO `'compra'`).
-- ⚠️ **Deuda técnica conocida**: esta operación hoy hace múltiples llamadas a Supabase en secuencia, no transaccionalmente. Migrar a RPC de PostgreSQL (ver §9).
+- Un `solicitud_compra_item` puede resolverse por **3 caminos**:
+  - **Compra externa** → estado `comprado`. RPC `resolver_item_compra` (transaccional, con `FOR UPDATE`). Inserta en MCC.
+  - **Despacho de depósito** → estado `de_deposito`. RPC `resolver_item_despacho`. Resta de `stock_movimientos`. Inserta en MCC.
+  - **Compra que queda en proveedor** → estado `en_proveedor`. RPC `resolver_item_en_proveedor`. Suma entrada en `stock_proveedor_movimientos`. **NO inserta en MCC** — eso pasa al retirar.
+- Cuando se retira (con remito), RPC `retirar_de_proveedor` crea `remitos_retiro_proveedor`, descuenta movimientos, y recién ahí inserta/upserta en MCC con la cantidad acumulada retirada.
+- En `materiales_a_cuenta_cliente`, el campo `origen` usa `'proveedor'` o `'deposito'`.
+- **Excepción universal**: si `obra.es_deposito = true`, NUNCA insertar en MCC (es reposición interna).
+- Las RPCs son `SECURITY DEFINER` con `FOR UPDATE` para evitar races. Activación detrás de feature flag `USE_RPC_RESOLVER` (env var) — default off = camino legacy, on = RPCs atómicas.
 
 ### 7.3 Semana viernes→jueves
 CADINC cierra semanas los jueves. Todo `sem_key` es el ISO del **viernes** de esa semana. Usar helpers de `src/lib/utils/dates.ts`: `getViernes`, `getSemDays`, `toISO`. **Nunca calcular semanas con lunes-domingo.**
@@ -143,7 +147,25 @@ requirePermisoOr('personal', 'tarja')
 ```
 
 ### 7.5 Auto-archivo de obras
-Endpoint `POST /api/obras/auto-archivar` se dispara desde el frontend cada 6h. Archiva obras sin horas cargadas en las últimas 3 semanas.
+Endpoint `POST /api/obras/auto-archivar` se dispara desde el frontend cada 6h. Archiva obras sin horas ni certificaciones en las últimas 3 semanas.
+
+⚠️ Implementación: usa la **RPC `obras_a_auto_archivar(p_dias_atras)`** (NO el `.select(...).limit(N)` directo). El cap de filas de PostgREST (~1000) generaba archivados erróneos cuando había muchas obras activas. Ver migración `20260430_rpc_obras_auto_archivar.sql`.
+
+### 7.6 Permisos de hs-extras y horas
+Ambos endpoints (`/api/horas/*` y `/api/hs-extras/*`) usan `requirePermiso('tarja', accion)`. **Nunca usar `'horas'` como módulo** — no existe en el sistema y rompe para operadores no-admin.
+
+### 7.7 Notificaciones de logística
+`GET /api/logistica/notificaciones/documentos` devuelve docs de vehículos (camiones + bateas) con `vence_el` en ventana ±60 días, vía vista `v_vehiculo_documentos_vencimientos`. La vista hace `DISTINCT ON (entidad_id, tipo)` para no devolver versiones viejas re-uploadeadas.
+
+### 7.8 Comprobantes en buckets privados (signed URLs)
+Patrón estándar para comprobantes/adjuntos privados (gastos, adelantos, retiros, cobros, docs de vehículos/personal):
+1. Cliente pide signed URL al backend (`POST /upload-comprobante` con filename + content_type + size_bytes).
+2. Cliente sube directo al bucket con `PUT signedUrl`.
+3. Cliente manda el `path` resultante al endpoint que persiste el dato.
+4. El backend descarga el archivo del bucket, calcula `sha256`, valida unicidad contra el constraint UNIQUE de la tabla, y persiste `comprobante_url` + `comprobante_hash`.
+5. Para descargar, otro endpoint firma URL de download con TTL 15min.
+
+Buckets privados: `vehiculo-docs`, `personal-docs`, `chofer-docs`, `gastos-logistica`, `adelantos-logistica`, `remitos-retiro-proveedor`, `cobros-docs`. Bucket público: `cert-adjuntos`, `remitos-logistica`.
 
 ## 8. Datos sensibles
 
@@ -157,10 +179,13 @@ Audit middleware ya omite claves sensibles y strings largos (URLs). Si agregás 
 
 ## 9. Deuda técnica conocida
 
-- **Resolución de items NO transaccional** (§7.2). Migrar a RPCs `resolver_item_compra` y `resolver_item_despacho` con `SECURITY DEFINER` + `SELECT FOR UPDATE` sobre `stock_materiales` para evitar races. Plan de rollout con feature flag `USE_RPC_RESOLVER`.
-- **Modelos paralelos en schema**: `empresas` vs `empresas_transportistas`, `viajes/cargas/descargas` vs `tramos`, múltiples sistemas de remitos. Consolidar caso por caso.
+- **Resolución de items legacy todavía activa**: cuando `USE_RPC_RESOLVER` no está en `'true'`, los handlers caen al camino viejo (multi-mutation no-transaccional). Eliminar después de validar las RPCs en producción por un período.
+- **Modelos paralelos en schema**: `empresas` vs `empresas_transportistas`, `viajes/cargas/descargas` vs `tramos`, múltiples sistemas de remitos (`remitos`, `remitos_envio`, `remitos_carga/descarga`, `remitos_retiro_proveedor`). Consolidar caso por caso.
 - **Columnas duplicadas**: `camiones.año` y `camiones.anio`.
 - **Vulnerabilidades npm** (2 moderate, 1 high al clonar). Evaluar con `npm audit` y atacar con contexto — no correr `npm audit fix` a ciegas.
+- **Auto-archivado sin auditoría**: el handler de `auto-archivar` filtra explícitamente en `audit.ts:14`. Si querés rastreo, sacar el filter.
+- **`materiales_a_cuenta_cliente` se sobrescribe en retiros parciales** (UPSERT con `ON CONFLICT (item_id)`). El detalle por retiro se conserva solo en `stock_proveedor_movimientos` y `remitos_retiro_proveedor_item`.
+- **Sin RPC para revertir retiros de proveedor**: si se carga mal un remito de retiro, hoy no hay forma limpia de revertirlo (habría que borrar manualmente filas).
 
 ## 10. Qué NO hacer
 
@@ -203,4 +228,4 @@ Los subagentes disponibles:
 
 ---
 
-_Última actualización: 2026-04-22_
+_Última actualización: 2026-05-04_
