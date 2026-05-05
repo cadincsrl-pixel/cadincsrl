@@ -19,6 +19,15 @@ export const CreateRutaSchema = z.object({
   obs:          z.string().optional().default(''),
 })
 
+// Update solo permite cambiar km y observaciones — el par cantera/depósito
+// es la identidad de la ruta y no debería cambiar (si querés otro par,
+// borrás esta y creás una nueva).
+export const UpdateRutaSchema = z.object({
+  km_ida_vuelta: z.number().min(1).optional(),
+  obs:           z.string().optional(),
+})
+
 export type CreateLugarDto = z.infer<typeof CreateLugarSchema>
 export type UpdateLugarDto = z.infer<typeof UpdateLugarSchema>
 export type CreateRutaDto  = z.infer<typeof CreateRutaSchema>
+export type UpdateRutaDto  = z.infer<typeof UpdateRutaSchema>

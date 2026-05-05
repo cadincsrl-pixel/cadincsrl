@@ -1,5 +1,5 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
-import type { CreateLugarDto, UpdateLugarDto, CreateRutaDto } from './lugares.schema.js'
+import type { CreateLugarDto, UpdateLugarDto, CreateRutaDto, UpdateRutaDto } from './lugares.schema.js'
 
 export const lugaresService = {
   async getCanteras(token: string) {
@@ -75,6 +75,18 @@ export const lugaresService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('depositos')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateRuta(id: number, dto: UpdateRutaDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('rutas')
       .update({ ...dto, updated_by: userId })
       .eq('id', id)
       .select()

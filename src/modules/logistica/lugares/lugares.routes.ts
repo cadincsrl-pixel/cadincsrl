@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { lugaresService } from './lugares.service.js'
-import { CreateLugarSchema, UpdateLugarSchema, CreateRutaSchema } from './lugares.schema.js'
+import { CreateLugarSchema, UpdateLugarSchema, CreateRutaSchema, UpdateRutaSchema } from './lugares.schema.js'
 
 const lugares = new Hono()
 lugares.use('*', authMiddleware)
@@ -31,6 +31,9 @@ lugares.patch('/canteras/:id',  zValidator('json', UpdateLugarSchema), async (c)
 })
 lugares.patch('/depositos/:id', zValidator('json', UpdateLugarSchema), async (c) => {
   return c.json(await lugaresService.updateDeposito(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+lugares.patch('/rutas/:id', zValidator('json', UpdateRutaSchema), async (c) => {
+  return c.json(await lugaresService.updateRuta(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
 })
 lugares.delete('/rutas/:id', async (c) => {
   return c.json(await lugaresService.deleteRuta(Number(c.req.param('id')), c.get('accessToken')))
