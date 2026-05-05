@@ -155,6 +155,12 @@ function pickDate(obj: Record<string, unknown>, keys: string[]): string | null {
   return null
 }
 
+// Mobile Quest expone vehículos "_M" (motor / GPS de respaldo) con patentes
+// como `AH568GP_M`. Los km de esos no están actualizados — los ignoramos.
+function esVehiculoRespaldo(patente: string): boolean {
+  return /_M\b|_M$/i.test(patente.trim())
+}
+
 function parseVehiculo(raw: unknown): VehiculoGPS | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
@@ -162,6 +168,9 @@ function parseVehiculo(raw: unknown): VehiculoGPS | null {
   // En el catálogo, la patente real viene en `Patente` (mayúscula).
   const patente = pickString(o, ['Patente', 'patente', 'dominio', 'placa', 'matricula'])
   if (!id || !patente) return null
+  // Filtramos los GPS de respaldo "_M" — no son vehículos distintos, son un
+  // segundo dispositivo del mismo camión cuyo odómetro no está al día.
+  if (esVehiculoRespaldo(patente)) return null
   return {
     id_vehiculo:   id,
     patente,

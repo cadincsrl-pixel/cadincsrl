@@ -74,6 +74,12 @@ async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResum
     }
     throw new GpsSyncError(500, 'MQ_UNEXPECTED', String(err))
   }
+  // El cliente filtra del catálogo los vehículos "_M" (GPS de respaldo
+  // con km no actualizados). Acá también descartamos sus lecturas en
+  // datos-ultimos: sólo procesamos los id_vehiculo que están en el
+  // catálogo válido. Los _M ni siquiera aparecen como `no_match`.
+  datos = datos.filter(d => catalogoMap.has(d.id_vehiculo))
+
   // Enriquecemos los datos con la patente del catálogo.
   for (const d of datos) {
     if (!d.patente) d.patente = catalogoMap.get(d.id_vehiculo) ?? null
