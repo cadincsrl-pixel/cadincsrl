@@ -150,7 +150,13 @@ async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResum
     }
     if (autoMapped) patch.id_vehiculo_gps = d.id_vehiculo
 
-    if (kmGps != null && kmGps > kmAnterior) {
+    // Política: GPS es la fuente de verdad. Si la lectura es válida y
+    // diferente del valor en DB, sobreescribimos siempre — incluso si
+    // el GPS reporta MENOS km. Esto autocorrige cargas manuales erróneas
+    // (ej. al registrar un service tipeaste 133854 en vez de 123854).
+    // Si el GPS algún día reporta basura, lo veremos en el log con la
+    // métrica `km_anterior > km_nuevo` y podremos revertir manual.
+    if (kmGps != null && kmGps !== kmAnterior) {
       patch.km_actuales       = kmGps
       patch.km_actualizado_en = new Date().toISOString()
       result.km_nuevo = kmGps
