@@ -5,6 +5,9 @@ export const CreateLugarSchema = z.object({
   localidad: z.string().optional().default(''),
   maps_url:  z.string().optional().default(''),
   obs:       z.string().optional().default(''),
+  // Coordenadas opcionales — usadas para Distance Matrix de Google Maps.
+  lat:       z.number().min(-90).max(90).nullable().optional(),
+  lng:       z.number().min(-180).max(180).nullable().optional(),
 })
 
 export const UpdateLugarSchema = CreateLugarSchema.partial()
