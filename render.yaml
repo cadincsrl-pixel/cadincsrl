@@ -21,9 +21,11 @@ services:
     runtime: image
     image:
       url: docker.io/curlimages/curl:latest
-    # Cada 6 horas (00, 06, 12, 18 UTC = 21, 03, 09, 15 ART).
+    # Cada 15 minutos. ~96 ejecuciones/día. Costo extra: $0
+    # (Mobile Quest gratis, Render incluido en plan, Google Maps no se
+    # llama desde el cron sino desde las pantallas).
     # Render usa cron syntax estándar 5 campos: minuto hora dom mes dow
-    schedule: "0 */6 * * *"
+    schedule: "*/15 * * * *"
     # `--fail-with-body` (-f) hace exit code != 0 si el server devuelve >=400,
     # así Render marca el run como failed y queda en el log.
     startCommand: |
