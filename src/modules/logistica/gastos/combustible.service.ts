@@ -12,6 +12,22 @@ function inicioDeMes(fechaISO: string): string {
   return fechaISO.slice(0, 7) + '-01'   // 'YYYY-MM-DD' → 'YYYY-MM-01'
 }
 
+// Map id→nombre para una lista de chofer_ids. Reemplazo del embed
+// `choferes(...)` que PostgREST no resuelve cuando se hace JOIN desde
+// una vista (las vistas no heredan FKs en el schema cache).
+async function fetchChoferesNombre(
+  sb: ReturnType<typeof createSupabaseClient>,
+  ids: number[],
+): Promise<Map<number, string>> {
+  if (ids.length === 0) return new Map()
+  const { data, error } = await sb
+    .from('choferes')
+    .select('id, nombre')
+    .in('id', ids)
+  if (error) throw new HttpError(500, 'DB_ERROR', error.message)
+  return new Map((data ?? []).map((c: any) => [c.id as number, c.nombre as string]))
+}
+
 export const combustibleService = {
 
   // ── Listado de cargas ──────────────────────────────────────
@@ -79,7 +95,7 @@ export const combustibleService = {
     const sb = createSupabaseClient(token)
     let sel = sb
       .from('v_consumo_chofer_mes')
-      .select('*, chofer:choferes(id,nombre)')
+      .select('*')
       .gte('mes', inicioDeMes(q.desde))
       .lte('mes', inicioDeMes(q.hasta))
       .order('mes', { ascending: false })
@@ -87,7 +103,17 @@ export const combustibleService = {
 
     const { data, error } = await sel
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
-    return { items: data ?? [] }
+
+    // PostgREST no infiere la FK desde una vista, así que el embed
+    // `chofer:choferes(...)` falla. Hacemos un segundo query a `choferes`
+    // y enriquecemos las filas con el nombre.
+    const choferIds = [...new Set((data ?? []).map((r: any) => r.chofer_id).filter(Boolean))]
+    const nombres   = await fetchChoferesNombre(sb, choferIds)
+    const items     = (data ?? []).map((r: any) => ({
+      ...r,
+      chofer: r.chofer_id ? { id: r.chofer_id, nombre: nombres.get(r.chofer_id) ?? `#${r.chofer_id}` } : null,
+    }))
+    return { items }
   },
 
   // ── Reporte: ranking de choferes ──────────────────────────
@@ -95,7 +121,7 @@ export const combustibleService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('v_consumo_chofer_mes')
-      .select('chofer_id, km_recorridos, litros, gasto_combustible, cargas_count, chofer:choferes(id,nombre)')
+      .select('chofer_id, km_recorridos, litros, gasto_combustible, cargas_count')
       .gte('mes', inicioDeMes(q.desde))
       .lte('mes', inicioDeMes(q.hasta))
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
@@ -110,7 +136,7 @@ export const combustibleService = {
       if (!map.has(r.chofer_id)) {
         map.set(r.chofer_id, {
           chofer_id: r.chofer_id,
-          nombre:    r.chofer?.nombre ?? `#${r.chofer_id}`,
+          nombre:    `#${r.chofer_id}`,  // se rellena abajo con fetchChoferesNombre
           total_km: 0, total_litros: 0, total_gasto: 0, cargas_count: 0,
         })
       }
@@ -119,6 +145,13 @@ export const combustibleService = {
       row.total_litros += Number(r.litros ?? 0)
       row.total_gasto  += Number(r.gasto_combustible ?? 0)
       row.cargas_count += Number(r.cargas_count ?? 0)
+    }
+
+    // Enriquecer con nombres (segunda query a choferes — PostgREST no
+    // infiere la FK desde la vista).
+    const nombres = await fetchChoferesNombre(sb, [...map.keys()])
+    for (const row of map.values()) {
+      row.nombre = nombres.get(row.chofer_id) ?? `#${row.chofer_id}`
     }
 
     const items = Array.from(map.values())
