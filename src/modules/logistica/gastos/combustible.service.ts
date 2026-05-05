@@ -4,6 +4,14 @@ import type {
   ListCargasQuery, ConsumoCamionQuery, ConsumoChoferMesQuery, RankingChoferesQuery,
 } from './combustible.schema.js'
 
+// La vista v_consumo_chofer_mes agrupa por `date_trunc('month', fecha)::date`
+// → cada fila tiene `mes = '2026-04-01'` (primer día del mes).
+// Si filtramos directo con `>= desde` y desde = '2026-04-15', perdemos
+// abril completo. Truncamos los extremos al primer día de su mes.
+function inicioDeMes(fechaISO: string): string {
+  return fechaISO.slice(0, 7) + '-01'   // 'YYYY-MM-DD' → 'YYYY-MM-01'
+}
+
 export const combustibleService = {
 
   // ── Listado de cargas ──────────────────────────────────────
@@ -72,8 +80,8 @@ export const combustibleService = {
     let sel = sb
       .from('v_consumo_chofer_mes')
       .select('*, chofer:choferes(id,nombre)')
-      .gte('mes', q.desde)
-      .lte('mes', q.hasta)
+      .gte('mes', inicioDeMes(q.desde))
+      .lte('mes', inicioDeMes(q.hasta))
       .order('mes', { ascending: false })
     if (q.chofer_id) sel = sel.eq('chofer_id', q.chofer_id)
 
@@ -88,8 +96,8 @@ export const combustibleService = {
     const { data, error } = await sb
       .from('v_consumo_chofer_mes')
       .select('chofer_id, km_recorridos, litros, gasto_combustible, cargas_count, chofer:choferes(id,nombre)')
-      .gte('mes', q.desde)
-      .lte('mes', q.hasta)
+      .gte('mes', inicioDeMes(q.desde))
+      .lte('mes', inicioDeMes(q.hasta))
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
     // Agrupar por chofer (colapsando los meses del rango).
