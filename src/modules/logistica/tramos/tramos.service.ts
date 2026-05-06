@@ -48,14 +48,30 @@ export const tramosService = {
 
   async create(dto: CreateTramoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    // Los tramos vacíos quedan completados de inmediato
-    const estado = dto.tipo === 'vacio' ? 'completado' : 'en_curso'
+    // Default: cargado→en_curso, vacio→completado. El cliente puede
+    // overridear con `dto.estado` (caso típico: vacío que arranca tras
+    // una descarga y queda en seguimiento GPS hasta cargar de nuevo).
+    const estadoDefault = dto.tipo === 'vacio' ? 'completado' : 'en_curso'
+    const estado = dto.estado ?? estadoDefault
     const { data, error } = await supabase
       .from('tramos')
       .insert({ ...dto, estado, created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)
+
+    // Si el nuevo tramo es `cargado en_curso`, cerramos cualquier vacío
+    // `en_curso` previo del mismo camión: ya llegó a la cantera nueva, su
+    // viaje vacío terminó. Evita vacíos "huérfanos" que nunca se cierran.
+    if (dto.tipo === 'cargado' && estado === 'en_curso' && dto.camion_id) {
+      await supabase
+        .from('tramos')
+        .update({ estado: 'completado', updated_by: userId })
+        .eq('camion_id', dto.camion_id)
+        .eq('tipo', 'vacio')
+        .eq('estado', 'en_curso')
+        .neq('id', (data as any).id)
+    }
     return data
   },
 

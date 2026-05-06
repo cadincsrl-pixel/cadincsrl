@@ -22,6 +22,11 @@ export const CreateTramoSchema = z.object({
   // Vacío
   fecha_vacio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
+  // Override del estado por defecto. Útil para tramos `vacio en_curso`
+  // que disparan seguimiento GPS hasta el próximo destino. Default por
+  // tipo: cargado→en_curso, vacio→completado.
+  estado: z.enum(['en_curso', 'completado']).optional(),
+
   empresa_id: z.number().nullable().optional(),
   obs: z.string().optional().default(''),
 })
