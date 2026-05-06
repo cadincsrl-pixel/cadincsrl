@@ -10,11 +10,17 @@ export class MapsError extends Error {
 
 export interface TramoEnRuta {
   tramo_id:        number
+  // 'cargado' = camión llevando producto cantera→depósito.
+  // 'vacio'   = camión volviendo depósito→cantera para nueva carga.
+  tipo:            'cargado' | 'vacio'
   // Identificación visible
   patente:         string | null
   chofer_nombre:   string | null
   cantera_nombre:  string | null
   deposito_nombre: string | null
+  // Nombre del destino para la UI ("hacia X"). Para cargado es el depósito,
+  // para vacío es la cantera.
+  destino_nombre:  string | null
   // Estado del viaje
   fecha_carga:     string | null
   toneladas:       number | null
@@ -23,7 +29,7 @@ export interface TramoEnRuta {
   gps_lng:         number | null
   gps_velocidad:   number | null
   gps_lectura_en:  string | null
-  // Destino (depósito)
+  // Coordenadas del destino (depósito si cargado, cantera si vacío).
   destino_lat:     number | null
   destino_lng:     number | null
   // Cálculo de distancia (null si falta algún dato)
@@ -51,23 +57,28 @@ export const mapsService = {
   },
 
   /**
-   * Lista todos los tramos cargados en curso enriquecidos con distancia
+   * Lista tramos en curso (cargado + vacio) enriquecidos con distancia
    * GPS→destino calculada vía Google Distance Matrix.
+   *
+   * Para cargados: destino = depósito (donde van a descargar).
+   * Para vacíos:   destino = cantera (donde van a buscar la próxima carga).
    */
   async listarEnRuta(token: string): Promise<TramoEnRuta[]> {
     const sb = createSupabaseClient(token)
 
-    // Traemos tramos cargados en curso con joins a entidades dependientes.
+    // Traemos tramos en curso (cargado o vacío) con joins. Cantera y depósito
+    // ahora SIEMPRE incluyen lat/lng, porque dependiendo del tipo la coord
+    // de destino sale de uno u otro.
     const { data: tramos, error } = await sb
       .from('tramos')
       .select(`
-        id, fecha_carga, toneladas_descarga, toneladas_carga,
+        id, tipo, fecha_carga, toneladas_descarga, toneladas_carga,
         chofer:choferes(id, nombre),
         camion:camiones(id, patente, gps_ultima_lat, gps_ultima_lng, gps_ultima_velocidad, gps_ultima_lectura_en),
-        cantera:canteras(id, nombre),
+        cantera:canteras(id, nombre, lat, lng),
         deposito:depositos(id, nombre, lat, lng)
       `)
-      .eq('tipo', 'cargado')
+      .in('tipo', ['cargado', 'vacio'])
       .eq('estado', 'en_curso')
       .order('id', { ascending: false })
     if (error) throw new MapsError(500, 'DB_ERROR', error.message)
@@ -76,22 +87,29 @@ export const mapsService = {
     const out: TramoEnRuta[] = []
     for (const t of (tramos ?? []) as any[]) {
       const cam = t.camion ?? null
+      const can = t.cantera ?? null
       const dep = t.deposito ?? null
+
+      // El destino depende del tipo: cargado→depósito, vacío→cantera.
+      const tipo: 'cargado' | 'vacio' = t.tipo === 'vacio' ? 'vacio' : 'cargado'
+      const destino = tipo === 'cargado' ? dep : can
 
       const fila: TramoEnRuta = {
         tramo_id:            t.id,
+        tipo,
         patente:             cam?.patente ?? null,
         chofer_nombre:       t.chofer?.nombre ?? null,
-        cantera_nombre:      t.cantera?.nombre ?? null,
+        cantera_nombre:      can?.nombre ?? null,
         deposito_nombre:     dep?.nombre ?? null,
+        destino_nombre:      destino?.nombre ?? null,
         fecha_carga:         t.fecha_carga,
         toneladas:           t.toneladas_descarga ?? t.toneladas_carga,
         gps_lat:             cam?.gps_ultima_lat ? Number(cam.gps_ultima_lat) : null,
         gps_lng:             cam?.gps_ultima_lng ? Number(cam.gps_ultima_lng) : null,
         gps_velocidad:       cam?.gps_ultima_velocidad ? Number(cam.gps_ultima_velocidad) : null,
         gps_lectura_en:      cam?.gps_ultima_lectura_en ?? null,
-        destino_lat:         dep?.lat ? Number(dep.lat) : null,
-        destino_lng:         dep?.lng ? Number(dep.lng) : null,
+        destino_lat:         destino?.lat ? Number(destino.lat) : null,
+        destino_lng:         destino?.lng ? Number(destino.lng) : null,
         distancia_m:         null,
         duracion_s:          null,
         duracion_traffic_s:  null,
