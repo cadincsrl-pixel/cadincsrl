@@ -4,6 +4,7 @@ import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { tramosService } from './tramos.service.js'
 import { CreateTramoSchema, UpdateTramoSchema, RegistrarDescargaSchema } from './tramos.schema.js'
+import relevoRoutes from './relevo.routes.js'
 import { z } from 'zod'
 
 const MoverSchema = z.object({ dir: z.enum(['up', 'down']) })
@@ -14,6 +15,9 @@ tramos.on(['GET'],          '*', requirePermiso('logistica', 'lectura'))
 tramos.on(['POST'],         '*', requirePermiso('logistica', 'creacion'))
 tramos.on(['PATCH', 'PUT'], '*', requirePermiso('logistica', 'actualizacion'))
 tramos.on(['DELETE'],       '*', requirePermiso('logistica', 'eliminacion'))
+
+// Sub-router de relevos: /api/logistica/tramos/:id/relevo[/sugerencia]
+tramos.route('/', relevoRoutes)
 
 tramos.get('/', async (c) => {
   const data = await tramosService.getAll(c.get('accessToken'))
