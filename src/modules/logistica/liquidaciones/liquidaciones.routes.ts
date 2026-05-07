@@ -5,6 +5,7 @@ import { requirePermiso } from '../../../middleware/permission.js'
 import { liquidacionesService, LiqHttpError } from './liquidaciones.service.js'
 import { CreateLiquidacionSchema, UpdateLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
 import { auditService } from '../../admin/audit.service.js'
+import adjuntosRoutes from './adjuntos.routes.js'
 
 const liquidaciones = new Hono()
 liquidaciones.use('*', authMiddleware)
@@ -12,6 +13,9 @@ liquidaciones.on(['GET'],            '*', requirePermiso('logistica', 'lectura')
 liquidaciones.on(['POST'],           '*', requirePermiso('logistica', 'creacion'))
 liquidaciones.on(['PATCH', 'PUT'],   '*', requirePermiso('logistica', 'actualizacion'))
 liquidaciones.on(['DELETE'],         '*', requirePermiso('logistica', 'eliminacion'))
+
+// Sub-router de adjuntos: /api/logistica/liquidaciones/:id/adjuntos/...
+liquidaciones.route('/', adjuntosRoutes)
 
 liquidaciones.get('/',          async (c) => c.json(await liquidacionesService.getAll(c.get('accessToken'))))
 liquidaciones.get('/adelantos', async (c) => c.json(await liquidacionesService.getAdelantos(c.get('accessToken'))))
