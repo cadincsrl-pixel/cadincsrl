@@ -54,9 +54,11 @@ async function findChivilcoy(sb: any): Promise<{ kind: 'cantera' | 'deposito'; i
   return null
 }
 
-// km de la ruta principal (cantera↔deposito del tramo). El campo `km_ida_vuelta`
-// es la distancia ida + vuelta; un viaje cargado o vacío usa la mitad.
-async function kmTramoUnaPunta(sb: any, canteraId: number, depositoId: number): Promise<number | null> {
+// km del tramo entre una cantera y un depósito. Pese al nombre del campo
+// `km_ida_vuelta`, el valor representa los km de UN trayecto (cargado O
+// vacío), no la suma — así lo usa el resto del proyecto (kmTramo en
+// LiquidacionesTab, getKm en ViajesTab, etc.).
+async function kmCanteraDeposito(sb: any, canteraId: number, depositoId: number): Promise<number | null> {
   const { data, error } = await sb
     .from('rutas')
     .select('km_ida_vuelta')
@@ -65,11 +67,7 @@ async function kmTramoUnaPunta(sb: any, canteraId: number, depositoId: number): 
     .maybeSingle()
   if (error) throw new Error(error.message)
   if (!data || data.km_ida_vuelta == null) return null
-  return Number(data.km_ida_vuelta) / 2
-}
-
-async function kmCanteraDeposito(sb: any, canteraId: number, depositoId: number): Promise<number | null> {
-  return kmTramoUnaPunta(sb, canteraId, depositoId)
+  return Number(data.km_ida_vuelta)
 }
 
 // Sugiere km para cada chofer en un relevo, asumiendo que el lugar
