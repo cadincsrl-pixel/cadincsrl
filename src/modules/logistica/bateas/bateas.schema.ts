@@ -16,7 +16,20 @@ export const CreateBateaSchema = z.object({
   obs:          z.string().optional().nullable(),
 })
 
-export const UpdateBateaSchema = CreateBateaSchema.partial()
+// No usar .partial() sobre el create: arrastra el .default('activo') del
+// estado y zod lo inyecta en updates parciales, pisando datos válidos.
+export const UpdateBateaSchema = z.object({
+  patente:      z.string().min(1).optional(),
+  tipo:         TipoEnum.optional(),
+  marca:        z.string().optional().nullable(),
+  modelo:       z.string().optional().nullable(),
+  anio:         z.number().int().optional().nullable(),
+  capacidad_m3: z.number().optional().nullable(),
+  capacidad_tn: z.number().optional().nullable(),
+  titular:      z.string().optional().nullable(),
+  estado:       EstadoEnum.optional(),
+  obs:          z.string().optional().nullable(),
+})
 
 export type CreateBateaDto = z.infer<typeof CreateBateaSchema>
 export type UpdateBateaDto = z.infer<typeof UpdateBateaSchema>

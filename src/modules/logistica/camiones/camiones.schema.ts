@@ -9,7 +9,16 @@ export const CreateCamionSchema = z.object({
   km_actuales: z.number().min(0).optional(),
 })
 
-export const UpdateCamionSchema = CreateCamionSchema.partial()
+// No usar .partial() sobre el create: arrastra los .default() y zod
+// inyecta valores por defecto en updates parciales, pisando datos válidos.
+export const UpdateCamionSchema = z.object({
+  patente:     z.string().min(1).optional(),
+  modelo:      z.string().optional(),
+  anio:        z.number().optional(),
+  estado:      z.enum(['activo', 'mantenimiento', 'inactivo']).optional(),
+  obs:         z.string().optional(),
+  km_actuales: z.number().min(0).optional(),
+})
 
 export type CreateCamionDto = z.infer<typeof CreateCamionSchema>
 export type UpdateCamionDto = z.infer<typeof UpdateCamionSchema>

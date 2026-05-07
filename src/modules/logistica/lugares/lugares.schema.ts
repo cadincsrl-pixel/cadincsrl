@@ -10,7 +10,16 @@ export const CreateLugarSchema = z.object({
   lng:       z.number().min(-180).max(180).nullable().optional(),
 })
 
-export const UpdateLugarSchema = CreateLugarSchema.partial()
+// No usar .partial() sobre el create: arrastra los .default() y zod
+// inyecta valores por defecto en updates parciales, pisando datos válidos.
+export const UpdateLugarSchema = z.object({
+  nombre:    z.string().min(1).optional(),
+  localidad: z.string().optional(),
+  maps_url:  z.string().optional(),
+  obs:       z.string().optional(),
+  lat:       z.number().min(-90).max(90).nullable().optional(),
+  lng:       z.number().min(-180).max(180).nullable().optional(),
+})
 
 export const CreateRutaSchema = z.object({
   cantera_id:   z.number(),

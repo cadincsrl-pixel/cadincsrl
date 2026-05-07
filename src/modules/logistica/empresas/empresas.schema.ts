@@ -9,7 +9,16 @@ export const CreateEmpresaSchema = z.object({
   estado: z.enum(['activa', 'inactiva']).default('activa'),
 })
 
-export const UpdateEmpresaSchema = CreateEmpresaSchema.partial()
+// No usar .partial() sobre el create: arrastra los .default() y zod
+// inyecta valores por defecto en updates parciales, pisando datos válidos.
+export const UpdateEmpresaSchema = z.object({
+  nombre: z.string().min(1).optional(),
+  cuit:   z.string().optional(),
+  tel:    z.string().optional(),
+  email:  z.string().optional(),
+  obs:    z.string().optional(),
+  estado: z.enum(['activa', 'inactiva']).optional(),
+})
 
 export const CreateTarifaEmpresaSchema = z.object({
   empresa_id:    z.number(),

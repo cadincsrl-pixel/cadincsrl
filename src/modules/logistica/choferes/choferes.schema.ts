@@ -14,7 +14,22 @@ export const CreateChoferSchema = z.object({
   obs:               z.string().optional().default(''),
 })
 
-export const UpdateChoferSchema = CreateChoferSchema.partial()
+// Update: NO usar .partial() sobre el create porque arrastra los .default('')
+// y zod inyecta valores vacíos cuando el cliente manda un PATCH parcial,
+// pisando datos válidos en la DB (bug que vació cuiles/tel/licencia/obs).
+export const UpdateChoferSchema = z.object({
+  nombre:    z.string().min(1).optional(),
+  cuil:      z.string().optional(),
+  tel:       z.string().optional(),
+  licencia:  z.string().optional(),
+  estado:    z.enum(['activo', 'descanso', 'inactivo']).optional(),
+  camion_id: z.number().nullable().optional(),
+  batea_id:  z.number().nullable().optional(),
+  basico_dia:        z.number().optional(),
+  precio_km_cargado: z.number().optional(),
+  precio_km_vacio:   z.number().optional(),
+  obs:               z.string().optional(),
+})
 
 export type CreateChoferDto = z.infer<typeof CreateChoferSchema>
 export type UpdateChoferDto = z.infer<typeof UpdateChoferSchema>
