@@ -4,6 +4,7 @@ import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { liquidacionesService, LiqHttpError } from './liquidaciones.service.js'
 import { CreateLiquidacionSchema, UpdateLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
+import { auditService } from '../../admin/audit.service.js'
 
 const liquidaciones = new Hono()
 liquidaciones.use('*', authMiddleware)
@@ -55,8 +56,31 @@ liquidaciones.patch('/:id/reabrir', async (c) => {
 })
 
 liquidaciones.delete('/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  // Body opcional con motivo de eliminación. Si viene, lo guardamos en
+  // audit_log como entrada complementaria — el middleware audita el
+  // DELETE sin body, así que sin esto el motivo se perdería.
+  let motivo: string | null = null
   try {
-    const data = await liquidacionesService.delete(Number(c.req.param('id')), c.get('accessToken'))
+    const body = await c.req.json().catch(() => null) as { motivo?: string } | null
+    if (body?.motivo && typeof body.motivo === 'string') motivo = body.motivo.trim().slice(0, 500)
+  } catch { /* sin body, OK */ }
+
+  try {
+    const data = await liquidacionesService.delete(id, c.get('accessToken'))
+
+    // Audit explícito con el motivo (no auto, porque audit middleware
+    // sólo capta body en POST/PATCH/PUT, no en DELETE).
+    if (motivo) {
+      const user = c.get('user') as { id: string }
+      auditService.log({
+        user_id: user.id, user_nombre: '',
+        modulo: 'logistica', accion: 'eliminar',
+        entidad: 'liquidación', entidad_id: String(id),
+        detalle: `motivo=${motivo}`,
+      }, c.get('accessToken')).catch(() => undefined)
+    }
+
     return c.json(data)
   } catch (err) {
     if (err instanceof LiqHttpError) {
