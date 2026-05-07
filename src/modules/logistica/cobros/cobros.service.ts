@@ -47,9 +47,41 @@ export const cobrosService = {
 
   async marcarCobrado(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Validar que exista comprobante de pago antes de marcar como cobrado.
+    // Sin comprobante no hay forma de demostrar el pago — y el user
+    // pidió que el sistema lo bloquee para evitar olvidos.
+    const { data: adjs, error: errAdj } = await supabase
+      .from('cobros_adjuntos')
+      .select('id')
+      .eq('cobro_id', id)
+      .eq('tipo', 'comprobante')
+      .is('deleted_at', null)
+      .limit(1)
+    if (errAdj) throw new Error(errAdj.message)
+    if (!adjs || adjs.length === 0) {
+      const e = new Error('FALTA_COMPROBANTE_PAGO') as Error & { code?: string }
+      e.code = 'FALTA_COMPROBANTE_PAGO'
+      throw e
+    }
+
     const { data, error } = await supabase
       .from('cobros')
       .update({ estado: 'cobrado', updated_by: userId, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  // Volver un cobro de 'cobrado' a 'pendiente' — útil cuando se marcó
+  // por error o falta corregir el comprobante.
+  async revertirCobrado(id: number, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('cobros')
+      .update({ estado: 'pendiente', updated_by: userId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single()

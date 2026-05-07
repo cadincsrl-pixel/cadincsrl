@@ -26,7 +26,19 @@ cobros.post('/', zValidator('json', CreateCobroSchema), async (c) => {
 })
 
 cobros.patch('/:id/cobrar', async (c) => {
-  const data = await cobrosService.marcarCobrado(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
+  try {
+    const data = await cobrosService.marcarCobrado(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  } catch (err: any) {
+    if (err?.code === 'FALTA_COMPROBANTE_PAGO') {
+      return c.json({ error: 'FALTA_COMPROBANTE_PAGO' }, 400)
+    }
+    throw err
+  }
+})
+
+cobros.patch('/:id/revertir', async (c) => {
+  const data = await cobrosService.revertirCobrado(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
   return c.json(data)
 })
 
