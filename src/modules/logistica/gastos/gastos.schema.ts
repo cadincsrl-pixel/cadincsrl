@@ -92,6 +92,9 @@ export const ListGastosQuerySchema = z.object({
   desde:          FechaISO.optional(),
   hasta:          FechaISO.optional(),
   liquidado:      z.coerce.boolean().optional(),
+  // Filtro por liquidación específica (útil para mostrar el detalle de
+  // una liquidación cerrada con sus gastos/reintegros asociados).
+  liquidacion_id: z.coerce.number().int().positive().optional(),
   q:              z.string().max(200).optional(),
   limit:          z.coerce.number().int().min(1).max(500).default(100),
   offset:         z.coerce.number().int().min(0).default(0),

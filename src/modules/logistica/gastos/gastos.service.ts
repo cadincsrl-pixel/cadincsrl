@@ -253,6 +253,7 @@ export const gastosService = {
     if (filters.hasta)         q = q.lte('fecha', filters.hasta)
     if (filters.liquidado === true)  q = q.not('liquidacion_id', 'is', null)
     if (filters.liquidado === false) q = q.is('liquidacion_id', null)
+    if (filters.liquidacion_id)      q = q.eq('liquidacion_id', filters.liquidacion_id)
     if (filters.q) {
       // Escapar % y , para evitar que rompan el .or()
       const safe = filters.q.replace(/[%,]/g, ' ')
