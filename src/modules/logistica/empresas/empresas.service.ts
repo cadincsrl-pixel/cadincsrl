@@ -1,5 +1,5 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
-import type { CreateEmpresaDto, UpdateEmpresaDto, CreateTarifaEmpresaDto } from './empresas.schema.js'
+import type { CreateEmpresaDto, UpdateEmpresaDto, CreateTarifaEmpresaDto, UpdateTarifaEmpresaDto } from './empresas.schema.js'
 
 export const empresasService = {
 
@@ -62,6 +62,18 @@ export const empresasService = {
     const { data, error } = await supabase
       .from('tarifas_empresa_cantera')
       .insert({ ...dto, updated_by: userId, updated_at: new Date().toISOString() })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateTarifa(id: number, dto: UpdateTarifaEmpresaDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('tarifas_empresa_cantera')
+      .update({ ...dto, updated_by: userId, updated_at: new Date().toISOString() })
+      .eq('id', id)
       .select()
       .single()
     if (error) throw new Error(error.message)

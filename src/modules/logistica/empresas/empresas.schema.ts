@@ -19,6 +19,16 @@ export const CreateTarifaEmpresaSchema = z.object({
   obs:           z.string().optional().default(''),
 })
 
+// Update solo permite cambiar valor/fecha/obs. La identidad
+// (empresa+cantera) es la del registro y se mantiene; si se quiere cambiar
+// el par, se elimina y se crea una nueva.
+export const UpdateTarifaEmpresaSchema = z.object({
+  valor_ton:     z.number().min(0).optional(),
+  vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  obs:           z.string().optional(),
+})
+
 export type CreateEmpresaDto       = z.infer<typeof CreateEmpresaSchema>
 export type UpdateEmpresaDto       = z.infer<typeof UpdateEmpresaSchema>
 export type CreateTarifaEmpresaDto = z.infer<typeof CreateTarifaEmpresaSchema>
+export type UpdateTarifaEmpresaDto = z.infer<typeof UpdateTarifaEmpresaSchema>

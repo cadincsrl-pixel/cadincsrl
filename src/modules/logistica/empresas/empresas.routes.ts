@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { empresasService } from './empresas.service.js'
-import { CreateEmpresaSchema, UpdateEmpresaSchema, CreateTarifaEmpresaSchema } from './empresas.schema.js'
+import { CreateEmpresaSchema, UpdateEmpresaSchema, CreateTarifaEmpresaSchema, UpdateTarifaEmpresaSchema } from './empresas.schema.js'
 
 const empresas = new Hono()
 empresas.use('*', authMiddleware)
@@ -42,6 +42,16 @@ empresas.get('/tarifas', async (c) => {
 empresas.post('/tarifas', zValidator('json', CreateTarifaEmpresaSchema), async (c) => {
   const data = await empresasService.createTarifa(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data, 201)
+})
+
+empresas.patch('/tarifas/:id', zValidator('json', UpdateTarifaEmpresaSchema), async (c) => {
+  const data = await empresasService.updateTarifa(
+    Number(c.req.param('id')),
+    c.req.valid('json'),
+    c.get('accessToken'),
+    c.get('user').id,
+  )
+  return c.json(data)
 })
 
 empresas.delete('/tarifas/:id', async (c) => {
