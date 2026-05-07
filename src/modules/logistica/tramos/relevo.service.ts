@@ -39,25 +39,25 @@ interface RutaRow {
   km_ida_vuelta: number | null
 }
 
-// Busca Chivilcoy en canteras y depósitos. Devuelve el primero que encuentre.
-async function findChivilcoy(sb: any): Promise<{ kind: 'cantera' | 'deposito'; id: number } | null> {
+// Busca Chivilcoy en canteras y depósitos. Devuelve los IDs de cada uno
+// (puede estar como cantera, como depósito, o ambos).
+async function findChivilcoy(sb: any): Promise<{ canteraId: number | null; depositoId: number | null }> {
   const { data: dep, error: e1 } = await sb
     .from('depositos').select('id').ilike('nombre', '%chivilcoy%').limit(1).maybeSingle()
   if (e1) throw new Error(e1.message)
-  if (dep) return { kind: 'deposito', id: dep.id }
-
   const { data: cant, error: e2 } = await sb
     .from('canteras').select('id').ilike('nombre', '%chivilcoy%').limit(1).maybeSingle()
   if (e2) throw new Error(e2.message)
-  if (cant) return { kind: 'cantera', id: cant.id }
-
-  return null
+  return {
+    canteraId:  cant?.id ?? null,
+    depositoId: dep?.id  ?? null,
+  }
 }
 
-// km del tramo entre una cantera y un depósito. Pese al nombre del campo
-// `km_ida_vuelta`, el valor representa los km de UN trayecto (cargado O
-// vacío), no la suma — así lo usa el resto del proyecto (kmTramo en
-// LiquidacionesTab, getKm en ViajesTab, etc.).
+// km de un trayecto cantera↔depósito. El campo se llama `km_ida_vuelta`
+// pero por convención del proyecto representa los km de UN trayecto
+// (cargado O vacío), no la suma. Así lo usa kmTramo en LiquidacionesTab
+// y getKm en ViajesTab.
 async function kmCanteraDeposito(sb: any, canteraId: number, depositoId: number): Promise<number | null> {
   const { data, error } = await sb
     .from('rutas')
@@ -70,68 +70,79 @@ async function kmCanteraDeposito(sb: any, canteraId: number, depositoId: number)
   return Number(data.km_ida_vuelta)
 }
 
-// Sugiere km para cada chofer en un relevo, asumiendo que el lugar
-// intermedio es Chivilcoy (cantera o depósito). Devuelve { km1, km2 }
-// o null si no se puede calcular automáticamente.
+// Sugiere km para un relevo en Chivilcoy.
 //
-// Tramo cargado: cantera → depósito.
-//   - Si Chivilcoy es depósito: necesitamos ruta(cantera, Chivilcoy) y ruta(cantera, depósito) para resta.
-//   - Si Chivilcoy es cantera:  necesitamos ruta(Chivilcoy, depósito) y ruta(cantera, depósito).
+// Estrategia:
+// 1. Si están cargados los DOS segmentos (origen→Chivilcoy y Chivilcoy→destino),
+//    se suman directamente. Esto refleja correctamente desvíos donde la ruta
+//    real es más larga que la directa.
+// 2. Si solo está cargado UN segmento, se completa restando del km de la ruta
+//    directa. La aproximación pierde precisión cuando hay desvío.
+// 3. Si no hay ninguno → falla, el user carga manual.
 //
-// Tramo vacío: depósito → cantera (mismo set de rutas, indexada al revés).
+// Para tramo cargado (cantera → depósito):
+//   - Segmento 1 (cantera → Chivilcoy): requiere Chivilcoy como depósito.
+//   - Segmento 2 (Chivilcoy → depósito destino): requiere Chivilcoy como cantera.
+// Para tramo vacío (depósito → cantera):
+//   - Segmento 1 (depósito → Chivilcoy): requiere Chivilcoy como cantera.
+//   - Segmento 2 (Chivilcoy → cantera): requiere Chivilcoy como depósito.
 async function sugerirKm(
   sb: any,
   tramo: TramoRow,
-): Promise<{ km1: number; km2: number; lugar: string; encontrado: true }
+): Promise<{ km1: number; km2: number; lugar: string; encontrado: true; metodo: 'suma' | 'resta' }
        | { encontrado: false; lugar: string; motivo: string }> {
   const lugar = LUGAR_RELEVO
   if (tramo.cantera_id == null || tramo.deposito_id == null) {
     return { encontrado: false, lugar, motivo: 'TRAMO_SIN_CANTERA_O_DEPOSITO' }
   }
   const chiv = await findChivilcoy(sb)
-  if (!chiv) return { encontrado: false, lugar, motivo: 'CHIVILCOY_NO_CARGADO' }
+  if (chiv.canteraId == null && chiv.depositoId == null) {
+    return { encontrado: false, lugar, motivo: 'CHIVILCOY_NO_CARGADO' }
+  }
 
-  const kmTotal = await kmCanteraDeposito(sb, tramo.cantera_id, tramo.deposito_id)
-  if (kmTotal == null) return { encontrado: false, lugar, motivo: 'RUTA_PRINCIPAL_SIN_KM' }
-
-  // Para tramo cargado: chofer 1 hace cantera→Chivilcoy, chofer 2 hace Chivilcoy→destino.
-  // Para tramo vacío:   chofer 1 hace depósito→Chivilcoy, chofer 2 hace Chivilcoy→cantera.
-  // El chofer "que termina en Chivilcoy" es siempre chofer 1.
-  let kmHastaChivilcoy: number | null = null
-  if (chiv.kind === 'deposito') {
-    if (tramo.tipo === 'cargado') {
-      // cantera → depósito-chivilcoy (km1)
-      kmHastaChivilcoy = await kmCanteraDeposito(sb, tramo.cantera_id, chiv.id)
-    } else {
-      // depósito-origen → depósito-chivilcoy. No hay relación directa en `rutas`.
-      // Lo aproximamos con: ruta(canteraDestino, Chivilcoy). Es el segmento que
-      // recorre el chofer 2 (Chivilcoy → cantera) → así km2 = ese, y km1 = total - km2.
-      const km2 = await kmCanteraDeposito(sb, tramo.cantera_id, chiv.id)
-      if (km2 == null) return { encontrado: false, lugar, motivo: 'CHIVILCOY_SIN_RUTA_RELEVANTE' }
-      const km1 = Math.max(0, kmTotal - km2)
-      return { encontrado: true, lugar, km1, km2 }
+  // Resolución de cada segmento según el tipo de tramo.
+  let seg1: number | null = null
+  let seg2: number | null = null
+  if (tramo.tipo === 'cargado') {
+    // Segmento 1: cantera origen → Chivilcoy (depósito).
+    if (chiv.depositoId != null) {
+      seg1 = await kmCanteraDeposito(sb, tramo.cantera_id, chiv.depositoId)
+    }
+    // Segmento 2: Chivilcoy (cantera) → depósito destino.
+    if (chiv.canteraId != null) {
+      seg2 = await kmCanteraDeposito(sb, chiv.canteraId, tramo.deposito_id)
     }
   } else {
-    // chiv es cantera
-    if (tramo.tipo === 'cargado') {
-      // cantera-origen → Chivilcoy (cantera-cantera, no hay en `rutas`).
-      // Aproximamos con: ruta(Chivilcoy, depósito). Es lo que hace chofer 2.
-      const km2 = await kmCanteraDeposito(sb, chiv.id, tramo.deposito_id)
-      if (km2 == null) return { encontrado: false, lugar, motivo: 'CHIVILCOY_SIN_RUTA_RELEVANTE' }
-      const km1 = Math.max(0, kmTotal - km2)
-      return { encontrado: true, lugar, km1, km2 }
-    } else {
-      // depósito → Chivilcoy (cantera).
-      kmHastaChivilcoy = await kmCanteraDeposito(sb, chiv.id, tramo.deposito_id)
+    // Tramo vacío.
+    // Segmento 1: depósito origen → Chivilcoy (cantera).
+    if (chiv.canteraId != null) {
+      seg1 = await kmCanteraDeposito(sb, chiv.canteraId, tramo.deposito_id)
+    }
+    // Segmento 2: Chivilcoy (depósito) → cantera destino.
+    if (chiv.depositoId != null) {
+      seg2 = await kmCanteraDeposito(sb, tramo.cantera_id, chiv.depositoId)
     }
   }
 
-  if (kmHastaChivilcoy == null) {
-    return { encontrado: false, lugar, motivo: 'CHIVILCOY_SIN_RUTA_RELEVANTE' }
+  // Caso 1: ambos segmentos cargados → suma directa (preciso, considera desvíos).
+  if (seg1 != null && seg2 != null) {
+    return { encontrado: true, lugar, km1: seg1, km2: seg2, metodo: 'suma' }
   }
-  const km1 = kmHastaChivilcoy
-  const km2 = Math.max(0, kmTotal - km1)
-  return { encontrado: true, lugar, km1, km2 }
+
+  // Caso 2: un segmento + ruta directa → resta (aproximado, no considera desvíos).
+  const kmDirecto = await kmCanteraDeposito(sb, tramo.cantera_id, tramo.deposito_id)
+  if (kmDirecto != null) {
+    if (seg1 != null) {
+      const km2 = Math.max(0, kmDirecto - seg1)
+      return { encontrado: true, lugar, km1: seg1, km2, metodo: 'resta' }
+    }
+    if (seg2 != null) {
+      const km1 = Math.max(0, kmDirecto - seg2)
+      return { encontrado: true, lugar, km1, km2: seg2, metodo: 'resta' }
+    }
+  }
+
+  return { encontrado: false, lugar, motivo: 'CHIVILCOY_SIN_RUTA_RELEVANTE' }
 }
 
 export const tramoRelevoService = {
