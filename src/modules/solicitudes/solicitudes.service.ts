@@ -259,7 +259,7 @@ export const solicitudesService = {
       }
     }
 
-    return this.getById(id, token)
+    return this.getById(id, token, userId)
   },
 
   async delete(id: number, token: string, userId: string) {

@@ -75,6 +75,7 @@ const PermisosSchema = z.record(
     eliminacion:     z.boolean().optional(),
     tabs:            z.array(z.string()).optional(),
     ver_costos:      z.boolean().optional(),
+    resolver_items:  z.boolean().optional(),
     forzar_despacho: z.boolean().optional(),
   }),
 )

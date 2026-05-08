@@ -122,8 +122,17 @@ async function tienePermisoExtra(userId: string, modulo: string, flag: string): 
   return permisos?.[modulo]?.[flag] === true
 }
 
+// Guard: las acciones de resolución de items (comprar/despachar/enviar/
+// rechazar/revertir) son del comprador o encargado de depósito, no del
+// jefe de obra. Se chequea con el flag `certificaciones.resolver_items`.
+async function requireResolverItems(c: any, next: any) {
+  const tiene = await tienePermisoExtra(c.get('user').id, 'certificaciones', 'resolver_items')
+  if (!tiene) return c.json({ error: 'SIN_PERMISO_RESOLVER' }, 403)
+  await next()
+}
+
 // ── Acciones sobre ítems ──
-solicitudes.post('/items/:itemId/comprar', zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/comprar', requireResolverItems, zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
   return solicitudesService.comprarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
@@ -137,6 +146,7 @@ solicitudes.post('/items/:itemId/comprar', zValidator('json', ComprarItemSchema)
 //   3. itemHandler             → invoca el service y mapea errores
 //      igual que los demás endpoints de /items (DRY).
 solicitudes.post('/items/:itemId/despachar',
+  requireResolverItems,
   zValidator('json', DespacharItemSchema),
   async (c, next) => {
     const body = c.req.valid('json')
@@ -162,25 +172,27 @@ solicitudes.post('/items/:itemId/despachar',
   }),
 )
 
-solicitudes.post('/items/:itemId/enviar', zValidator('json', EnviarItemSchema), itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/enviar', requireResolverItems, zValidator('json', EnviarItemSchema), itemHandler(async (c) => {
   return solicitudesService.enviarItem(
     Number(c.req.param('itemId')), c.req.valid('json').fecha_envio, c.get('accessToken')
   )
 }))
 
-solicitudes.post('/items/:itemId/rechazar', itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/rechazar', requireResolverItems, itemHandler(async (c) => {
   return solicitudesService.rechazarItem(
     Number(c.req.param('itemId')), c.get('accessToken')
   )
 }))
 
-solicitudes.post('/items/:itemId/revertir', itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/revertir', requireResolverItems, itemHandler(async (c) => {
   return solicitudesService.revertirItem(
     Number(c.req.param('itemId')), c.get('accessToken')
   )
 }))
 
-solicitudes.patch('/items/:itemId', zValidator('json', EditarItemSchema), itemHandler(async (c) => {
+// PATCH /items/:itemId — edita campos de items YA resueltos (ej. corregir
+// precio o proveedor luego de comprado). Es del comprador, no del jefe.
+solicitudes.patch('/items/:itemId', requireResolverItems, zValidator('json', EditarItemSchema), itemHandler(async (c) => {
   return solicitudesService.editarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
