@@ -10,28 +10,37 @@ const obras = new Hono()
 
 obras.use('*', authMiddleware)
 
-// GET /api/obras
+// GET /api/obras?modulo=tarja
+//
 // Lectura accesible desde tarja o certificaciones (los jefes de obra
 // solo tienen certificaciones y necesitan ver SUS obras al pedir
 // materiales).
+//
+// Query param opcional `modulo`: cuando se pasa, respeta el override
+// `permisos.<modulo>.obras_scope` del perfil. Sin parámetro se usa el
+// scope global. Caso típico: Cristian Sosa tiene scope global='todas'
+// pero override en tarja='asignadas' → la página de tarja debe pasar
+// `?modulo=tarja` para ver solo la obra depósito.
 obras.get('/', requirePermisoOr([
   { modulo: 'tarja', accion: 'lectura' },
   { modulo: 'certificaciones', accion: 'lectura' },
 ]), async (c) => {
   const token  = c.get('accessToken')
   const userId = c.get('user').id
-  const data = await obrasService.getAll(token, userId)
+  const modulo = c.req.query('modulo') || undefined
+  const data = await obrasService.getAll(token, userId, modulo)
   return c.json(data)
 })
 
-// GET /api/obras/archivadas
+// GET /api/obras/archivadas?modulo=tarja
 obras.get('/archivadas', requirePermisoOr([
   { modulo: 'tarja', accion: 'lectura' },
   { modulo: 'certificaciones', accion: 'lectura' },
 ]), async (c) => {
   const token  = c.get('accessToken')
   const userId = c.get('user').id
-  const data = await obrasService.getArchivadas(token, userId)
+  const modulo = c.req.query('modulo') || undefined
+  const data = await obrasService.getArchivadas(token, userId, modulo)
   return c.json(data)
 })
 
@@ -49,7 +58,7 @@ obras.post(
   },
 )
 
-// GET /api/obras/:cod
+// GET /api/obras/:cod?modulo=tarja
 obras.get('/:cod', requirePermisoOr([
   { modulo: 'tarja', accion: 'lectura' },
   { modulo: 'certificaciones', accion: 'lectura' },
@@ -57,11 +66,13 @@ obras.get('/:cod', requirePermisoOr([
   const cod    = c.req.param('cod')
   const token  = c.get('accessToken')
   const userId = c.get('user').id
+  const modulo = c.req.query('modulo') || undefined
   try {
-    const data = await obrasService.getByCod(cod, token, userId)
+    const data = await obrasService.getByCod(cod, token, userId, modulo)
     return c.json(data)
-  } catch (err: any) {
-    if (err?.code === 'OBRA_SIN_ACCESO') return c.json({ error: err.code }, 403)
+  } catch (err: unknown) {
+    const e = err as { code?: string }
+    if (e?.code === 'OBRA_SIN_ACCESO') return c.json({ error: e.code }, 403)
     throw err
   }
 })

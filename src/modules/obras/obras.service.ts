@@ -4,7 +4,7 @@ import type { CreateObraDto, UpdateObraDto } from './obras.schema.js'
 
 export const obrasService = {
 
-  async getAll(token: string, userId: string) {
+  async getAll(token: string, userId: string, modulo?: string) {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('obras')
@@ -14,7 +14,11 @@ export const obrasService = {
 
     // Filtrar por obras del usuario si NO es admin.
     // null = admin sin restricción. Array vacío = ve cero obras.
-    const allowed = await getObrasDelUsuarioCached(userId)
+    // El parámetro `modulo` permite respetar el override por módulo
+    // (ej: Cristian tiene scope global='todas' pero override en
+    // tarja='asignadas' a la obra depósito). Si no se pasa, usa el
+    // scope global.
+    const allowed = await getObrasDelUsuarioCached(userId, modulo)
     if (allowed != null) {
       if (allowed.length === 0) return []
       q = q.in('cod', allowed)
@@ -25,7 +29,7 @@ export const obrasService = {
     return data
   },
 
-  async getArchivadas(token: string, userId: string) {
+  async getArchivadas(token: string, userId: string, modulo?: string) {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('obras')
@@ -33,7 +37,7 @@ export const obrasService = {
       .eq('archivada', true)
       .order('fecha_archivo', { ascending: false })
 
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, modulo)
     if (allowed != null) {
       if (allowed.length === 0) return []
       q = q.in('cod', allowed)
@@ -44,9 +48,9 @@ export const obrasService = {
     return data
   },
 
-  async getByCod(cod: string, token: string, userId: string) {
+  async getByCod(cod: string, token: string, userId: string, modulo?: string) {
     // Validar acceso del usuario a esta obra antes de devolverla.
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, modulo)
     if (allowed != null && !allowed.includes(cod)) {
       const e: Error & { code?: string } = new Error('OBRA_SIN_ACCESO')
       e.code = 'OBRA_SIN_ACCESO'
