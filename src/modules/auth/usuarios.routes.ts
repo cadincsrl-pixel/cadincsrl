@@ -75,24 +75,40 @@ const ModuloKeySchema = z.enum([
   'caja', 'ropa', 'prestamos', 'admin', 'configuracion',
 ])
 
-const PermisosSchema = z.record(
-  ModuloKeySchema,
-  z.object({
-    lectura:          z.boolean().optional(),
-    creacion:         z.boolean().optional(),
-    actualizacion:    z.boolean().optional(),
-    eliminacion:      z.boolean().optional(),
-    tabs:             z.array(z.string()).optional(),
-    ver_costos:       z.boolean().optional(),
-    ver_pii:          z.boolean().optional(),
-    vista_completa:   z.boolean().optional(),
-    solo_carga_horas: z.boolean().optional(), // legacy, en transición
-    resolver_items:   z.boolean().optional(),
-    forzar_despacho:  z.boolean().optional(),
-    // Override de scope por módulo. Si no está, se usa profiles.obras_scope.
-    obras_scope:      z.enum(['todas', 'asignadas']).optional(),
-  }),
-)
+const ModuloPermisosSchema = z.object({
+  lectura:          z.boolean().optional(),
+  creacion:         z.boolean().optional(),
+  actualizacion:    z.boolean().optional(),
+  eliminacion:      z.boolean().optional(),
+  tabs:             z.array(z.string()).optional(),
+  ver_costos:       z.boolean().optional(),
+  ver_pii:          z.boolean().optional(),
+  vista_completa:   z.boolean().optional(),
+  solo_carga_horas: z.boolean().optional(), // legacy, en transición
+  resolver_items:   z.boolean().optional(),
+  forzar_despacho:  z.boolean().optional(),
+  // Override de scope por módulo. Si no está, se usa profiles.obras_scope.
+  obras_scope:      z.enum(['todas', 'asignadas']).optional(),
+})
+
+// Validamos `permisos` como `z.record(ModuloKeySchema, ...)` PERO en zod v3
+// el record con key enum no rechaza claves desconocidas — solo las tipa.
+// Con superRefine forzamos que cada clave esté en la whitelist; las claves
+// inválidas devuelven un error 400 al admin (en vez de pasar y polusionar
+// el JSONB persistido en la DB).
+const PermisosSchema = z
+  .record(z.string(), ModuloPermisosSchema)
+  .superRefine((obj, ctx) => {
+    for (const k of Object.keys(obj)) {
+      if (!ModuloKeySchema.safeParse(k).success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [k],
+          message: `Módulo desconocido: '${k}'. Esperado uno de ${ModuloKeySchema.options.join(', ')}.`,
+        })
+      }
+    }
+  })
 
 const RolBaseSchema = z.enum([
   'administrativo', 'compras', 'deposito', 'jefe_obra', 'capataz',
@@ -164,10 +180,48 @@ const UpdateSchema = z.object({
   obras_scope:  ObrasScopeSchema.optional(),
 })
 
+// Cuenta admins activos. Se usa para evitar lockout total cuando el
+// admin actual intenta auto-demote o demote del último admin restante.
+async function countAdminsActivos(): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('profiles')
+    .select('id', { count: 'exact', head: true })
+    .eq('rol', 'admin')
+    .eq('activo', true)
+  if (error) throw new Error(error.message)
+  return count ?? 0
+}
+
 usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
   const id  = c.req.param('id')
   const { email, ...profileDto } = c.req.valid('json')
   const callerId = c.get('user').id
+
+  // Lockout protection: si la operación pasa el rol de admin a operador
+  // o desactiva un admin, verificamos que no sea el último. Sin esto un
+  // admin puede dejar el sistema sin admins (auto-demote o desactivar
+  // al único compañero) → nadie puede entrar al endpoint /api/usuarios/*
+  // y se requiere intervención SQL directa para recuperar.
+  if (profileDto.rol === 'operador' || profileDto.activo === false) {
+    const { data: target } = await supabaseAdmin
+      .from('profiles')
+      .select('rol, activo')
+      .eq('id', id)
+      .maybeSingle()
+    const eraAdminActivo = target?.rol === 'admin' && target?.activo === true
+    const dejaDeSerAdminActivo =
+      (profileDto.rol === 'operador' && eraAdminActivo) ||
+      (profileDto.activo === false && eraAdminActivo)
+    if (dejaDeSerAdminActivo) {
+      const adminsActivos = await countAdminsActivos()
+      if (adminsActivos <= 1) {
+        return c.json({
+          error: 'ULTIMO_ADMIN',
+          detail: 'No podés bajar/desactivar al último admin activo del sistema. Promoví otro user a admin antes.',
+        }, 400)
+      }
+    }
+  }
 
   // Actualizar email en auth.users si se envía
   if (email) {
@@ -177,10 +231,11 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
 
   // Actualizar perfil solo si hay campos de perfil
   if (Object.keys(profileDto).length > 0) {
-    // 1) Snapshot previo para audit de cambios sensibles (rol/modulos/permisos/tipo).
+    // 1) Snapshot previo para audit. Capturamos también obras_scope y
+    //    rol_base — son cambios "sensibles" en v2.
     const { data: before } = await supabase
       .from('profiles')
-      .select('rol, modulos, permisos, tipo_usuario')
+      .select('rol, modulos, permisos, tipo_usuario, rol_base, obras_scope')
       .eq('id', id)
       .maybeSingle()
 
@@ -192,16 +247,18 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
       .single()
     if (error) return c.json({ error: error.message }, 500)
 
-    // 2) Si alguno de los campos sensibles cambió, loguear el diff.
+    // 2) Si algún campo sensible cambió, loguear el diff.
     if (before) {
       const cambioSensible =
         before.rol !== data.rol ||
         JSON.stringify(before.modulos) !== JSON.stringify(data.modulos) ||
         JSON.stringify(before.permisos) !== JSON.stringify(data.permisos) ||
-        before.tipo_usuario !== data.tipo_usuario
+        before.tipo_usuario !== data.tipo_usuario ||
+        before.rol_base    !== data.rol_base ||
+        before.obras_scope !== data.obras_scope
 
       if (cambioSensible) {
-        await supabase.from('profiles_permisos_history').insert({
+        const { error: errAudit } = await supabase.from('profiles_permisos_history').insert({
           profile_id: id,
           changed_by: callerId,
           rol_old:          before.rol,
@@ -212,17 +269,22 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
           permisos_new:     data.permisos,
           tipo_usuario_old: before.tipo_usuario,
           tipo_usuario_new: data.tipo_usuario,
+          // Campos v2 — agregar columnas en migración aparte si no existen.
+          rol_base_old:     before.rol_base ?? null,
+          rol_base_new:     data.rol_base ?? null,
+          obras_scope_old:  before.obras_scope ?? null,
+          obras_scope_new:  data.obras_scope ?? null,
         })
+        // Si el audit falla, NO abortamos la respuesta — el cambio ya se
+        // persistió. Pero loggeamos para que quede rastro si algún día
+        // se rompe la tabla de history.
+        if (errAudit) {
+          console.error('[usuarios.patch] audit history insert failed for', id, errAudit.message)
+        }
       }
-
     }
 
     // Invalidar cache de obras del user en TODA actualización de perfil.
-    // El cache lee permisos.<m>.obras_scope y profiles.obras_scope, así
-    // que cualquier cambio (incluso cosmético como nombre) podría haber
-    // tocado esos campos. Sin esto, el TTL de 60s deja una ventana de
-    // stale en la que un user al que le redujimos el alcance sigue
-    // viendo todo. Más seguro invalidar siempre que loggear cada caso.
     invalidarCacheObrasUsuario(id)
 
     return c.json({ ...data, email })
@@ -252,6 +314,25 @@ usuarios.delete('/:id', async (c) => {
 
   if (id === c.get('user').id) {
     return c.json({ error: 'No podés eliminarte a vos mismo' }, 400)
+  }
+
+  // Lockout protection: si el target es admin activo y es el último,
+  // no permitir el delete. Sin esto, un admin puede eliminar al único
+  // compañero admin → sistema sin admins en breve (cuando el caller
+  // cierre sesión).
+  const { data: target } = await supabaseAdmin
+    .from('profiles')
+    .select('rol, activo')
+    .eq('id', id)
+    .maybeSingle()
+  if (target?.rol === 'admin' && target?.activo === true) {
+    const adminsActivos = await countAdminsActivos()
+    if (adminsActivos <= 1) {
+      return c.json({
+        error: 'ULTIMO_ADMIN',
+        detail: 'No podés eliminar al último admin activo del sistema. Promoví otro user a admin antes.',
+      }, 400)
+    }
   }
 
   const { error } = await supabaseAdmin.auth.admin.deleteUser(id)
