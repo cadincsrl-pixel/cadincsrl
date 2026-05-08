@@ -177,4 +177,59 @@ usuarios.delete('/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// ── GET /api/usuarios/:id/obras — obras asignadas al usuario ──
+usuarios.get('/:id/obras', async (c) => {
+  const id = c.req.param('id')
+  const { data, error } = await supabase
+    .from('usuario_obras')
+    .select('obra_cod, obras(cod, nom, dir)')
+    .eq('user_id', id)
+    .order('obra_cod')
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data ?? [])
+})
+
+// ── PUT /api/usuarios/:id/obras — reemplaza el set de obras asignadas ──
+// Body: { obras: ['cod1', 'cod2', ...] } (array vacío = quitar todas).
+const UpdateObrasSchema = z.object({
+  obras: z.array(z.string().min(1)),
+})
+
+usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
+  const id = c.req.param('id')
+  const { obras } = c.req.valid('json')
+  const userId = c.get('user').id
+
+  // Validar que el usuario destino exista.
+  const { data: target, error: errProf } = await supabase
+    .from('profiles').select('id, rol').eq('id', id).maybeSingle()
+  if (errProf) return c.json({ error: errProf.message }, 500)
+  if (!target) return c.json({ error: 'Usuario no existe' }, 404)
+
+  // Validar que los códigos de obra existan (evitar FK errors confusos).
+  if (obras.length > 0) {
+    const { data: encontradas, error: errO } = await supabase
+      .from('obras').select('cod').in('cod', obras)
+    if (errO) return c.json({ error: errO.message }, 500)
+    const set = new Set((encontradas ?? []).map(o => o.cod))
+    const invalidas = obras.filter(c => !set.has(c))
+    if (invalidas.length > 0) {
+      return c.json({ error: 'OBRAS_INEXISTENTES', detail: invalidas }, 400)
+    }
+  }
+
+  // Reemplazo atómico: borro las que ya no están + inserto las nuevas.
+  const { error: errDel } = await supabase
+    .from('usuario_obras').delete().eq('user_id', id)
+  if (errDel) return c.json({ error: errDel.message }, 500)
+
+  if (obras.length > 0) {
+    const rows = obras.map(cod => ({ user_id: id, obra_cod: cod, created_by: userId }))
+    const { error: errIns } = await supabase.from('usuario_obras').insert(rows)
+    if (errIns) return c.json({ error: errIns.message }, 500)
+  }
+
+  return c.json({ success: true, count: obras.length })
+})
+
 export default usuarios
