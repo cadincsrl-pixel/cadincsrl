@@ -138,6 +138,7 @@ const UpdateSchema = z.object({
 usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
   const id  = c.req.param('id')
   const { email, ...profileDto } = c.req.valid('json')
+  const callerId = c.get('user').id
 
   // Actualizar email en auth.users si se envía
   if (email) {
@@ -147,6 +148,13 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
 
   // Actualizar perfil solo si hay campos de perfil
   if (Object.keys(profileDto).length > 0) {
+    // 1) Snapshot previo para audit de cambios sensibles (rol/modulos/permisos/tipo).
+    const { data: before } = await supabase
+      .from('profiles')
+      .select('rol, modulos, permisos, tipo_usuario')
+      .eq('id', id)
+      .maybeSingle()
+
     const { data, error } = await supabase
       .from('profiles')
       .update(profileDto)
@@ -154,6 +162,31 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
       .select()
       .single()
     if (error) return c.json({ error: error.message }, 500)
+
+    // 2) Si alguno de los campos sensibles cambió, loguear el diff.
+    if (before) {
+      const cambioSensible =
+        before.rol !== data.rol ||
+        JSON.stringify(before.modulos) !== JSON.stringify(data.modulos) ||
+        JSON.stringify(before.permisos) !== JSON.stringify(data.permisos) ||
+        before.tipo_usuario !== data.tipo_usuario
+
+      if (cambioSensible) {
+        await supabase.from('profiles_permisos_history').insert({
+          profile_id: id,
+          changed_by: callerId,
+          rol_old:          before.rol,
+          rol_new:          data.rol,
+          modulos_old:      before.modulos,
+          modulos_new:      data.modulos,
+          permisos_old:     before.permisos,
+          permisos_new:     data.permisos,
+          tipo_usuario_old: before.tipo_usuario,
+          tipo_usuario_new: data.tipo_usuario,
+        })
+      }
+    }
+
     return c.json({ ...data, email })
   }
 
