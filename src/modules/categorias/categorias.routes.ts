@@ -14,7 +14,7 @@ categorias.use('*', authMiddleware)
 // expone montos salariales — solo roles que ven costos lo necesitan.
 categorias.get('/',
   requirePermiso('tarja', 'lectura'),
-  requireFlag('tarja', 'ver_costos', true),
+  requireFlag('tarja', 'ver_costos', true, true),
   async (c) => {
     const token = c.get('accessToken')
     const data = await categoriasService.getAll(token)
@@ -24,7 +24,7 @@ categorias.get('/',
 
 categorias.get('/:id',
   requirePermiso('tarja', 'lectura'),
-  requireFlag('tarja', 'ver_costos', true),
+  requireFlag('tarja', 'ver_costos', true, true),
   async (c) => {
     const id = Number(c.req.param('id'))
     if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)

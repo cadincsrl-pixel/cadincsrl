@@ -52,21 +52,28 @@ export function requirePermisoOr(combos: Array<{ modulo: string; accion: Accion 
  * CRUD estándar). Ej.: `solo_carga_horas`, `ver_costos`, `forzar_despacho`.
  *
  * - Admin (`rol='admin'`) hace bypass siempre.
- * - Si el flag no coincide con `expected` → 403 con
- *   `{ error: 'SIN_PERMISO', detail: { flag } }`.
+ * - Si el flag no está definido en el JSONB, se usa `defaultActual` como
+ *   valor presunto. Esto permite back-compat: un flag "permisivo" como
+ *   `ver_costos` puede pedirse con `defaultActual=true` y todos los users
+ *   sin el flag explícito pasan; los que lo tengan en `false` rebotan.
  *
- * Notar que la **ausencia** del flag se trata como `false`. Si esperás
- * `expected=false`, un usuario sin el flag pasa (consistente con la
- * semántica "el flag NO está activado").
+ * @param expected      valor que debe tener el flag para pasar.
+ * @param defaultActual valor a asumir cuando el flag no está definido.
  */
-export function requireFlag(modulo: string, flag: string, expected: boolean = true) {
+export function requireFlag(
+  modulo: string,
+  flag: string,
+  expected: boolean = true,
+  defaultActual: boolean = false,
+) {
   return createMiddleware(async (c, next) => {
     const profile = await fetchPermisos(c.get('user').id)
     if (!profile) throw new HTTPException(403, { message: 'Sin perfil' })
     if (profile.rol === 'admin') return next()
 
     const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
-    const actual = permisos?.[modulo]?.[flag] === true
+    const v = permisos?.[modulo]?.[flag]
+    const actual = v === undefined ? defaultActual : Boolean(v)
     if (actual !== expected) {
       return c.json(
         { error: 'SIN_PERMISO', detail: { flag } },

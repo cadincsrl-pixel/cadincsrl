@@ -16,7 +16,7 @@ tarifas.use('*', authMiddleware)
 tarifas.get(
   '/all',
   requirePermiso('tarja', 'lectura'),
-  requireFlag('tarja', 'ver_costos', true),
+  requireFlag('tarja', 'ver_costos', true, true),
   async (c) => {
     const userId = c.get('user').id
     const allowed = await getObrasDelUsuarioCached(userId)
@@ -39,7 +39,7 @@ tarifas.get(
 tarifas.get(
   '/:obraCod',
   requirePermiso('tarja', 'lectura'),
-  requireFlag('tarja', 'ver_costos', true),
+  requireFlag('tarja', 'ver_costos', true, true),
   async (c) => {
     const obraCod = c.req.param('obraCod')
     const token = c.get('accessToken')
