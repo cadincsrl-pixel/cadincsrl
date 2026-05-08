@@ -44,3 +44,35 @@ export function requirePermisoOr(combos: Array<{ modulo: string; accion: Accion 
     return next()
   })
 }
+
+/**
+ * Valida que `permisos.<modulo>.<flag>` sea exactamente igual a `expected`.
+ *
+ * Útil para flags booleanos extra del esquema de permisos (no son acciones
+ * CRUD estándar). Ej.: `solo_carga_horas`, `ver_costos`, `forzar_despacho`.
+ *
+ * - Admin (`rol='admin'`) hace bypass siempre.
+ * - Si el flag no coincide con `expected` → 403 con
+ *   `{ error: 'SIN_PERMISO', detail: { flag } }`.
+ *
+ * Notar que la **ausencia** del flag se trata como `false`. Si esperás
+ * `expected=false`, un usuario sin el flag pasa (consistente con la
+ * semántica "el flag NO está activado").
+ */
+export function requireFlag(modulo: string, flag: string, expected: boolean = true) {
+  return createMiddleware(async (c, next) => {
+    const profile = await fetchPermisos(c.get('user').id)
+    if (!profile) throw new HTTPException(403, { message: 'Sin perfil' })
+    if (profile.rol === 'admin') return next()
+
+    const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
+    const actual = permisos?.[modulo]?.[flag] === true
+    if (actual !== expected) {
+      return c.json(
+        { error: 'SIN_PERMISO', detail: { flag } },
+        403,
+      )
+    }
+    return next()
+  })
+}

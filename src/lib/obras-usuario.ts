@@ -1,3 +1,4 @@
+import { HTTPException } from 'hono/http-exception'
 import { supabase as supabaseAdmin } from './supabase.js'
 
 /**
@@ -56,4 +57,22 @@ export async function getObrasDelUsuarioCached(userId: string): Promise<string[]
 
 export function invalidarCacheObrasUsuario(userId: string): void {
   cache.delete(userId)
+}
+
+/**
+ * Valida que `obraCod` esté entre las obras del usuario.
+ *
+ * - Admin (allowed === null) pasa siempre.
+ * - Usuario no admin con `obraCod` no incluido → lanza
+ *   `HTTPException(403)` con `message='OBRA_SIN_ACCESO'`.
+ *
+ * El handler que llame a este helper puede usar `HTTPException` directamente
+ * (Hono lo serializa como `{ message }`) o capturarlo y devolver el shape
+ * que ya esté usando ese módulo.
+ */
+export async function validarObraDelUsuario(userId: string, obraCod: string): Promise<void> {
+  const allowed = await getObrasDelUsuarioCached(userId)
+  if (allowed != null && !allowed.includes(obraCod)) {
+    throw new HTTPException(403, { message: 'OBRA_SIN_ACCESO' })
+  }
 }

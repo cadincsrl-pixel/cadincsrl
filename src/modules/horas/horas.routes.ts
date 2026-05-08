@@ -5,6 +5,7 @@ import { requirePermiso } from '../../middleware/permission.js'
 import { horasService } from './horas.service.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
 import { supabase, createSupabaseClient } from '../../lib/supabase.js'
+import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
 const horas = new Hono()
 
@@ -15,6 +16,10 @@ horas.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   // Usar cliente admin + paginación para superar el max-rows de PostgREST (1000 por defecto).
   const desde = c.req.query('desde')
   const hasta  = c.req.query('hasta')
+  const userId = c.get('user').id
+
+  const allowed = await getObrasDelUsuarioCached(userId)
+  if (allowed != null && allowed.length === 0) return c.json([])
 
   const PAGE = 1000
   const all: any[] = []
@@ -28,6 +33,7 @@ horas.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
       .range(from, from + PAGE - 1)
     if (desde) q = q.gte('fecha', desde)
     if (hasta)  q = q.lte('fecha', hasta)
+    if (allowed != null) q = q.in('obra_cod', allowed)
 
     const { data, error } = await q
     if (error) return c.json({ error: error.message }, 500)
@@ -46,7 +52,11 @@ horas.get('/trabajador/:leg', requirePermiso('tarja', 'lectura'), async (c) => {
   const desde = c.req.query('desde')
   const hasta = c.req.query('hasta')
   const token = c.get('accessToken')
+  const userId = c.get('user').id
   const supabase = createSupabaseClient(token)
+
+  const allowed = await getObrasDelUsuarioCached(userId)
+  if (allowed != null && allowed.length === 0) return c.json([])
 
   let query = supabase
     .from('horas')
@@ -56,6 +66,7 @@ horas.get('/trabajador/:leg', requirePermiso('tarja', 'lectura'), async (c) => {
 
   if (desde) query = query.gte('fecha', desde)
   if (hasta) query = query.lte('fecha', hasta)
+  if (allowed != null) query = query.in('obra_cod', allowed)
 
   const { data, error } = await query
   if (error) return c.json({ error: error.message }, 500)
@@ -69,6 +80,9 @@ horas.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   const desde = c.req.query('desde')
   const hasta = c.req.query('hasta')
   const token = c.get('accessToken')
+  const userId = c.get('user').id
+
+  await validarObraDelUsuario(userId, obraCod)
 
   if (desde && hasta) {
     const data = await horasService.getBySemana(obraCod, desde, hasta, token)
@@ -84,6 +98,7 @@ horas.put('/', requirePermiso('tarja', 'actualizacion'), zValidator('json', Upse
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
+  await validarObraDelUsuario(userId, dto.obra_cod)
   const data = await horasService.upsert(dto, token, userId)
   return c.json(data)
 })
@@ -93,6 +108,7 @@ horas.put('/lote', requirePermiso('tarja', 'actualizacion'), zValidator('json', 
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
+  await validarObraDelUsuario(userId, dto.obra_cod)
   const data = await horasService.upsertLote(dto, token, userId)
   return c.json(data)
 })
@@ -105,6 +121,8 @@ horas.delete('/:obraCod/semana', requirePermiso('tarja', 'eliminacion'), async (
   const leg = c.req.query('leg')
   if (!desde || !hasta) return c.json({ error: 'Faltan parámetros desde/hasta' }, 400)
   const token = c.get('accessToken')
+  const userId = c.get('user').id
+  await validarObraDelUsuario(userId, obraCod)
   const supabase = createSupabaseClient(token)
 
   let q = supabase

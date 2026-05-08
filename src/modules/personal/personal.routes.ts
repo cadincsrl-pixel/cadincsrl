@@ -1,9 +1,12 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
+import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermisoOr } from '../../middleware/permission.js'
+import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
 import { personalService } from './personal.service.js'
 import { CreatePersonalSchema, UpdatePersonalSchema } from './personal.schema.js'
+import { createSupabaseClient } from '../../lib/supabase.js'
+import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import documentosRoutes from './documentos.routes.js'
 
 const personal = new Hono()
@@ -15,41 +18,117 @@ personal.use('*', authMiddleware)
 // /api/personal/:leg/documentos, .../upload-url, .../:id/signed-url, .../:id.
 personal.route('/', documentosRoutes)
 
-personal.get('/', requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]), async (c) => {
-  const token = c.get('accessToken')
-  const data = await personalService.getAll(token)
-  return c.json(data)
-})
+// Filtra el universo de personal a aquellos legs que tienen al menos una
+// asignación en una obra del usuario. Admin/usuario sin restricción ve todo.
+async function filtrarLegsPermitidos(
+  userId: string,
+  token: string,
+): Promise<string[] | null> {
+  const allowed = await getObrasDelUsuarioCached(userId)
+  if (allowed == null) return null // admin
+  if (allowed.length === 0) return []
 
-personal.get('/:leg', requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]), async (c) => {
-  const leg = c.req.param('leg')
-  const token = c.get('accessToken')
-  const data = await personalService.getByLeg(leg, token)
-  return c.json(data)
-})
+  const supabase = createSupabaseClient(token)
+  const { data, error } = await supabase
+    .from('asignaciones')
+    .select('leg')
+    .in('obra_cod', allowed)
+  if (error) throw new Error(error.message)
 
-personal.post('/', requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]), zValidator('json', CreatePersonalSchema), async (c) => {
-  const dto = c.req.valid('json')
-  const token = c.get('accessToken')
-  const userId = c.get('user').id
-  const data = await personalService.create(dto, token, userId)
-  return c.json(data, 201)
-})
+  const legs = Array.from(new Set((data ?? []).map((r: { leg: string }) => r.leg)))
+  return legs
+}
 
-personal.patch('/:leg', requirePermisoOr([{ modulo: 'personal', accion: 'actualizacion' }, { modulo: 'tarja', accion: 'actualizacion' }]), zValidator('json', UpdatePersonalSchema), async (c) => {
-  const leg = c.req.param('leg')
-  const dto = c.req.valid('json')
-  const token = c.get('accessToken')
-  const userId = c.get('user').id
-  const data = await personalService.update(leg, dto, token, userId)
-  return c.json(data)
-})
+personal.get(
+  '/',
+  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  async (c) => {
+    const token = c.get('accessToken')
+    const userId = c.get('user').id
 
-personal.delete('/:leg', requirePermisoOr([{ modulo: 'personal', accion: 'eliminacion' }, { modulo: 'tarja', accion: 'eliminacion' }]), async (c) => {
-  const leg = c.req.param('leg')
-  const token = c.get('accessToken')
-  const data = await personalService.delete(leg, token)
-  return c.json(data)
-})
+    const legsPermitidos = await filtrarLegsPermitidos(userId, token)
+    if (legsPermitidos != null && legsPermitidos.length === 0) return c.json([])
+
+    if (legsPermitidos == null) {
+      // admin → universo completo (mantiene comportamiento actual)
+      const data = await personalService.getAll(token)
+      return c.json(data)
+    }
+
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('personal')
+      .select(`
+        *,
+        personal_cat_historial (
+          cat_id,
+          desde
+        )
+      `)
+      .in('leg', legsPermitidos)
+      .order('leg')
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json(data ?? [])
+  },
+)
+
+personal.get(
+  '/:leg',
+  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  async (c) => {
+    const leg = c.req.param('leg')
+    const token = c.get('accessToken')
+    const userId = c.get('user').id
+
+    const legsPermitidos = await filtrarLegsPermitidos(userId, token)
+    if (legsPermitidos != null && !legsPermitidos.includes(leg)) {
+      throw new HTTPException(403, { message: 'NO_ACCESO_PERSONAL' })
+    }
+
+    const data = await personalService.getByLeg(leg, token)
+    return c.json(data)
+  },
+)
+
+personal.post(
+  '/',
+  requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
+  requireFlag('tarja', 'solo_carga_horas', false),
+  zValidator('json', CreatePersonalSchema),
+  async (c) => {
+    const dto = c.req.valid('json')
+    const token = c.get('accessToken')
+    const userId = c.get('user').id
+    const data = await personalService.create(dto, token, userId)
+    return c.json(data, 201)
+  },
+)
+
+personal.patch(
+  '/:leg',
+  requirePermisoOr([{ modulo: 'personal', accion: 'actualizacion' }, { modulo: 'tarja', accion: 'actualizacion' }]),
+  requireFlag('tarja', 'solo_carga_horas', false),
+  zValidator('json', UpdatePersonalSchema),
+  async (c) => {
+    const leg = c.req.param('leg')
+    const dto = c.req.valid('json')
+    const token = c.get('accessToken')
+    const userId = c.get('user').id
+    const data = await personalService.update(leg, dto, token, userId)
+    return c.json(data)
+  },
+)
+
+personal.delete(
+  '/:leg',
+  requirePermisoOr([{ modulo: 'personal', accion: 'eliminacion' }, { modulo: 'tarja', accion: 'eliminacion' }]),
+  requireFlag('tarja', 'solo_carga_horas', false),
+  async (c) => {
+    const leg = c.req.param('leg')
+    const token = c.get('accessToken')
+    const data = await personalService.delete(leg, token)
+    return c.json(data)
+  },
+)
 
 export default personal

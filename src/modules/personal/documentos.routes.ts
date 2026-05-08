@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermisoOr } from '../../middleware/permission.js'
+import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
 import { documentosService, PersonalDocError } from './documentos.service.js'
 
 const docs = new Hono()
@@ -54,6 +54,7 @@ docs.get(
 docs.post(
   '/:leg/documentos/upload-url',
   requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
+  requireFlag('tarja', 'solo_carga_horas', false),
   zValidator('json', UploadUrlSchema),
   handle(c => documentosService.generarUploadUrl(c.req.param('leg'), c.req.valid('json'))),
 )
@@ -62,6 +63,7 @@ docs.post(
 docs.post(
   '/:leg/documentos',
   requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
+  requireFlag('tarja', 'solo_carga_horas', false),
   zValidator('json', RegistrarSchema),
   handle(c => documentosService.registrar(
     c.req.param('leg'),
@@ -86,6 +88,7 @@ docs.get(
 docs.delete(
   '/:leg/documentos/:id',
   requirePermisoOr([{ modulo: 'personal', accion: 'eliminacion' }, { modulo: 'tarja', accion: 'eliminacion' }]),
+  requireFlag('tarja', 'solo_carga_horas', false),
   handle(c => documentosService.softDelete(
     c.req.param('leg'),
     Number(c.req.param('id')),
