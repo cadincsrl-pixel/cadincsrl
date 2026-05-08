@@ -20,7 +20,10 @@ import { supabase as supabaseAdmin } from './supabase.js'
  * resultado NO es null. Endpoints que mutan deben rechazar `obra_cod`
  * fuera del array (404/403).
  */
-const TIPOS_OBRAS_RESTRINGIDAS = new Set(['capataz', 'jefe_obra', 'jefe_obra_supervisor'])
+const TIPOS_OBRAS_RESTRINGIDAS = new Set([
+  'capataz', 'capataz_supervisor',
+  'jefe_obra', 'jefe_obra_supervisor',
+])
 
 export async function getObrasDelUsuario(userId: string): Promise<string[] | null> {
   const { data: profile, error: errProf } = await supabaseAdmin

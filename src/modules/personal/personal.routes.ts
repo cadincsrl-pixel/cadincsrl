@@ -9,10 +9,12 @@ import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supab
 import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import documentosRoutes from './documentos.routes.js'
 
-// Devuelve true si el user no admin tiene tarja.solo_carga_horas activo.
-// Usado para limitar las columnas devueltas (capataz no debería ver
-// DNI, dirección, teléfono, etc. — solo lo necesario para tarja).
-async function esCapatazPuro(userId: string): Promise<boolean> {
+// Decide si el user debe ver columnas limitadas de personal (sin DNI,
+// dirección, teléfono, fecha_nacimiento). Limitamos cuando:
+// - tarja.solo_carga_horas === true (capataz puro como Rodolfo)
+// - Y NO tiene tab 'personal' habilitado (los supervisores que combinan
+//   capataz + acceso a perfiles necesitan ver PII completa).
+async function piiLimitada(userId: string): Promise<boolean> {
   const { data } = await supabaseAdmin
     .from('profiles')
     .select('rol, permisos')
@@ -20,7 +22,11 @@ async function esCapatazPuro(userId: string): Promise<boolean> {
     .maybeSingle()
   if (!data) return false
   if (data.rol === 'admin') return false
-  return (data.permisos as any)?.tarja?.solo_carga_horas === true
+  const tarja = (data.permisos as any)?.tarja
+  if (!tarja || tarja.solo_carga_horas !== true) return false
+  const tabs = tarja.tabs as string[] | undefined
+  if (Array.isArray(tabs) && tabs.includes('personal')) return false
+  return true
 }
 
 const personal = new Hono()
@@ -63,7 +69,7 @@ personal.get(
     const legsPermitidos = await filtrarLegsPermitidos(userId, token)
     if (legsPermitidos != null && legsPermitidos.length === 0) return c.json([])
 
-    const limitado = await esCapatazPuro(userId)
+    const limitado = await piiLimitada(userId)
 
     if (legsPermitidos == null) {
       const data = await personalService.getAll(token, { limitado })
@@ -97,7 +103,7 @@ personal.get(
       throw new HTTPException(403, { message: 'NO_ACCESO_PERSONAL' })
     }
 
-    const limitado = await esCapatazPuro(userId)
+    const limitado = await piiLimitada(userId)
     const data = await personalService.getByLeg(leg, token, { limitado })
     return c.json(data)
   },
