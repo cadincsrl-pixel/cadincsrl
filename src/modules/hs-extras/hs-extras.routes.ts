@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { hsExtrasService } from './hs-extras.service.js'
 import { UpsertHsExtraSchema, UpsertHsExtrasLoteSchema } from './hs-extras.schema.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
@@ -55,6 +55,7 @@ hsExtras.get('/:obra_cod', requirePermiso('tarja', 'lectura'), async (c) => {
 hsExtras.put(
   '/lote',
   requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'solo_carga_horas', false),
   zValidator('json', UpsertHsExtrasLoteSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -69,6 +70,7 @@ hsExtras.put(
 hsExtras.put(
   '/',
   requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'solo_carga_horas', false),
   zValidator('json', UpsertHsExtraSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -81,7 +83,10 @@ hsExtras.put(
 )
 
 // DELETE /api/hs-extras/:id
-hsExtras.delete('/:id', requirePermiso('tarja', 'eliminacion'), async (c) => {
+hsExtras.delete('/:id',
+  requirePermiso('tarja', 'eliminacion'),
+  requireFlag('tarja', 'solo_carga_horas', false),
+  async (c) => {
   const idParam = c.req.param('id')
   const id = Number(idParam)
   if (!Number.isInteger(id) || id <= 0) {
