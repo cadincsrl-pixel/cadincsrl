@@ -4,23 +4,19 @@ import { supabase as supabaseAdmin } from './supabase.js'
 /**
  * Resuelve qué obras puede ver/operar un usuario.
  *
- * Regla:
+ * Regla v2 (con `obras_scope` columna explícita):
  * - rol='admin' → null (sin restricción, ve todo).
- * - tipo_usuario en TIPOS_OBRAS_RESTRINGIDAS (capataz, jefe_obra) → restringido
- *   por usuario_obras SIEMPRE (incluso si está vacío → ve cero).
- * - Otros tipos (administrativo, compras, personalizado, null) → restringido
- *   SOLO si tiene al menos una fila en usuario_obras. Si no tiene → null
- *   (ve todo, comportamiento "global").
+ * - obras_scope='asignadas' → filtra por usuario_obras SIEMPRE (vacío=ve cero).
+ * - obras_scope='todas' → null (ve todas las obras).
  *
- * Esto permite que un admin asigne obras puntuales a un user "personalizado"
- * (ej. jefe de obra editado a mano) y el sistema lo respete sin tener que
- * cambiar tipo_usuario.
+ * Compatibilidad: si `obras_scope` no está seteado (usuario muy viejo),
+ * fallback a la lógica anterior basada en `tipo_usuario`.
  *
  * Endpoints que listan deben aplicar `.in('obra_cod', codes)` cuando el
  * resultado NO es null. Endpoints que mutan deben rechazar `obra_cod`
  * fuera del array (404/403).
  */
-const TIPOS_OBRAS_RESTRINGIDAS = new Set([
+const TIPOS_OBRAS_RESTRINGIDAS_LEGACY = new Set([
   'capataz', 'capataz_supervisor',
   'jefe_obra', 'jefe_obra_supervisor',
 ])
@@ -28,7 +24,7 @@ const TIPOS_OBRAS_RESTRINGIDAS = new Set([
 export async function getObrasDelUsuario(userId: string): Promise<string[] | null> {
   const { data: profile, error: errProf } = await supabaseAdmin
     .from('profiles')
-    .select('rol, tipo_usuario')
+    .select('rol, tipo_usuario, obras_scope')
     .eq('id', userId)
     .maybeSingle()
   if (errProf) throw new Error(errProf.message)
@@ -36,19 +32,27 @@ export async function getObrasDelUsuario(userId: string): Promise<string[] | nul
 
   if (profile.rol === 'admin') return null
 
-  // Leemos usuario_obras siempre. Decidimos si filtrar según tipo + presencia.
+  // Camino v2: obras_scope explícito.
+  if (profile.obras_scope === 'todas') return null
+  if (profile.obras_scope === 'asignadas') {
+    const { data, error } = await supabaseAdmin
+      .from('usuario_obras')
+      .select('obra_cod')
+      .eq('user_id', userId)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(r => r.obra_cod)
+  }
+
+  // Fallback legacy (perfiles sin obras_scope seteado, no debería pasar
+  // post-backfill pero protege contra ediciones manuales en DB).
   const { data, error } = await supabaseAdmin
     .from('usuario_obras')
     .select('obra_cod')
     .eq('user_id', userId)
   if (error) throw new Error(error.message)
   const obras = (data ?? []).map(r => r.obra_cod)
-
-  // Tipos restringidos: SIEMPRE filtran (aunque obras esté vacío → ve cero).
-  const tipoRestringido = profile.tipo_usuario && TIPOS_OBRAS_RESTRINGIDAS.has(profile.tipo_usuario)
+  const tipoRestringido = profile.tipo_usuario && TIPOS_OBRAS_RESTRINGIDAS_LEGACY.has(profile.tipo_usuario)
   if (tipoRestringido) return obras
-
-  // Otros tipos: solo filtran SI hay obras asignadas. Si no, ven todo.
   if (obras.length > 0) return obras
   return null
 }

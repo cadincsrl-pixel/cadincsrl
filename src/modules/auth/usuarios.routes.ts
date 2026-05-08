@@ -67,8 +67,7 @@ usuarios.get('/modulos', async (c) => {
 // ── POST /api/usuarios — crear usuario ──
 // Permite tabs[] y flags conocidos por módulo. IMPORTANTE: zod hace strip
 // de claves no listadas, así que cualquier flag nuevo debe agregarse acá
-// o se perderá silenciosamente al guardar (causó pérdida de
-// solo_carga_horas en perfiles tipo capataz).
+// o se perderá silenciosamente al guardar.
 const PermisosSchema = z.record(
   z.string(),
   z.object({
@@ -78,11 +77,18 @@ const PermisosSchema = z.record(
     eliminacion:      z.boolean().optional(),
     tabs:             z.array(z.string()).optional(),
     ver_costos:       z.boolean().optional(),
-    solo_carga_horas: z.boolean().optional(),
+    ver_pii:          z.boolean().optional(),
+    vista_completa:   z.boolean().optional(),
+    solo_carga_horas: z.boolean().optional(), // legacy, en transición
     resolver_items:   z.boolean().optional(),
     forzar_despacho:  z.boolean().optional(),
   }),
 )
+
+const RolBaseSchema = z.enum([
+  'administrativo', 'compras', 'deposito', 'jefe_obra', 'capataz',
+]).nullable()
+const ObrasScopeSchema = z.enum(['todas', 'asignadas'])
 
 const CreateUsuarioSchema = z.object({
   email:        z.string().email(),
@@ -91,15 +97,17 @@ const CreateUsuarioSchema = z.object({
   rol:          z.enum(['admin', 'operador']),
   modulos:      z.array(z.string()),
   permisos:     PermisosSchema.optional(),
-  tipo_usuario: z.string().nullable().optional(),
+  tipo_usuario: z.string().nullable().optional(), // legacy
+  rol_base:     RolBaseSchema.optional(),
+  obras_scope:  ObrasScopeSchema.optional(),
 })
 
 usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
-  const { email, password, nombre, rol, modulos, permisos, tipo_usuario } = c.req.valid('json')
+  const body = c.req.valid('json')
 
   const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    password,
+    email: body.email,
+    password: body.password,
     email_confirm: true,
   })
 
@@ -109,9 +117,19 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
   }
   if (!authData.user) return c.json({ error: 'No se pudo crear el usuario' }, 500)
 
+  const updateData: any = {
+    nombre:       body.nombre,
+    rol:          body.rol,
+    modulos:      body.modulos,
+    permisos:     body.permisos ?? {},
+    tipo_usuario: body.tipo_usuario ?? null,
+  }
+  if (body.rol_base !== undefined)    updateData.rol_base    = body.rol_base
+  if (body.obras_scope !== undefined) updateData.obras_scope = body.obras_scope
+
   const { data, error } = await supabase
     .from('profiles')
-    .update({ nombre, rol, modulos, permisos: permisos ?? {}, tipo_usuario: tipo_usuario ?? null })
+    .update(updateData)
     .eq('id', authData.user.id)
     .select()
     .single()
@@ -132,7 +150,9 @@ const UpdateSchema = z.object({
   modulos:      z.array(z.string()).optional(),
   activo:       z.boolean().optional(),
   permisos:     PermisosSchema.optional(),
-  tipo_usuario: z.string().nullable().optional(),
+  tipo_usuario: z.string().nullable().optional(), // legacy
+  rol_base:     RolBaseSchema.optional(),
+  obras_scope:  ObrasScopeSchema.optional(),
 })
 
 usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {

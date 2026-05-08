@@ -10,10 +10,15 @@ import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import documentosRoutes from './documentos.routes.js'
 
 // Decide si el user debe ver columnas limitadas de personal (sin DNI,
-// dirección, teléfono, fecha_nacimiento). Limitamos cuando:
-// - tarja.solo_carga_horas === true (capataz puro como Rodolfo)
-// - Y NO tiene tab 'personal' habilitado (los supervisores que combinan
-//   capataz + acceso a perfiles necesitan ver PII completa).
+// dirección, teléfono, fecha_nacimiento).
+//
+// Regla v2 (con flag explícito `permisos.tarja.ver_pii`):
+// - admin → no limitado.
+// - permisos.tarja.ver_pii === true → no limitado.
+// - cualquier otro caso → limitado.
+//
+// Fallback legacy (perfiles sin ver_pii seteado): si tarja.solo_carga_horas
+// está activo Y no tiene tab 'personal', limitar (compat con capataz puro).
 async function piiLimitada(userId: string): Promise<boolean> {
   const { data } = await supabaseAdmin
     .from('profiles')
@@ -23,7 +28,14 @@ async function piiLimitada(userId: string): Promise<boolean> {
   if (!data) return false
   if (data.rol === 'admin') return false
   const tarja = (data.permisos as any)?.tarja
-  if (!tarja || tarja.solo_carga_horas !== true) return false
+  if (!tarja) return false
+
+  // v2: flag explícito.
+  if (tarja.ver_pii === true) return false
+  if (tarja.ver_pii === false) return true
+
+  // Legacy fallback: capataz puro (solo_carga_horas + sin tab personal) → limitado.
+  if (tarja.solo_carga_horas !== true) return false
   const tabs = tarja.tabs as string[] | undefined
   if (Array.isArray(tabs) && tabs.includes('personal')) return false
   return true
@@ -38,36 +50,40 @@ personal.use('*', authMiddleware)
 // /api/personal/:leg/documentos, .../upload-url, .../:id/signed-url, .../:id.
 personal.route('/', documentosRoutes)
 
-// Tipos cuya plantilla restringe la visibilidad de personal a los legs
-// asignados a sus obras (capataz / jefe_obra y supervisores). Otros tipos
-// (administrativo, compras, encargado_deposito, personalizado) ven el
-// padrón completo aunque tengan obras puntuales asignadas en usuario_obras.
-const TIPOS_PERSONAL_RESTRINGIDO = new Set([
+// Tipos legacy (compat con perfiles sin rol_base seteado).
+const TIPOS_PERSONAL_RESTRINGIDO_LEGACY = new Set([
   'capataz', 'capataz_supervisor',
   'jefe_obra', 'jefe_obra_supervisor',
 ])
 
+// Roles base que limitan la visibilidad de personal a los legs asignados
+// a sus obras. Coincide con los roles cuyo scope de obras es 'asignadas'
+// por defecto y necesitan ver solo "su" personal.
+const ROLES_BASE_PERSONAL_RESTRINGIDO = new Set(['capataz', 'jefe_obra'])
+
 // Filtra el universo de personal a aquellos legs que tienen al menos una
-// asignación en una obra del usuario. Solo aplica para tipos restringidos;
-// admin y administrativos ven todo.
+// asignación en una obra del usuario. Solo aplica para roles "operativos"
+// (capataz/jefe_obra). Administrativos / compras / depósito ven todo.
 async function filtrarLegsPermitidos(
   userId: string,
   token: string,
 ): Promise<string[] | null> {
   const { data: profile } = await supabaseAdmin
     .from('profiles')
-    .select('rol, tipo_usuario')
+    .select('rol, rol_base, tipo_usuario')
     .eq('id', userId)
     .maybeSingle()
   if (!profile) return null
   if (profile.rol === 'admin') return null
 
-  // Si no es un tipo restringido, ve el padrón completo (no filtra).
-  if (!profile.tipo_usuario || !TIPOS_PERSONAL_RESTRINGIDO.has(profile.tipo_usuario)) {
-    return null
-  }
+  // v2: si rol_base está seteado, decidimos por él.
+  // Legacy fallback: usar tipo_usuario.
+  const restringido = profile.rol_base
+    ? ROLES_BASE_PERSONAL_RESTRINGIDO.has(profile.rol_base)
+    : profile.tipo_usuario != null && TIPOS_PERSONAL_RESTRINGIDO_LEGACY.has(profile.tipo_usuario)
 
-  // Tipo restringido: filtra a legs con asignación en sus obras.
+  if (!restringido) return null
+
   const allowed = await getObrasDelUsuarioCached(userId)
   if (allowed == null) return null
   if (allowed.length === 0) return []
