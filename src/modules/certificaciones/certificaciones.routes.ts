@@ -10,10 +10,14 @@ import {
 
 const cert = new Hono()
 cert.use('*', authMiddleware)
-cert.on(['GET'],            '*', requirePermiso('tarja', 'lectura'))
-cert.on(['POST'],           '*', requirePermiso('tarja', 'creacion'))
-cert.on(['PATCH', 'PUT'],   '*', requirePermiso('tarja', 'actualizacion'))
-cert.on(['DELETE'],         '*', requirePermiso('tarja', 'eliminacion'))
+// Materiales y adicionales son del módulo certificaciones, no tarja.
+// Antes pedía permisos de tarja por error: dejaba que un user con
+// solo tarja.lectura viera materiales certificables (datos al cliente)
+// y bloqueaba a un user de certificaciones que no tuviera tarja.
+cert.on(['GET'],            '*', requirePermiso('certificaciones', 'lectura'))
+cert.on(['POST'],           '*', requirePermiso('certificaciones', 'creacion'))
+cert.on(['PATCH', 'PUT'],   '*', requirePermiso('certificaciones', 'actualizacion'))
+cert.on(['DELETE'],         '*', requirePermiso('certificaciones', 'eliminacion'))
 
 // ── Materiales ─────────────────────────────────────────
 cert.get('/materiales', async (c) => {

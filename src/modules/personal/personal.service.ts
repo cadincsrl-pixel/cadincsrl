@@ -1,36 +1,36 @@
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type { CreatePersonalDto, UpdatePersonalDto } from './personal.schema.js'
 
+// Columnas mínimas que un capataz necesita para cargar horas. NO incluye
+// DNI, dirección, teléfono, fecha_nacimiento ni cat_id (este último es
+// derivable a un costo si tiene acceso a categorías).
+const SELECT_LIMITADO = 'leg, nom, condicion, activo, created_at, updated_at'
+const SELECT_COMPLETO = `
+  *,
+  personal_cat_historial (
+    cat_id,
+    desde
+  )
+`
+
 export const personalService = {
 
-  async getAll(token: string) {
+  async getAll(token: string, opts: { limitado?: boolean } = {}) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('personal')
-      .select(`
-        *,
-        personal_cat_historial (
-          cat_id,
-          desde
-        )
-      `)
+      .select(opts.limitado ? SELECT_LIMITADO : SELECT_COMPLETO)
       .order('leg')
 
     if (error) throw new Error(error.message)
     return data
   },
 
-  async getByLeg(leg: string, token: string) {
+  async getByLeg(leg: string, token: string, opts: { limitado?: boolean } = {}) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('personal')
-      .select(`
-        *,
-        personal_cat_historial (
-          cat_id,
-          desde
-        )
-      `)
+      .select(opts.limitado ? SELECT_LIMITADO : SELECT_COMPLETO)
       .eq('leg', leg)
       .single()
 

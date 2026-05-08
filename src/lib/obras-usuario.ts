@@ -4,13 +4,17 @@ import { supabase as supabaseAdmin } from './supabase.js'
 /**
  * Resuelve qué obras puede ver/operar un usuario.
  *
- * - rol = 'admin' → null (sin restricción, ve todo).
- * - tipo_usuario que NO esté en TIPOS_OBRAS_RESTRINGIDAS → null (también ve
- *   todo). Ej: administrativo, compras, encargado_deposito, personalizado, null.
- * - tipo_usuario en TIPOS_OBRAS_RESTRINGIDAS (capataz, jefe_obra) con filas
- *   en usuario_obras → array de cods asignados.
- * - tipo_usuario restringido SIN filas en usuario_obras → array vacío
- *   (regla estricta: ve cero obras).
+ * Regla:
+ * - rol='admin' → null (sin restricción, ve todo).
+ * - tipo_usuario en TIPOS_OBRAS_RESTRINGIDAS (capataz, jefe_obra) → restringido
+ *   por usuario_obras SIEMPRE (incluso si está vacío → ve cero).
+ * - Otros tipos (administrativo, compras, personalizado, null) → restringido
+ *   SOLO si tiene al menos una fila en usuario_obras. Si no tiene → null
+ *   (ve todo, comportamiento "global").
+ *
+ * Esto permite que un admin asigne obras puntuales a un user "personalizado"
+ * (ej. jefe de obra editado a mano) y el sistema lo respete sin tener que
+ * cambiar tipo_usuario.
  *
  * Endpoints que listan deben aplicar `.in('obra_cod', codes)` cuando el
  * resultado NO es null. Endpoints que mutan deben rechazar `obra_cod`
@@ -19,9 +23,6 @@ import { supabase as supabaseAdmin } from './supabase.js'
 const TIPOS_OBRAS_RESTRINGIDAS = new Set(['capataz', 'jefe_obra'])
 
 export async function getObrasDelUsuario(userId: string): Promise<string[] | null> {
-  // Obtenemos rol + tipo_usuario con el cliente service-role para evitar
-  // dependencia del token JWT del request (este helper se llama desde
-  // middlewares y services internos).
   const { data: profile, error: errProf } = await supabaseAdmin
     .from('profiles')
     .select('rol, tipo_usuario')
@@ -32,20 +33,21 @@ export async function getObrasDelUsuario(userId: string): Promise<string[] | nul
 
   if (profile.rol === 'admin') return null
 
-  // Solo los tipos cuya plantilla declara obras_restringidas:true tienen
-  // filtro estricto. Los administrativos / compras / encargado de depósito /
-  // personalizado / sin tipo → ven todas las obras.
-  if (!profile.tipo_usuario || !TIPOS_OBRAS_RESTRINGIDAS.has(profile.tipo_usuario)) {
-    return null
-  }
-
+  // Leemos usuario_obras siempre. Decidimos si filtrar según tipo + presencia.
   const { data, error } = await supabaseAdmin
     .from('usuario_obras')
     .select('obra_cod')
     .eq('user_id', userId)
   if (error) throw new Error(error.message)
+  const obras = (data ?? []).map(r => r.obra_cod)
 
-  return (data ?? []).map(r => r.obra_cod)
+  // Tipos restringidos: SIEMPRE filtran (aunque obras esté vacío → ve cero).
+  const tipoRestringido = profile.tipo_usuario && TIPOS_OBRAS_RESTRINGIDAS.has(profile.tipo_usuario)
+  if (tipoRestringido) return obras
+
+  // Otros tipos: solo filtran SI hay obras asignadas. Si no, ven todo.
+  if (obras.length > 0) return obras
+  return null
 }
 
 /**

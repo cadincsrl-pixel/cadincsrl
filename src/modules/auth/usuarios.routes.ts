@@ -65,18 +65,22 @@ usuarios.get('/modulos', async (c) => {
 })
 
 // ── POST /api/usuarios — crear usuario ──
-// Permite tabs[] y flags conocidos por módulo (ver_costos, forzar_despacho).
+// Permite tabs[] y flags conocidos por módulo. IMPORTANTE: zod hace strip
+// de claves no listadas, así que cualquier flag nuevo debe agregarse acá
+// o se perderá silenciosamente al guardar (causó pérdida de
+// solo_carga_horas en perfiles tipo capataz).
 const PermisosSchema = z.record(
   z.string(),
   z.object({
-    lectura:         z.boolean().optional(),
-    creacion:        z.boolean().optional(),
-    actualizacion:   z.boolean().optional(),
-    eliminacion:     z.boolean().optional(),
-    tabs:            z.array(z.string()).optional(),
-    ver_costos:      z.boolean().optional(),
-    resolver_items:  z.boolean().optional(),
-    forzar_despacho: z.boolean().optional(),
+    lectura:          z.boolean().optional(),
+    creacion:         z.boolean().optional(),
+    actualizacion:    z.boolean().optional(),
+    eliminacion:      z.boolean().optional(),
+    tabs:             z.array(z.string()).optional(),
+    ver_costos:       z.boolean().optional(),
+    solo_carga_horas: z.boolean().optional(),
+    resolver_items:   z.boolean().optional(),
+    forzar_despacho:  z.boolean().optional(),
   }),
 )
 

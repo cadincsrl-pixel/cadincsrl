@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { horasService } from './horas.service.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
 import { supabase, createSupabaseClient } from '../../lib/supabase.js'
@@ -114,7 +114,11 @@ horas.put('/lote', requirePermiso('tarja', 'actualizacion'), zValidator('json', 
 })
 
 // DELETE /api/horas/:obraCod/semana?desde=YYYY-MM-DD&hasta=YYYY-MM-DD[&leg=LEG]
-horas.delete('/:obraCod/semana', requirePermiso('tarja', 'eliminacion'), async (c) => {
+// El capataz NO debería poder borrar la semana entera (solo carga horas).
+horas.delete('/:obraCod/semana',
+  requirePermiso('tarja', 'eliminacion'),
+  requireFlag('tarja', 'solo_carga_horas', false),
+  async (c) => {
   const obraCod = c.req.param('obraCod')
   const desde = c.req.query('desde')
   const hasta = c.req.query('hasta')
@@ -137,7 +141,8 @@ horas.delete('/:obraCod/semana', requirePermiso('tarja', 'eliminacion'), async (
   const { error } = await q
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ success: true })
-})
+  },
+)
 
 
 export default horas

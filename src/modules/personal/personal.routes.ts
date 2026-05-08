@@ -5,9 +5,23 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
 import { personalService } from './personal.service.js'
 import { CreatePersonalSchema, UpdatePersonalSchema } from './personal.schema.js'
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import documentosRoutes from './documentos.routes.js'
+
+// Devuelve true si el user no admin tiene tarja.solo_carga_horas activo.
+// Usado para limitar las columnas devueltas (capataz no debería ver
+// DNI, dirección, teléfono, etc. — solo lo necesario para tarja).
+async function esCapatazPuro(userId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('profiles')
+    .select('rol, permisos')
+    .eq('id', userId)
+    .maybeSingle()
+  if (!data) return false
+  if (data.rol === 'admin') return false
+  return (data.permisos as any)?.tarja?.solo_carga_horas === true
+}
 
 const personal = new Hono()
 
@@ -49,22 +63,20 @@ personal.get(
     const legsPermitidos = await filtrarLegsPermitidos(userId, token)
     if (legsPermitidos != null && legsPermitidos.length === 0) return c.json([])
 
+    const limitado = await esCapatazPuro(userId)
+
     if (legsPermitidos == null) {
-      // admin → universo completo (mantiene comportamiento actual)
-      const data = await personalService.getAll(token)
+      const data = await personalService.getAll(token, { limitado })
       return c.json(data)
     }
 
     const supabase = createSupabaseClient(token)
+    const select = limitado
+      ? 'leg, nom, condicion, activo, created_at, updated_at'
+      : '*, personal_cat_historial (cat_id, desde)'
     const { data, error } = await supabase
       .from('personal')
-      .select(`
-        *,
-        personal_cat_historial (
-          cat_id,
-          desde
-        )
-      `)
+      .select(select)
       .in('leg', legsPermitidos)
       .order('leg')
     if (error) return c.json({ error: error.message }, 500)
@@ -85,7 +97,8 @@ personal.get(
       throw new HTTPException(403, { message: 'NO_ACCESO_PERSONAL' })
     }
 
-    const data = await personalService.getByLeg(leg, token)
+    const limitado = await esCapatazPuro(userId)
+    const data = await personalService.getByLeg(leg, token, { limitado })
     return c.json(data)
   },
 )

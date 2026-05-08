@@ -10,22 +10,29 @@ const categorias = new Hono()
 
 categorias.use('*', authMiddleware)
 
-// Lectura abierta (sin requirePermiso) por compat: la UI la usa para
-// dibujar selects/tabs en muchos contextos. Si fuera necesario cerrar,
-// hacerlo desde un solo lugar.
-categorias.get('/', async (c) => {
-  const token = c.get('accessToken')
-  const data = await categoriasService.getAll(token)
-  return c.json(data)
-})
+// Lectura: cerrada por permiso de tarja + flag ver_costos. El catálogo
+// expone montos salariales — solo roles que ven costos lo necesitan.
+categorias.get('/',
+  requirePermiso('tarja', 'lectura'),
+  requireFlag('tarja', 'ver_costos', true),
+  async (c) => {
+    const token = c.get('accessToken')
+    const data = await categoriasService.getAll(token)
+    return c.json(data)
+  },
+)
 
-categorias.get('/:id', async (c) => {
-  const id = Number(c.req.param('id'))
-  if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
-  const token = c.get('accessToken')
-  const data = await categoriasService.getById(id, token)
-  return c.json(data)
-})
+categorias.get('/:id',
+  requirePermiso('tarja', 'lectura'),
+  requireFlag('tarja', 'ver_costos', true),
+  async (c) => {
+    const id = Number(c.req.param('id'))
+    if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
+    const token = c.get('accessToken')
+    const data = await categoriasService.getById(id, token)
+    return c.json(data)
+  },
+)
 
 // Mutaciones de catálogo de categorías: jefatura/RRHH.
 // Antes este endpoint NO tenía requirePermiso → cualquier user logueado
