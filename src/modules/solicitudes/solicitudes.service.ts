@@ -102,7 +102,7 @@ export const solicitudesService = {
     if (obra_cod) q = q.eq('obra_cod', obra_cod)
 
     // Filtrar por las obras del usuario (no admin con asignaciones).
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
     if (allowed != null) {
       if (allowed.length === 0) return []
       q = q.in('obra_cod', allowed)
@@ -128,7 +128,7 @@ export const solicitudesService = {
     if (error) throw new Error(error.message)
 
     // Validar acceso a la obra.
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
     if (allowed != null && !allowed.includes(data.obra_cod)) {
       throw new HttpError(403, 'OBRA_SIN_ACCESO')
     }
@@ -145,7 +145,7 @@ export const solicitudesService = {
     const { items, ...cabecera } = dto
 
     // Validar que el user pueda crear solicitudes en esa obra.
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
     if (allowed != null && !allowed.includes(cabecera.obra_cod)) {
       throw new HttpError(403, 'OBRA_SIN_ACCESO')
     }
@@ -190,7 +190,7 @@ export const solicitudesService = {
     const supabase = createSupabaseClient(token)
 
     // Validar acceso a la obra de esta solicitud antes de cualquier mutación.
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
     if (allowed != null) {
       const { data: cab, error: errCab } = await supabase
         .from('solicitud_compra').select('obra_cod').eq('id', id).maybeSingle()
@@ -266,7 +266,7 @@ export const solicitudesService = {
     const supabase = createSupabaseClient(token)
 
     // Validar acceso a la obra antes de borrar.
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
     if (allowed != null) {
       const { data: cab, error: errCab } = await supabase
         .from('solicitud_compra').select('obra_cod').eq('id', id).maybeSingle()

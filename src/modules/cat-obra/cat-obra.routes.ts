@@ -13,7 +13,7 @@ catObra.use('*', authMiddleware)
 // GET /api/cat-obra/all
 catObra.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const userId = c.get('user').id
-  const allowed = await getObrasDelUsuarioCached(userId)
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
   const supabase = createSupabaseClient(c.get('accessToken'))
@@ -34,7 +34,7 @@ catObra.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   if (!semKey) return c.json({ error: 'Falta parámetro sem_key' }, 400)
 
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
 
   const supabase = createSupabaseClient(c.get('accessToken'))
 
@@ -74,7 +74,7 @@ catObra.put(
   async (c) => {
     const dto = c.req.valid('json')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, dto.obra_cod)
+    await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
     const supabase = createSupabaseClient(c.get('accessToken'))
 
     // Buscar si ya existe un registro para esta combinación

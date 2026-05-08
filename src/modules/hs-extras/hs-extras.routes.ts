@@ -16,7 +16,7 @@ hsExtras.use('*', authMiddleware)
 // Debe declararse ANTES de /:obra_cod para que Hono no lo matchee como "obra_cod='all'".
 hsExtras.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const userId = c.get('user').id
-  const allowed = await getObrasDelUsuarioCached(userId)
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
   // Si admin, delegar al service (sin filtro). Si no, filtrar por obras.
@@ -43,7 +43,7 @@ hsExtras.get('/:obra_cod', requirePermiso('tarja', 'lectura'), async (c) => {
   const hasta = c.req.query('hasta')
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
 
   const data = await hsExtrasService.getByObra(obraCod, desde, hasta, token)
   return c.json(data)
@@ -61,7 +61,7 @@ hsExtras.put(
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, dto.obra_cod)
+    await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
     const data = await hsExtrasService.upsertLote(dto, token, userId)
     return c.json(data)
   },
@@ -76,7 +76,7 @@ hsExtras.put(
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, dto.obra_cod)
+    await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
     const data = await hsExtrasService.upsert(dto, token, userId)
     return c.json(data)
   },
@@ -96,7 +96,7 @@ hsExtras.delete('/:id',
   const userId = c.get('user').id
 
   // Validar acceso a la obra del registro antes de borrar.
-  const allowed = await getObrasDelUsuarioCached(userId)
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null) {
     const supabase = createSupabaseClient(token)
     const { data: row, error } = await supabase

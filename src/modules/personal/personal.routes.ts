@@ -84,7 +84,7 @@ async function filtrarLegsPermitidos(
 
   if (!restringido) return null
 
-  const allowed = await getObrasDelUsuarioCached(userId)
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed == null) return null
   if (allowed.length === 0) return []
 

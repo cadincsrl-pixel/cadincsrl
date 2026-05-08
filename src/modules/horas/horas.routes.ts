@@ -18,7 +18,7 @@ horas.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const hasta  = c.req.query('hasta')
   const userId = c.get('user').id
 
-  const allowed = await getObrasDelUsuarioCached(userId)
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
   const PAGE = 1000
@@ -55,7 +55,7 @@ horas.get('/trabajador/:leg', requirePermiso('tarja', 'lectura'), async (c) => {
   const userId = c.get('user').id
   const supabase = createSupabaseClient(token)
 
-  const allowed = await getObrasDelUsuarioCached(userId)
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
   let query = supabase
@@ -82,7 +82,7 @@ horas.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   const token = c.get('accessToken')
   const userId = c.get('user').id
 
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
 
   if (desde && hasta) {
     const data = await horasService.getBySemana(obraCod, desde, hasta, token)
@@ -98,7 +98,7 @@ horas.put('/', requirePermiso('tarja', 'actualizacion'), zValidator('json', Upse
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, dto.obra_cod)
+  await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
   const data = await horasService.upsert(dto, token, userId)
   return c.json(data)
 })
@@ -108,7 +108,7 @@ horas.put('/lote', requirePermiso('tarja', 'actualizacion'), zValidator('json', 
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, dto.obra_cod)
+  await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
   const data = await horasService.upsertLote(dto, token, userId)
   return c.json(data)
 })
@@ -126,7 +126,7 @@ horas.delete('/:obraCod/semana',
   if (!desde || !hasta) return c.json({ error: 'Faltan parámetros desde/hasta' }, 400)
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
   const supabase = createSupabaseClient(token)
 
   let q = supabase

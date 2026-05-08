@@ -68,8 +68,15 @@ usuarios.get('/modulos', async (c) => {
 // Permite tabs[] y flags conocidos por módulo. IMPORTANTE: zod hace strip
 // de claves no listadas, así que cualquier flag nuevo debe agregarse acá
 // o se perderá silenciosamente al guardar.
+// Whitelist de módulos. Tiene que coincidir con MODULOS_VALIDOS en
+// `lib/obras-usuario.ts` y con el CHECK constraint usuario_obras_modulo_chk.
+const ModuloKeySchema = z.enum([
+  'tarja', 'logistica', 'certificaciones', 'herramientas',
+  'caja', 'ropa', 'prestamos', 'admin', 'configuracion',
+])
+
 const PermisosSchema = z.record(
-  z.string(),
+  ModuloKeySchema,
   z.object({
     lectura:          z.boolean().optional(),
     creacion:         z.boolean().optional(),
@@ -82,6 +89,8 @@ const PermisosSchema = z.record(
     solo_carga_horas: z.boolean().optional(), // legacy, en transición
     resolver_items:   z.boolean().optional(),
     forzar_despacho:  z.boolean().optional(),
+    // Override de scope por módulo. Si no está, se usa profiles.obras_scope.
+    obras_scope:      z.enum(['todas', 'asignadas']).optional(),
   }),
 )
 
@@ -205,7 +214,16 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
           tipo_usuario_new: data.tipo_usuario,
         })
       }
+
     }
+
+    // Invalidar cache de obras del user en TODA actualización de perfil.
+    // El cache lee permisos.<m>.obras_scope y profiles.obras_scope, así
+    // que cualquier cambio (incluso cosmético como nombre) podría haber
+    // tocado esos campos. Sin esto, el TTL de 60s deja una ventana de
+    // stale en la que un user al que le redujimos el alcance sigue
+    // viendo todo. Más seguro invalidar siempre que loggear cada caso.
+    invalidarCacheObrasUsuario(id)
 
     return c.json({ ...data, email })
   }
@@ -243,26 +261,38 @@ usuarios.delete('/:id', async (c) => {
 })
 
 // ── GET /api/usuarios/:id/obras — obras asignadas al usuario ──
+//
+// Devuelve TODAS las rows del usuario (cualquier módulo). El frontend
+// agrupa por `modulo` para mostrar "obras de tarja", "obras de
+// certificaciones", etc. Filas con `modulo=NULL` aplican a todos los
+// módulos donde el perfil tenga `obras_scope='asignadas'`.
 usuarios.get('/:id/obras', async (c) => {
   const id = c.req.param('id')
   const { data, error } = await supabase
     .from('usuario_obras')
-    .select('obra_cod, obras(cod, nom, dir)')
+    .select('obra_cod, modulo, obras(cod, nom, dir)')
     .eq('user_id', id)
+    .order('modulo', { nullsFirst: true })
     .order('obra_cod')
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data ?? [])
 })
 
 // ── PUT /api/usuarios/:id/obras — reemplaza el set de obras asignadas ──
-// Body: { obras: ['cod1', 'cod2', ...] } (array vacío = quitar todas).
+//
+// Body opcional `modulo` (string | null). El reemplazo es POR MÓDULO:
+//   - { obras: [...], modulo: 'tarja' }      → reemplaza solo las rows de tarja
+//   - { obras: [...], modulo: null }         → reemplaza solo las rows globales (legacy)
+//   - { obras: [...] } (sin modulo)          → modo legacy: borra TODAS las rows
+//                                              del user e inserta las nuevas como modulo=null
 const UpdateObrasSchema = z.object({
-  obras: z.array(z.string().min(1)),
+  obras:  z.array(z.string().min(1)),
+  modulo: ModuloKeySchema.nullable().optional(),
 })
 
 usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
   const id = c.req.param('id')
-  const { obras } = c.req.valid('json')
+  const { obras, modulo } = c.req.valid('json')
   const userId = c.get('user').id
 
   // Validar que el usuario destino exista.
@@ -283,13 +313,26 @@ usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
     }
   }
 
-  // Reemplazo atómico: borro las que ya no están + inserto las nuevas.
-  const { error: errDel } = await supabase
-    .from('usuario_obras').delete().eq('user_id', id)
+  // Reemplazo atómico, scoped al módulo si fue pasado.
+  // Para `modulo === undefined` (legacy) borramos TODAS las rows del user
+  // y reinsertamos como modulo=null (compat con clientes viejos).
+  let del = supabase.from('usuario_obras').delete().eq('user_id', id)
+  if (modulo !== undefined) {
+    del = modulo === null
+      ? del.is('modulo', null)
+      : del.eq('modulo', modulo)
+  }
+  const { error: errDel } = await del
   if (errDel) return c.json({ error: errDel.message }, 500)
 
   if (obras.length > 0) {
-    const rows = obras.map(cod => ({ user_id: id, obra_cod: cod, created_by: userId }))
+    const moduloPersist = modulo === undefined ? null : modulo
+    const rows = obras.map(cod => ({
+      user_id:    id,
+      obra_cod:   cod,
+      created_by: userId,
+      modulo:     moduloPersist,
+    }))
     const { error: errIns } = await supabase.from('usuario_obras').insert(rows)
     if (errIns) return c.json({ error: errIns.message }, 500)
   }
@@ -297,7 +340,7 @@ usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
   // Refrescar cache para que los próximos requests del user vean los cambios.
   invalidarCacheObrasUsuario(id)
 
-  return c.json({ success: true, count: obras.length })
+  return c.json({ success: true, count: obras.length, modulo: modulo ?? null })
 })
 
 export default usuarios

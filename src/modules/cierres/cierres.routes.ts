@@ -13,7 +13,7 @@ cierres.use('*', authMiddleware)
 
 cierres.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const userId = c.get('user').id
-  const allowed = await getObrasDelUsuarioCached(userId)
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
   const supabase = createSupabaseClient(c.get('accessToken'))
@@ -29,7 +29,7 @@ cierres.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   const obraCod = c.req.param('obraCod')
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
   const data = await cierresService.getByObra(obraCod, token)
   return c.json(data)
 })
@@ -40,7 +40,7 @@ cierres.get('/:obraCod/:semKey', requirePermiso('tarja', 'lectura'), async (c) =
   const semKey = c.req.param('semKey')
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
   const data = await cierresService.getBySemKey(obraCod, semKey, token)
   return c.json(data)
 })
@@ -55,7 +55,7 @@ cierres.post(
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, dto.obra_cod)
+    await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
     const data = await cierresService.create(dto, token, userId)
     return c.json(data, 201)
   },
@@ -73,7 +73,7 @@ cierres.patch(
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, obraCod)
+    await validarObraDelUsuario(userId, obraCod, 'tarja')
     const data = await cierresService.updateEstado(obraCod, semKey, dto, token, userId)
     return c.json(data)
   },

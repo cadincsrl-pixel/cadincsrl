@@ -81,7 +81,7 @@ contratistas.get('/asig/:obraCod', requirePermiso('tarja', 'lectura'), async (c)
   const obraCod = c.req.param('obraCod')
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
   const data = await contratistasService.getAsigByObra(obraCod, token)
   return c.json(data)
 })
@@ -90,7 +90,7 @@ contratistas.post('/asig', requirePermiso('tarja', 'actualizacion'), requireFlag
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, dto.obra_cod)
+  await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
   const data = await contratistasService.asignar(dto, token, userId)
   return c.json(data, 201)
 })
@@ -101,7 +101,7 @@ contratistas.delete('/asig/:obraCod/:contratId', requirePermiso('tarja', 'actual
   if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
   const token = c.get('accessToken')
   const userId = c.get('user').id
-  await validarObraDelUsuario(userId, obraCod)
+  await validarObraDelUsuario(userId, obraCod, 'tarja')
   const data = await contratistasService.desasignar(obraCod, contratId, token)
   return c.json(data)
 })
@@ -114,7 +114,7 @@ contratistas.get(
   requireFlag('tarja', 'ver_costos', true, true),
   async (c) => {
     const userId = c.get('user').id
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
     if (allowed != null && allowed.length === 0) return c.json([])
 
     const supabase = createSupabaseClient(c.get('accessToken'))
@@ -134,7 +134,7 @@ contratistas.get(
     const obraCod = c.req.param('obraCod')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, obraCod)
+    await validarObraDelUsuario(userId, obraCod, 'tarja')
     const data = await contratistasService.getCertByObra(obraCod, token)
     return c.json(data)
   },
@@ -150,7 +150,7 @@ contratistas.put(
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, dto.obra_cod)
+    await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
     const data = await contratistasService.upsertCert(dto, token, userId)
     return c.json(data)
   },

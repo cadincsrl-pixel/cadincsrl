@@ -19,7 +19,7 @@ tarifas.get(
   requireFlag('tarja', 'ver_costos', true, true),
   async (c) => {
     const userId = c.get('user').id
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
     if (allowed != null && allowed.length === 0) return c.json([])
 
     const supabase = createSupabaseClient(c.get('accessToken'))
@@ -44,7 +44,7 @@ tarifas.get(
     const obraCod = c.req.param('obraCod')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, obraCod)
+    await validarObraDelUsuario(userId, obraCod, 'tarja')
     const data = await tarifasService.getByObra(obraCod, token)
     return c.json(data)
   },
@@ -60,7 +60,7 @@ tarifas.put(
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
     const userId = c.get('user').id
-    await validarObraDelUsuario(userId, dto.obra_cod)
+    await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
     const data = await tarifasService.upsert(dto, token, userId)
     return c.json(data)
   },
@@ -78,7 +78,7 @@ tarifas.delete(
     const userId = c.get('user').id
 
     // Validar que la tarifa pertenezca a una obra del usuario antes de borrar.
-    const allowed = await getObrasDelUsuarioCached(userId)
+    const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
     if (allowed != null) {
       const supabase = createSupabaseClient(token)
       const { data: row, error } = await supabase
