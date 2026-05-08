@@ -130,27 +130,35 @@ export const obrasService = {
     return data
   },
 
+  async proximoCodigoPreview(): Promise<string> {
+    // Devuelve el próximo código SIN consumir la sequence — para preview
+    // en el modal "Nueva obra". El insert real va a llamar a
+    // siguiente_codigo_obra() (que sí consume), garantizando unicidad
+    // bajo concurrencia.
+    const { data, error } = await supabaseAdmin.rpc('proximo_codigo_obra_preview')
+    if (error) throw new Error(error.message)
+    return data as unknown as string
+  },
+
   async create(dto: CreateObraDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
-    // Verificar que el código no exista
-    const { data: existing } = await supabase
-      .from('obras')
-      .select('cod')
-      .eq('cod', dto.cod)
-      .single()
-
-    if (existing) throw new Error(`El código ${dto.cod} ya existe`)
-
-    // Validar responsables ANTES de insertar para evitar quedar con
-    // FK rotas si el user no existe / está inactivo / rol incorrecto.
+    // Validar responsables ANTES de generar el código para que un error
+    // de validación no consuma un número de la sequence.
     await validarResponsableObra(dto.capataz_user_id,   'capataz')
     await validarResponsableObra(dto.jefe_obra_user_id, 'jefe_obra')
+
+    // Generar código atómicamente. Ignoramos cualquier `dto.cod` que el
+    // cliente haya mandado — el código es server-only para evitar
+    // duplicados, typos y formats inconsistentes (cc 24, CC-001, etc.).
+    const { data: cod, error: errCod } = await supabaseAdmin.rpc('siguiente_codigo_obra')
+    if (errCod) throw new Error(errCod.message)
+    const codFinal = cod as unknown as string
 
     const { data, error } = await supabase
       .from('obras')
       .insert({
-        cod: dto.cod,
+        cod: codFinal,
         nom: dto.nom,
         cc: dto.cc,
         dir: dto.dir,
@@ -169,8 +177,8 @@ export const obrasService = {
 
     // Sincronizar usuario_obras para los responsables recién seteados.
     // No hay "anterior" en create, pasamos null.
-    await syncUsuarioObrasResponsable(dto.cod, null, dto.capataz_user_id,   userId)
-    await syncUsuarioObrasResponsable(dto.cod, null, dto.jefe_obra_user_id, userId)
+    await syncUsuarioObrasResponsable(codFinal, null, dto.capataz_user_id,   userId)
+    await syncUsuarioObrasResponsable(codFinal, null, dto.jefe_obra_user_id, userId)
 
     return data
   },

@@ -15,8 +15,10 @@ export const ObraSchema = z.object({
 // auto-asigna la obra al user en `usuario_obras` con modulo=NULL.
 const UserIdField = z.string().uuid().nullable().optional()
 
+// El código se autogenera en el backend (RPC siguiente_codigo_obra).
+// Cualquier `cod` enviado en el body se ignora — el zod no lo lista,
+// así que zod hace strip silencioso si llega.
 export const CreateObraSchema = z.object({
-  cod: z.string().min(1, 'El código es requerido'),
   nom: z.string().min(1, 'El nombre es requerido'),
   cc: z.string().optional().default(''),
   dir: z.string().optional().default(''),

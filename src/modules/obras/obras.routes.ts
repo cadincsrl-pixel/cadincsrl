@@ -59,6 +59,18 @@ obras.post(
   },
 )
 
+// GET /api/obras/proximo-codigo
+//
+// Devuelve el próximo código que se va a usar al crear una obra.
+// NO consume la sequence — es solo preview para el modal "Nueva obra".
+// Si dos admins abren el modal a la vez, ambos ven el mismo preview;
+// al hacer submit, el primero se queda con ese número y el segundo
+// recibe el siguiente. La RPC interna garantiza unicidad.
+obras.get('/proximo-codigo', requirePermiso('tarja', 'creacion'), async (c) => {
+  const cod = await obrasService.proximoCodigoPreview()
+  return c.json({ cod })
+})
+
 // GET /api/obras/responsables-disponibles
 //
 // Lista users con login activos para asignar como responsables de obra.
