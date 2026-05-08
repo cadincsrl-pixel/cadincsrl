@@ -5,29 +5,39 @@ import { supabase as supabaseAdmin } from './supabase.js'
  * Resuelve qué obras puede ver/operar un usuario.
  *
  * - rol = 'admin' → null (sin restricción, ve todo).
- * - rol != 'admin' con filas en usuario_obras → array de cods asignados.
- * - rol != 'admin' SIN filas en usuario_obras → array vacío (regla estricta).
+ * - tipo_usuario que NO esté en TIPOS_OBRAS_RESTRINGIDAS → null (también ve
+ *   todo). Ej: administrativo, compras, encargado_deposito, personalizado, null.
+ * - tipo_usuario en TIPOS_OBRAS_RESTRINGIDAS (capataz, jefe_obra) con filas
+ *   en usuario_obras → array de cods asignados.
+ * - tipo_usuario restringido SIN filas en usuario_obras → array vacío
+ *   (regla estricta: ve cero obras).
  *
  * Endpoints que listan deben aplicar `.in('obra_cod', codes)` cuando el
  * resultado NO es null. Endpoints que mutan deben rechazar `obra_cod`
  * fuera del array (404/403).
- *
- * Cachear el resultado por request si necesitás múltiples chequeos
- * (este helper hace 2 queries cada vez).
  */
+const TIPOS_OBRAS_RESTRINGIDAS = new Set(['capataz', 'jefe_obra'])
+
 export async function getObrasDelUsuario(userId: string): Promise<string[] | null> {
-  // Obtenemos el rol con el cliente service-role para evitar dependencia
-  // del token JWT del request (este helper se llama desde middlewares y
-  // services internos donde el token puede no estar disponible).
+  // Obtenemos rol + tipo_usuario con el cliente service-role para evitar
+  // dependencia del token JWT del request (este helper se llama desde
+  // middlewares y services internos).
   const { data: profile, error: errProf } = await supabaseAdmin
     .from('profiles')
-    .select('rol')
+    .select('rol, tipo_usuario')
     .eq('id', userId)
     .maybeSingle()
   if (errProf) throw new Error(errProf.message)
   if (!profile) throw new Error('SIN_PERFIL')
 
   if (profile.rol === 'admin') return null
+
+  // Solo los tipos cuya plantilla declara obras_restringidas:true tienen
+  // filtro estricto. Los administrativos / compras / encargado de depósito /
+  // personalizado / sin tipo → ven todas las obras.
+  if (!profile.tipo_usuario || !TIPOS_OBRAS_RESTRINGIDAS.has(profile.tipo_usuario)) {
+    return null
+  }
 
   const { data, error } = await supabaseAdmin
     .from('usuario_obras')
