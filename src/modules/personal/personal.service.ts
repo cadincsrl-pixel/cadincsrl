@@ -4,7 +4,7 @@ import type { CreatePersonalDto, UpdatePersonalDto } from './personal.schema.js'
 // Columnas mínimas que un capataz necesita para cargar horas. NO incluye
 // DNI, dirección, teléfono, fecha_nacimiento ni cat_id (este último es
 // derivable a un costo si tiene acceso a categorías).
-const SELECT_LIMITADO = 'leg, nom, condicion, activo, created_at, updated_at'
+const SELECT_LIMITADO = 'leg, nom, condicion, activo_override, created_at, updated_at'
 const SELECT_COMPLETO = `
   *,
   personal_cat_historial (
