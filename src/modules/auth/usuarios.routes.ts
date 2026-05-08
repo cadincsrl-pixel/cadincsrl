@@ -64,27 +64,32 @@ usuarios.get('/modulos', async (c) => {
 })
 
 // ── POST /api/usuarios — crear usuario ──
+// Permite tabs[] y flags conocidos por módulo (ver_costos, forzar_despacho).
 const PermisosSchema = z.record(
   z.string(),
   z.object({
-    lectura:      z.boolean().optional(),
-    creacion:     z.boolean().optional(),
-    actualizacion: z.boolean().optional(),
-    eliminacion:  z.boolean().optional(),
-  })
+    lectura:         z.boolean().optional(),
+    creacion:        z.boolean().optional(),
+    actualizacion:   z.boolean().optional(),
+    eliminacion:     z.boolean().optional(),
+    tabs:            z.array(z.string()).optional(),
+    ver_costos:      z.boolean().optional(),
+    forzar_despacho: z.boolean().optional(),
+  }),
 )
 
 const CreateUsuarioSchema = z.object({
-  email:    z.string().email(),
-  password: z.string().min(6, 'Mínimo 6 caracteres'),
-  nombre:   z.string().min(1),
-  rol:      z.enum(['admin', 'operador']),
-  modulos:  z.array(z.string()),
-  permisos: PermisosSchema.optional(),
+  email:        z.string().email(),
+  password:     z.string().min(6, 'Mínimo 6 caracteres'),
+  nombre:       z.string().min(1),
+  rol:          z.enum(['admin', 'operador']),
+  modulos:      z.array(z.string()),
+  permisos:     PermisosSchema.optional(),
+  tipo_usuario: z.string().nullable().optional(),
 })
 
 usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
-  const { email, password, nombre, rol, modulos, permisos } = c.req.valid('json')
+  const { email, password, nombre, rol, modulos, permisos, tipo_usuario } = c.req.valid('json')
 
   const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
     email,
@@ -100,7 +105,7 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
 
   const { data, error } = await supabase
     .from('profiles')
-    .update({ nombre, rol, modulos, permisos: permisos ?? {} })
+    .update({ nombre, rol, modulos, permisos: permisos ?? {}, tipo_usuario: tipo_usuario ?? null })
     .eq('id', authData.user.id)
     .select()
     .single()
@@ -115,12 +120,13 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
 
 // ── PATCH /api/usuarios/:id — actualizar perfil ──
 const UpdateSchema = z.object({
-  nombre:   z.string().min(1).optional(),
-  email:    z.string().email().optional(),
-  rol:      z.enum(['admin', 'operador']).optional(),
-  modulos:  z.array(z.string()).optional(),
-  activo:   z.boolean().optional(),
-  permisos: PermisosSchema.optional(),
+  nombre:       z.string().min(1).optional(),
+  email:        z.string().email().optional(),
+  rol:          z.enum(['admin', 'operador']).optional(),
+  modulos:      z.array(z.string()).optional(),
+  activo:       z.boolean().optional(),
+  permisos:     PermisosSchema.optional(),
+  tipo_usuario: z.string().nullable().optional(),
 })
 
 usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
