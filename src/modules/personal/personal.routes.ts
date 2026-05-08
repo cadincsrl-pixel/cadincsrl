@@ -88,15 +88,25 @@ async function filtrarLegsPermitidos(
   if (allowed == null) return null
   if (allowed.length === 0) return []
 
+  // Tomamos la UNIÓN de asignaciones + horas. Razón: muchas obras viejas
+  // tienen carga directa desde la tarja (upsert sobre `horas`) sin haber
+  // pasado nunca por la tabla `asignaciones`. Si filtramos solo por
+  // asignaciones, un capataz nuevo asignado a una obra con histórico de
+  // horas pero 0 asignaciones formales, no ve a nadie y la planilla
+  // queda en blanco. Caso real (José/cc 24): 143 horas, 6 legs, 0
+  // asignaciones → mostraba 0.
   const supabase = createSupabaseClient(token)
-  const { data, error } = await supabase
-    .from('asignaciones')
-    .select('leg')
-    .in('obra_cod', allowed)
-  if (error) throw new Error(error.message)
+  const [resAsign, resHoras] = await Promise.all([
+    supabase.from('asignaciones').select('leg').in('obra_cod', allowed),
+    supabase.from('horas').select('leg').in('obra_cod', allowed),
+  ])
+  if (resAsign.error) throw new Error(resAsign.error.message)
+  if (resHoras.error) throw new Error(resHoras.error.message)
 
-  const legs = Array.from(new Set((data ?? []).map((r: { leg: string }) => r.leg)))
-  return legs
+  const legs = new Set<string>()
+  for (const r of (resAsign.data ?? []) as Array<{ leg: string }>) legs.add(r.leg)
+  for (const r of (resHoras.data ?? []) as Array<{ leg: string }>) legs.add(r.leg)
+  return Array.from(legs)
 }
 
 personal.get(
