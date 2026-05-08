@@ -1,5 +1,6 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
   ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto,
@@ -92,13 +93,21 @@ function countResumen(items: Array<{ estado: ItemEstado }>) {
 
 export const solicitudesService = {
 
-  async getAll(token: string, obra_cod?: string) {
+  async getAll(token: string, userId: string, obra_cod?: string) {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('solicitud_compra')
       .select('*, items:solicitud_compra_item(*, proveedores(nombre))')
       .order('fecha', { ascending: false })
     if (obra_cod) q = q.eq('obra_cod', obra_cod)
+
+    // Filtrar por las obras del usuario (no admin con asignaciones).
+    const allowed = await getObrasDelUsuarioCached(userId)
+    if (allowed != null) {
+      if (allowed.length === 0) return []
+      q = q.in('obra_cod', allowed)
+    }
+
     const { data, error } = await q
     if (error) throw new Error(error.message)
 
@@ -109,7 +118,7 @@ export const solicitudesService = {
     }))
   },
 
-  async getById(id: number, token: string) {
+  async getById(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('solicitud_compra')
@@ -117,6 +126,13 @@ export const solicitudesService = {
       .eq('id', id)
       .single()
     if (error) throw new Error(error.message)
+
+    // Validar acceso a la obra.
+    const allowed = await getObrasDelUsuarioCached(userId)
+    if (allowed != null && !allowed.includes(data.obra_cod)) {
+      throw new HttpError(403, 'OBRA_SIN_ACCESO')
+    }
+
     return {
       ...data,
       progreso: data.estado === 'aprobada' ? calcProgreso(data.items) : null,
@@ -127,6 +143,12 @@ export const solicitudesService = {
   async create(dto: CreateSolicitudDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { items, ...cabecera } = dto
+
+    // Validar que el user pueda crear solicitudes en esa obra.
+    const allowed = await getObrasDelUsuarioCached(userId)
+    if (allowed != null && !allowed.includes(cabecera.obra_cod)) {
+      throw new HttpError(403, 'OBRA_SIN_ACCESO')
+    }
 
     const { data: solicitud, error } = await supabase
       .from('solicitud_compra')
@@ -161,11 +183,21 @@ export const solicitudesService = {
       .insert(itemsData)
     if (itemsErr) throw new Error(itemsErr.message)
 
-    return this.getById(solicitud.id, token)
+    return this.getById(solicitud.id, token, userId)
   },
 
   async update(id: number, dto: UpdateSolicitudDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Validar acceso a la obra de esta solicitud antes de cualquier mutación.
+    const allowed = await getObrasDelUsuarioCached(userId)
+    if (allowed != null) {
+      const { data: cab, error: errCab } = await supabase
+        .from('solicitud_compra').select('obra_cod').eq('id', id).maybeSingle()
+      if (errCab) throw new Error(errCab.message)
+      if (!cab) throw new HttpError(404, 'SOLICITUD_NO_EXISTE')
+      if (!allowed.includes(cab.obra_cod)) throw new HttpError(403, 'OBRA_SIN_ACCESO')
+    }
 
     // Actualizar cabecera
     const { items, remove_items, ...cabFields } = dto
@@ -232,6 +264,17 @@ export const solicitudesService = {
 
   async delete(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Validar acceso a la obra antes de borrar.
+    const allowed = await getObrasDelUsuarioCached(userId)
+    if (allowed != null) {
+      const { data: cab, error: errCab } = await supabase
+        .from('solicitud_compra').select('obra_cod').eq('id', id).maybeSingle()
+      if (errCab) throw new Error(errCab.message)
+      if (!cab) throw new HttpError(404, 'SOLICITUD_NO_EXISTE')
+      if (!allowed.includes(cab.obra_cod)) throw new HttpError(403, 'OBRA_SIN_ACCESO')
+    }
+
     // RPC transaccional: revierte stock con FOR UPDATE, valida remitos_envio,
     // y borra solicitud_compra (CASCADE borra items + MCC).
     // Migración 20260424_rpc_eliminar_solicitud.

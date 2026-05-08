@@ -24,14 +24,36 @@ solicitudes.on(['POST'],           '*', requirePermiso('certificaciones', 'creac
 solicitudes.on(['PATCH', 'PUT'],   '*', requirePermiso('certificaciones', 'actualizacion'))
 solicitudes.on(['DELETE'],         '*', requirePermiso('certificaciones', 'eliminacion'))
 
+// Helper: el service tira HttpError(403,'OBRA_SIN_ACCESO') cuando el user
+// pidió/operó sobre una obra a la que no está asignado. Lo mapeamos a JSON.
+function withAccess<T>(fn: () => Promise<T>) {
+  return async (c: any) => {
+    try {
+      const data = await fn()
+      return c.json(data)
+    } catch (err: any) {
+      if (err instanceof HttpError) {
+        const body: Record<string, unknown> = { error: err.code }
+        if (err.detail !== undefined) body.detail = err.detail
+        return c.json(body, err.status as any)
+      }
+      throw err
+    }
+  }
+}
+
 // ── Solicitudes CRUD ──
 solicitudes.get('/', async (c) => {
   const obra_cod = c.req.query('obra_cod')
-  return c.json(await solicitudesService.getAll(c.get('accessToken'), obra_cod))
+  return withAccess(() =>
+    solicitudesService.getAll(c.get('accessToken'), c.get('user').id, obra_cod),
+  )(c)
 })
 
 solicitudes.get('/:id', async (c) => {
-  return c.json(await solicitudesService.getById(Number(c.req.param('id')), c.get('accessToken')))
+  return withAccess(() =>
+    solicitudesService.getById(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id),
+  )(c)
 })
 
 solicitudes.post('/', zValidator('json', CreateSolicitudSchema), async (c) => {
@@ -40,18 +62,26 @@ solicitudes.post('/', zValidator('json', CreateSolicitudSchema), async (c) => {
     const data = await solicitudesService.create(dto, c.get('accessToken'), c.get('user').id)
     return c.json(data, 201)
   } catch (err: any) {
+    if (err instanceof HttpError) {
+      const body: Record<string, unknown> = { error: err.code }
+      if (err.detail !== undefined) body.detail = err.detail
+      return c.json(body, err.status as any)
+    }
     console.error('[POST /solicitudes] ERROR:', err.message)
     return c.json({ error: err.message }, 500)
   }
 })
 
 solicitudes.patch('/:id', zValidator('json', UpdateSolicitudSchema), async (c) => {
-  const data = await solicitudesService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
-  return c.json(data)
+  return withAccess(() =>
+    solicitudesService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id),
+  )(c)
 })
 
 solicitudes.delete('/:id', async (c) => {
-  return c.json(await solicitudesService.delete(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
+  return withAccess(() =>
+    solicitudesService.delete(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id),
+  )(c)
 })
 
 // Helper: las acciones de ítems devuelven 404 si no encuentran el ítem.

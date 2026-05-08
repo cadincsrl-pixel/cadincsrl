@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requirePermisoOr } from '../../middleware/permission.js'
 import { obrasService } from './obras.service.js'
 import { CreateObraSchema, UpdateObraSchema } from './obras.schema.js'
 
@@ -10,16 +10,27 @@ const obras = new Hono()
 obras.use('*', authMiddleware)
 
 // GET /api/obras
-obras.get('/', requirePermiso('tarja', 'lectura'), async (c) => {
-  const token = c.get('accessToken')
-  const data = await obrasService.getAll(token)
+// Lectura accesible desde tarja o certificaciones (los jefes de obra
+// solo tienen certificaciones y necesitan ver SUS obras al pedir
+// materiales).
+obras.get('/', requirePermisoOr([
+  { modulo: 'tarja', accion: 'lectura' },
+  { modulo: 'certificaciones', accion: 'lectura' },
+]), async (c) => {
+  const token  = c.get('accessToken')
+  const userId = c.get('user').id
+  const data = await obrasService.getAll(token, userId)
   return c.json(data)
 })
 
 // GET /api/obras/archivadas
-obras.get('/archivadas', requirePermiso('tarja', 'lectura'), async (c) => {
-  const token = c.get('accessToken')
-  const data = await obrasService.getArchivadas(token)
+obras.get('/archivadas', requirePermisoOr([
+  { modulo: 'tarja', accion: 'lectura' },
+  { modulo: 'certificaciones', accion: 'lectura' },
+]), async (c) => {
+  const token  = c.get('accessToken')
+  const userId = c.get('user').id
+  const data = await obrasService.getArchivadas(token, userId)
   return c.json(data)
 })
 
@@ -32,11 +43,20 @@ obras.post('/auto-archivar', requirePermiso('tarja', 'actualizacion'), async (c)
 })
 
 // GET /api/obras/:cod
-obras.get('/:cod', requirePermiso('tarja', 'lectura'), async (c) => {
-  const cod = c.req.param('cod')
-  const token = c.get('accessToken')
-  const data = await obrasService.getByCod(cod, token)
-  return c.json(data)
+obras.get('/:cod', requirePermisoOr([
+  { modulo: 'tarja', accion: 'lectura' },
+  { modulo: 'certificaciones', accion: 'lectura' },
+]), async (c) => {
+  const cod    = c.req.param('cod')
+  const token  = c.get('accessToken')
+  const userId = c.get('user').id
+  try {
+    const data = await obrasService.getByCod(cod, token, userId)
+    return c.json(data)
+  } catch (err: any) {
+    if (err?.code === 'OBRA_SIN_ACCESO') return c.json({ error: err.code }, 403)
+    throw err
+  }
 })
 
 // POST /api/obras

@@ -3,6 +3,7 @@ import { z }    from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { supabase } from '../../lib/supabase.js'
+import { invalidarCacheObrasUsuario } from '../../lib/obras-usuario.js'
 import { createClient } from '@supabase/supabase-js'
 
 const usuarios = new Hono()
@@ -234,6 +235,9 @@ usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
     const { error: errIns } = await supabase.from('usuario_obras').insert(rows)
     if (errIns) return c.json({ error: errIns.message }, 500)
   }
+
+  // Refrescar cache para que los próximos requests del user vean los cambios.
+  invalidarCacheObrasUsuario(id)
 
   return c.json({ success: true, count: obras.length })
 })
