@@ -1,6 +1,69 @@
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
-import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
+import { getObrasDelUsuarioCached, invalidarCacheObrasUsuario } from '../../lib/obras-usuario.js'
 import type { CreateObraDto, UpdateObraDto } from './obras.schema.js'
+
+// Valida que un user (si está seteado) exista, esté activo y tenga el
+// rol_base esperado. Lanza error con mensaje claro si no.
+async function validarResponsableObra(
+  userIdNuevo: string | null | undefined,
+  rolEsperado: 'capataz' | 'jefe_obra',
+): Promise<void> {
+  if (!userIdNuevo) return
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select('rol, rol_base, activo')
+    .eq('id', userIdNuevo)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!data) throw new Error('Usuario responsable no existe')
+  if (data.activo === false) throw new Error('El usuario responsable está inactivo')
+  // Admin puede ser responsable también (no rompe nada, ve todo igual).
+  // Solo rechazamos si rol_base está seteado y NO matchea.
+  if (data.rol !== 'admin' && data.rol_base != null && data.rol_base !== rolEsperado) {
+    throw new Error(`El usuario no tiene rol_base=${rolEsperado} (tiene ${data.rol_base})`)
+  }
+}
+
+// Sincroniza usuario_obras cuando cambia el responsable de una obra.
+// Inserta una row para el nuevo user (modulo=NULL → aplica a todos los
+// módulos donde tenga scope='asignadas') y borra la del viejo si cambió.
+// Idempotente: si el user ya tiene la obra asignada (manualmente o de
+// otro rol), no duplica.
+async function syncUsuarioObrasResponsable(
+  obraCod: string,
+  userIdAnterior: string | null | undefined,
+  userIdNuevo: string | null | undefined,
+  callerId: string,
+): Promise<void> {
+  if (userIdAnterior === userIdNuevo) return
+
+  // 1) Si había uno anterior y cambió/se quitó, borrar SU row "global"
+  //    (modulo=NULL). NO tocamos rows con modulo específico — esas son
+  //    asignaciones manuales que el admin pudo haber hecho aparte.
+  if (userIdAnterior) {
+    const { error: errDel } = await supabaseAdmin
+      .from('usuario_obras')
+      .delete()
+      .eq('user_id', userIdAnterior)
+      .eq('obra_cod', obraCod)
+      .is('modulo', null)
+    if (errDel) throw new Error(errDel.message)
+    invalidarCacheObrasUsuario(userIdAnterior)
+  }
+
+  // 2) Si hay uno nuevo, upsert (idempotente vs constraint
+  //    user_id+obra_cod+modulo único con NULLS NOT DISTINCT).
+  if (userIdNuevo) {
+    const { error: errIns } = await supabaseAdmin
+      .from('usuario_obras')
+      .upsert(
+        { user_id: userIdNuevo, obra_cod: obraCod, modulo: null, created_by: callerId },
+        { onConflict: 'user_id,obra_cod,modulo' },
+      )
+    if (errIns) throw new Error(errIns.message)
+    invalidarCacheObrasUsuario(userIdNuevo)
+  }
+}
 
 export const obrasService = {
 
@@ -79,6 +142,11 @@ export const obrasService = {
 
     if (existing) throw new Error(`El código ${dto.cod} ya existe`)
 
+    // Validar responsables ANTES de insertar para evitar quedar con
+    // FK rotas si el user no existe / está inactivo / rol incorrecto.
+    await validarResponsableObra(dto.capataz_user_id,   'capataz')
+    await validarResponsableObra(dto.jefe_obra_user_id, 'jefe_obra')
+
     const { data, error } = await supabase
       .from('obras')
       .insert({
@@ -88,6 +156,8 @@ export const obrasService = {
         dir: dto.dir,
         resp: dto.resp,
         obs: dto.obs,
+        capataz_user_id:   dto.capataz_user_id   ?? null,
+        jefe_obra_user_id: dto.jefe_obra_user_id ?? null,
         archivada: false,
         created_by: userId,
         updated_by: userId,
@@ -96,11 +166,40 @@ export const obrasService = {
       .single()
 
     if (error) throw new Error(error.message)
+
+    // Sincronizar usuario_obras para los responsables recién seteados.
+    // No hay "anterior" en create, pasamos null.
+    await syncUsuarioObrasResponsable(dto.cod, null, dto.capataz_user_id,   userId)
+    await syncUsuarioObrasResponsable(dto.cod, null, dto.jefe_obra_user_id, userId)
+
     return data
   },
 
   async update(cod: string, dto: UpdateObraDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Validar nuevos responsables (si vienen en el patch).
+    if (dto.capataz_user_id !== undefined) {
+      await validarResponsableObra(dto.capataz_user_id, 'capataz')
+    }
+    if (dto.jefe_obra_user_id !== undefined) {
+      await validarResponsableObra(dto.jefe_obra_user_id, 'jefe_obra')
+    }
+
+    // Snapshot previo de los user_ids para saber qué cambió y poder
+    // borrar las asignaciones del viejo responsable si fue reemplazado.
+    let beforeCapataz: string | null = null
+    let beforeJefe:    string | null = null
+    if (dto.capataz_user_id !== undefined || dto.jefe_obra_user_id !== undefined) {
+      const { data: before } = await supabaseAdmin
+        .from('obras')
+        .select('capataz_user_id, jefe_obra_user_id')
+        .eq('cod', cod)
+        .maybeSingle()
+      beforeCapataz = before?.capataz_user_id ?? null
+      beforeJefe    = before?.jefe_obra_user_id ?? null
+    }
+
     const { data, error } = await supabase
       .from('obras')
       .update({ ...dto, updated_by: userId })
@@ -109,6 +208,15 @@ export const obrasService = {
       .single()
 
     if (error) throw new Error(error.message)
+
+    // Sincronizar usuario_obras para los responsables que cambiaron.
+    if (dto.capataz_user_id !== undefined) {
+      await syncUsuarioObrasResponsable(cod, beforeCapataz, dto.capataz_user_id, userId)
+    }
+    if (dto.jefe_obra_user_id !== undefined) {
+      await syncUsuarioObrasResponsable(cod, beforeJefe, dto.jefe_obra_user_id, userId)
+    }
+
     return data
   },
 

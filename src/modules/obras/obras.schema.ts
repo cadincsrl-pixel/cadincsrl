@@ -11,6 +11,10 @@ export const ObraSchema = z.object({
   fecha_archivo: z.string().nullable(),
 })
 
+// FK opcionales a profiles(id). Cuando se setean, el service
+// auto-asigna la obra al user en `usuario_obras` con modulo=NULL.
+const UserIdField = z.string().uuid().nullable().optional()
+
 export const CreateObraSchema = z.object({
   cod: z.string().min(1, 'El código es requerido'),
   nom: z.string().min(1, 'El nombre es requerido'),
@@ -18,6 +22,8 @@ export const CreateObraSchema = z.object({
   dir: z.string().optional().default(''),
   resp: z.string().optional().default(''),
   obs: z.string().optional().default(''),
+  capataz_user_id:   UserIdField,
+  jefe_obra_user_id: UserIdField,
 })
 
 export const UpdateObraSchema = z.object({
@@ -26,6 +32,8 @@ export const UpdateObraSchema = z.object({
   dir: z.string().optional(),
   resp: z.string().optional(),
   obs: z.string().optional(),
+  capataz_user_id:   UserIdField,
+  jefe_obra_user_id: UserIdField,
 })
 
 export type Obra = z.infer<typeof ObraSchema>
