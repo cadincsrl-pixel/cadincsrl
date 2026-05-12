@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requirePermisoOr, requireFlag } from '../../middleware/permission.js'
+import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
 import { obrasService } from './obras.service.js'
 import { CreateObraSchema, UpdateObraSchema } from './obras.schema.js'
 import { validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -49,8 +49,7 @@ obras.get('/archivadas', requirePermisoOr([
 // Es una acción administrativa global; capataz no debería dispararla.
 obras.post(
   '/auto-archivar',
-  requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'administrar_obras', true),
   async (c) => {
     const token = c.get('accessToken')
     const userId = c.get('user').id
@@ -66,7 +65,7 @@ obras.post(
 // Si dos admins abren el modal a la vez, ambos ven el mismo preview;
 // al hacer submit, el primero se queda con ese número y el segundo
 // recibe el siguiente. La RPC interna garantiza unicidad.
-obras.get('/proximo-codigo', requirePermiso('tarja', 'creacion'), async (c) => {
+obras.get('/proximo-codigo', requireFlag('tarja', 'administrar_obras', true), async (c) => {
   const cod = await obrasService.proximoCodigoPreview()
   return c.json({ cod })
 })
@@ -80,10 +79,7 @@ obras.get('/proximo-codigo', requirePermiso('tarja', 'creacion'), async (c) => {
 // (los que pueden editar obras), no requiere admin. Devuelve solo
 // nombre + id, sin email u otros datos sensibles, así que no abre
 // PII vía este endpoint.
-obras.get('/responsables-disponibles', requirePermisoOr([
-  { modulo: 'tarja', accion: 'creacion' },
-  { modulo: 'tarja', accion: 'actualizacion' },
-]), async (c) => {
+obras.get('/responsables-disponibles', requireFlag('tarja', 'administrar_obras', true), async (c) => {
   const { data, error } = await supabaseAdmin
     .from('profiles')
     .select('id, nombre, rol_base')
@@ -134,8 +130,7 @@ async function puedeGestionarResponsables(userId: string): Promise<boolean> {
 // POST /api/obras — alta de obra: jefatura.
 obras.post(
   '/',
-  requirePermiso('tarja', 'creacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'administrar_obras', true),
   zValidator('json', CreateObraSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -158,8 +153,7 @@ obras.post(
 // PATCH /api/obras/:cod — edición de obra: jefatura.
 obras.patch(
   '/:cod',
-  requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'administrar_obras', true),
   zValidator('json', UpdateObraSchema),
   async (c) => {
     const cod = c.req.param('cod')
@@ -190,8 +184,7 @@ obras.patch(
 // PATCH /api/obras/:cod/archivar — jefatura.
 obras.patch(
   '/:cod/archivar',
-  requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'administrar_obras', true),
   async (c) => {
     const cod = c.req.param('cod')
     const token = c.get('accessToken')
@@ -212,8 +205,7 @@ obras.patch(
 // PATCH /api/obras/:cod/desarchivar — jefatura.
 obras.patch(
   '/:cod/desarchivar',
-  requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'administrar_obras', true),
   async (c) => {
     const cod = c.req.param('cod')
     const token = c.get('accessToken')
@@ -237,8 +229,7 @@ obras.patch(
 // DELETE /api/obras/:cod — jefatura.
 obras.delete(
   '/:cod',
-  requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'administrar_obras', true),
   async (c) => {
     const cod = c.req.param('cod')
     const token = c.get('accessToken')
