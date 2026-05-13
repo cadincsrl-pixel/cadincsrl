@@ -7,6 +7,7 @@ import { CreateVehiculoSchema, UpdateVehiculoSchema } from './flota.schema.js'
 import flotaDocs from './flota-docs.routes.js'
 import flotaTipos from './flota-tipos-servicio.routes.js'
 import flotaServicios from './flota-servicios.routes.js'
+import flotaGpsSync from './gps-sync/flota-gps-sync.routes.js'
 
 const flota = new Hono()
 flota.use('*', authMiddleware)
@@ -17,6 +18,8 @@ flota.route('/vehiculos', flotaDocs)
 flota.route('/tipos-servicio', flotaTipos)
 // Servicios de mantenimiento: /api/flota/servicios
 flota.route('/servicios', flotaServicios)
+// Sync de GPS MobilQuest: /api/flota/gps/...
+flota.route('/gps', flotaGpsSync)
 
 // CRUD de vehículos
 flota.get(

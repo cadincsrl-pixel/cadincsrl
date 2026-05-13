@@ -48,6 +48,7 @@ import adminRoutes from './modules/admin/admin.routes.js'
 import remitosEnvioRoutes from './modules/remitos-envio/remitos-envio.routes.js'
 import { cajaRoutes } from './modules/caja/caja.routes.js'
 import flotaRoutes from './modules/flota/flota.routes.js'
+import flotaGpsInternalRoutes from './modules/flota/gps-sync/flota-gps-sync.internal.routes.js'
 
 
 const app = new Hono()
@@ -101,6 +102,7 @@ app.route('/api/logistica/camion-services', camionServicesRoutes)
 app.route('/api/logistica/gps',             gpsSyncRoutes)
 app.route('/api/logistica/maps',            mapsRoutes)
 app.route('/api/internal',                  gpsInternalRoutes)
+app.route('/api/internal',                  flotaGpsInternalRoutes)
 app.route('/api/me', authRoutes)
 app.route('/api/usuarios', usuariosRoutes)
 app.route('/api/herramientas', herramientasRoutes)
