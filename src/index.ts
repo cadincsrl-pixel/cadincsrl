@@ -47,6 +47,7 @@ import stockProveedorRoutes from './modules/stock-proveedor/stock-proveedor.rout
 import adminRoutes from './modules/admin/admin.routes.js'
 import remitosEnvioRoutes from './modules/remitos-envio/remitos-envio.routes.js'
 import { cajaRoutes } from './modules/caja/caja.routes.js'
+import flotaRoutes from './modules/flota/flota.routes.js'
 
 
 const app = new Hono()
@@ -113,6 +114,7 @@ app.route('/api/stock-proveedor', stockProveedorRoutes)
 app.route('/api/admin', adminRoutes)
 app.route('/api/remitos-envio', remitosEnvioRoutes)
 app.route('/api/caja', cajaRoutes)
+app.route('/api/flota', flotaRoutes)
 
 // ── Manejo global de errores ──
 app.onError((err, c) => {
