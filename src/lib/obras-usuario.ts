@@ -6,7 +6,7 @@ import { supabase as supabaseAdmin } from './supabase.js'
 // `.or()` y typos silenciosos en `permisos.<modulo>` del JSONB.
 const MODULOS_VALIDOS = new Set([
   'tarja', 'logistica', 'certificaciones', 'herramientas',
-  'caja', 'ropa', 'prestamos', 'admin', 'configuracion',
+  'caja', 'ropa', 'prestamos', 'admin', 'configuracion', 'flota',
 ])
 
 /**

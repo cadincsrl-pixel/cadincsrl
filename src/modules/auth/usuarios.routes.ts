@@ -72,7 +72,7 @@ usuarios.get('/modulos', async (c) => {
 // `lib/obras-usuario.ts` y con el CHECK constraint usuario_obras_modulo_chk.
 const ModuloKeySchema = z.enum([
   'tarja', 'logistica', 'certificaciones', 'herramientas',
-  'caja', 'ropa', 'prestamos', 'admin', 'configuracion',
+  'caja', 'ropa', 'prestamos', 'admin', 'configuracion', 'flota',
 ])
 
 const ModuloPermisosSchema = z.object({
