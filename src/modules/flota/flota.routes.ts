@@ -5,12 +5,18 @@ import { requirePermiso } from '../../middleware/permission.js'
 import { flotaService } from './flota.service.js'
 import { CreateVehiculoSchema, UpdateVehiculoSchema } from './flota.schema.js'
 import flotaDocs from './flota-docs.routes.js'
+import flotaTipos from './flota-tipos-servicio.routes.js'
+import flotaServicios from './flota-servicios.routes.js'
 
 const flota = new Hono()
 flota.use('*', authMiddleware)
 
 // Sub-router de documentos del vehículo: /api/flota/vehiculos/:id/documentos/...
 flota.route('/vehiculos', flotaDocs)
+// Catálogo de tipos de servicio: /api/flota/tipos-servicio
+flota.route('/tipos-servicio', flotaTipos)
+// Servicios de mantenimiento: /api/flota/servicios
+flota.route('/servicios', flotaServicios)
 
 // CRUD de vehículos
 flota.get(
