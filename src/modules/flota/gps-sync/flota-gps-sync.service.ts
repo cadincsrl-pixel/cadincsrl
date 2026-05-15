@@ -66,14 +66,16 @@ export interface SyncResumen {
 async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResumen> {
   const t0 = Date.now()
   let datos: DatosUltimosGPS[]
-  let catalogoMap: Map<string, string>  // id_vehiculo → patente
+  let catalogoMap: Map<string, { patente: string; alias: string | null }>
   try {
     const [datosUlt, catalogo] = await Promise.all([
       mobileQuestClient.datosUltimos(),
       mobileQuestClient.listarVehiculos(),
     ])
     datos = datosUlt
-    catalogoMap = new Map(catalogo.map(v => [v.id_vehiculo, v.patente]))
+    catalogoMap = new Map(
+      catalogo.map(v => [v.id_vehiculo, { patente: v.patente, alias: v.modelo ?? null }]),
+    )
   } catch (err) {
     if (err instanceof MobileQuestError) {
       throw new FlotaGpsSyncError(502, err.code, err.detail)
@@ -84,7 +86,7 @@ async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResum
   // los "_M" de respaldo que ya descarta el client al parsear el catálogo).
   datos = datos.filter(d => catalogoMap.has(d.id_vehiculo))
   for (const d of datos) {
-    if (!d.patente) d.patente = catalogoMap.get(d.id_vehiculo) ?? null
+    if (!d.patente) d.patente = catalogoMap.get(d.id_vehiculo)?.patente ?? null
   }
 
   // Catálogo de vehículos de flota con device_id asignado.
@@ -141,6 +143,7 @@ async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResum
       gps_ultima_velocidad:      d.velocidad,
       gps_ultima_lectura_en:     d.fecha,
       mobilquest_ultima_sync_at: nowIso,
+      mobilquest_alias:          catalogoMap.get(d.id_vehiculo)?.alias ?? null,
       gps_ultimo_sync_estado:    'ok' as Estado,
       gps_ultimo_sync_error:     null,
     }
