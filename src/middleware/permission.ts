@@ -7,10 +7,22 @@ export type Accion = 'lectura' | 'creacion' | 'actualizacion' | 'eliminacion'
 async function fetchPermisos(userId: string) {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('rol, permisos')
+    .select('rol, rol_base, permisos')
     .eq('id', userId)
     .single()
   return profile
+}
+
+/**
+ * Devuelve true si el usuario es capataz puro (rol_base='capataz'). Útil
+ * para gates específicos como "solo carga horas del día actual".
+ * Admin siempre devuelve false (bypass — admin no es capataz).
+ */
+export async function esCapataz(userId: string): Promise<boolean> {
+  const profile = await fetchPermisos(userId)
+  if (!profile) return false
+  if (profile.rol === 'admin') return false
+  return profile.rol_base === 'capataz'
 }
 
 export function requirePermiso(modulo: string, accion: Accion) {

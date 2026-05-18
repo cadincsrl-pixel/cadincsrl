@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireFlag } from '../../middleware/permission.js'
+import { requirePermiso, requireFlag, esCapataz } from '../../middleware/permission.js'
 import { horasService } from './horas.service.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
 import { supabase, createSupabaseClient } from '../../lib/supabase.js'
@@ -93,12 +93,35 @@ horas.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   return c.json(data)
 })
 
+// Helper: si el user es capataz puro, solo puede tocar horas con
+// fecha = hoy (ni pasado ni futuro). Para el resto de roles no aplica.
+// Se aplica en los endpoints PUT (upsert individual y lote). DELETE
+// semana ya está bloqueado para capataces por requireFlag('ver_pii', true).
+function fechaHoyArgentina(): string {
+  // Server puede correr en UTC, capatazes operan en hora local de Argentina.
+  // Forzamos timezone Argentina y devolvemos YYYY-MM-DD.
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year:  'numeric', month: '2-digit', day: '2-digit',
+  })
+  return fmt.format(new Date())
+}
+
 // PUT /api/horas — upsert individual
 horas.put('/', requirePermiso('tarja', 'actualizacion'), zValidator('json', UpsertHoraSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
   await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
+
+  // Capataz puede cargar SOLO el día actual.
+  if (await esCapataz(userId) && dto.fecha !== fechaHoyArgentina()) {
+    return c.json({
+      error:  'FECHA_FUERA_DE_RANGO',
+      detail: 'Como capataz solo podés cargar horas del día actual.',
+    }, 403)
+  }
+
   const data = await horasService.upsert(dto, token, userId)
   return c.json(data)
 })
@@ -109,6 +132,18 @@ horas.put('/lote', requirePermiso('tarja', 'actualizacion'), zValidator('json', 
   const token = c.get('accessToken')
   const userId = c.get('user').id
   await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
+
+  if (await esCapataz(userId)) {
+    const hoy = fechaHoyArgentina()
+    const fueraDeRango = dto.horas.filter(h => h.fecha !== hoy)
+    if (fueraDeRango.length > 0) {
+      return c.json({
+        error:  'FECHA_FUERA_DE_RANGO',
+        detail: `Como capataz solo podés cargar horas del día actual (${hoy}). ${fueraDeRango.length} línea(s) están fuera del rango.`,
+      }, 403)
+    }
+  }
+
   const data = await horasService.upsertLote(dto, token, userId)
   return c.json(data)
 })
