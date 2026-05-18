@@ -1,13 +1,11 @@
 import { HTTPException } from 'hono/http-exception'
 import { supabase as supabaseAdmin } from './supabase.js'
+import { MODULO_SET as MODULOS_VALIDOS } from './modulos.js'
 
-// Whitelist de módulos válidos. Tiene que coincidir con el CHECK constraint
-// `usuario_obras_modulo_chk` en DB. Validar acá evita filter injection en
-// `.or()` y typos silenciosos en `permisos.<modulo>` del JSONB.
-const MODULOS_VALIDOS = new Set([
-  'tarja', 'logistica', 'certificaciones', 'herramientas',
-  'caja', 'ropa', 'prestamos', 'admin', 'configuracion', 'flota',
-])
+// Whitelist de módulos válidos viene de la constante única en `modulos.ts`.
+// Validar acá evita filter injection en `.or()` y typos silenciosos en
+// `permisos.<modulo>` del JSONB. El nombre local del símbolo se mantiene
+// para minimizar cambios en el resto del archivo.
 
 /**
  * Resuelve qué obras puede ver/operar un usuario en un módulo dado.

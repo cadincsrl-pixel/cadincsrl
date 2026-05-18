@@ -42,7 +42,7 @@ categorias.get('/:id',
 categorias.post(
   '/',
   requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', CreateCategoriaSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -56,7 +56,7 @@ categorias.post(
 categorias.patch(
   '/:id',
   requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpdateCategoriaSchema),
   async (c) => {
     const id = Number(c.req.param('id'))
@@ -72,7 +72,7 @@ categorias.patch(
 categorias.delete(
   '/:id',
   requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   async (c) => {
     const id = Number(c.req.param('id'))
     if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)

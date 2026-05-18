@@ -12,13 +12,10 @@ import documentosRoutes from './documentos.routes.js'
 // Decide si el user debe ver columnas limitadas de personal (sin DNI,
 // dirección, teléfono, fecha_nacimiento).
 //
-// Regla v2 (con flag explícito `permisos.tarja.ver_pii`):
+// Regla v3 (capacidad `permisos.tarja.ver_pii`):
 // - admin → no limitado.
 // - permisos.tarja.ver_pii === true → no limitado.
-// - cualquier otro caso → limitado.
-//
-// Fallback legacy (perfiles sin ver_pii seteado): si tarja.solo_carga_horas
-// está activo Y no tiene tab 'personal', limitar (compat con capataz puro).
+// - cualquier otro caso → limitado (PII redactada).
 async function piiLimitada(userId: string): Promise<boolean> {
   const { data } = await supabaseAdmin
     .from('profiles')
@@ -30,15 +27,8 @@ async function piiLimitada(userId: string): Promise<boolean> {
   const tarja = (data.permisos as any)?.tarja
   if (!tarja) return false
 
-  // v2: flag explícito.
-  if (tarja.ver_pii === true) return false
-  if (tarja.ver_pii === false) return true
-
-  // Legacy fallback: capataz puro (solo_carga_horas + sin tab personal) → limitado.
-  if (tarja.solo_carga_horas !== true) return false
-  const tabs = tarja.tabs as string[] | undefined
-  if (Array.isArray(tabs) && tabs.includes('personal')) return false
-  return true
+  // v3: ver_pii es la fuente de verdad. Default false (sin la flag = no ve PII).
+  return tarja.ver_pii !== true
 }
 
 const personal = new Hono()
@@ -162,7 +152,7 @@ personal.get(
 personal.post(
   '/',
   requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', CreatePersonalSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -176,7 +166,7 @@ personal.post(
 personal.patch(
   '/:leg',
   requirePermisoOr([{ modulo: 'personal', accion: 'actualizacion' }, { modulo: 'tarja', accion: 'actualizacion' }]),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpdatePersonalSchema),
   async (c) => {
     const leg = c.req.param('leg')
@@ -191,7 +181,7 @@ personal.patch(
 personal.delete(
   '/:leg',
   requirePermisoOr([{ modulo: 'personal', accion: 'eliminacion' }, { modulo: 'tarja', accion: 'eliminacion' }]),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   async (c) => {
     const leg = c.req.param('leg')
     const token = c.get('accessToken')

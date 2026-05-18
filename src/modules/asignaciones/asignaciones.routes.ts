@@ -41,7 +41,7 @@ asignaciones.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
 })
 
 // POST /api/asignaciones — alta de personal en obra: jefatura, no capataz.
-asignaciones.post('/', requirePermiso('tarja', 'creacion'), requireFlag('tarja', 'solo_carga_horas', false), zValidator('json', CreateAsignacionSchema), async (c) => {
+asignaciones.post('/', requirePermiso('tarja', 'creacion'), requireFlag('tarja', 'ver_pii', true), zValidator('json', CreateAsignacionSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
@@ -51,7 +51,7 @@ asignaciones.post('/', requirePermiso('tarja', 'creacion'), requireFlag('tarja',
 })
 
 // PATCH /api/asignaciones/:obraCod/:leg/baja — baja de personal: jefatura.
-asignaciones.patch('/:obraCod/:leg/baja', requirePermiso('tarja', 'actualizacion'), requireFlag('tarja', 'solo_carga_horas', false), zValidator('json', BajaAsignacionSchema), async (c) => {
+asignaciones.patch('/:obraCod/:leg/baja', requirePermiso('tarja', 'actualizacion'), requireFlag('tarja', 'ver_pii', true), zValidator('json', BajaAsignacionSchema), async (c) => {
   const obraCod = c.req.param('obraCod')
   const leg = c.req.param('leg')
   const dto = c.req.valid('json')
@@ -63,7 +63,7 @@ asignaciones.patch('/:obraCod/:leg/baja', requirePermiso('tarja', 'actualizacion
 })
 
 // DELETE /api/asignaciones/:obraCod/:leg — borrado de asignación: jefatura.
-asignaciones.delete('/:obraCod/:leg', requirePermiso('tarja', 'eliminacion'), requireFlag('tarja', 'solo_carga_horas', false), async (c) => {
+asignaciones.delete('/:obraCod/:leg', requirePermiso('tarja', 'eliminacion'), requireFlag('tarja', 'ver_pii', true), async (c) => {
   const obraCod = c.req.param('obraCod')
   const leg = c.req.param('leg')
   const token = c.get('accessToken')

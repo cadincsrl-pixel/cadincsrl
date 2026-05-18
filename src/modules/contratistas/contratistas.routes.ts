@@ -36,7 +36,7 @@ contratistas.get('/:id', requirePermiso('tarja', 'lectura'), async (c) => {
 contratistas.post(
   '/',
   requirePermiso('tarja', 'creacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', CreateContratistaSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -50,7 +50,7 @@ contratistas.post(
 contratistas.patch(
   '/:id',
   requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpdateContratistaSchema),
   async (c) => {
     const id = Number(c.req.param('id'))
@@ -66,7 +66,7 @@ contratistas.patch(
 contratistas.delete(
   '/:id',
   requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   async (c) => {
     const id = Number(c.req.param('id'))
     if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
@@ -86,7 +86,7 @@ contratistas.get('/asig/:obraCod', requirePermiso('tarja', 'lectura'), async (c)
   return c.json(data)
 })
 
-contratistas.post('/asig', requirePermiso('tarja', 'actualizacion'), requireFlag('tarja', 'solo_carga_horas', false), zValidator('json', AsigContratistaSchema), async (c) => {
+contratistas.post('/asig', requirePermiso('tarja', 'actualizacion'), requireFlag('tarja', 'ver_pii', true), zValidator('json', AsigContratistaSchema), async (c) => {
   const dto = c.req.valid('json')
   const token = c.get('accessToken')
   const userId = c.get('user').id
@@ -95,7 +95,7 @@ contratistas.post('/asig', requirePermiso('tarja', 'actualizacion'), requireFlag
   return c.json(data, 201)
 })
 
-contratistas.delete('/asig/:obraCod/:contratId', requirePermiso('tarja', 'actualizacion'), requireFlag('tarja', 'solo_carga_horas', false), async (c) => {
+contratistas.delete('/asig/:obraCod/:contratId', requirePermiso('tarja', 'actualizacion'), requireFlag('tarja', 'ver_pii', true), async (c) => {
   const obraCod = c.req.param('obraCod')
   const contratId = Number(c.req.param('contratId'))
   if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
@@ -144,7 +144,7 @@ contratistas.get(
 contratistas.put(
   '/cert',
   requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', CertificacionSchema),
   async (c) => {
     const dto = c.req.valid('json')

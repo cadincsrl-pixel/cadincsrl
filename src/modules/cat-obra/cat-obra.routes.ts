@@ -69,7 +69,7 @@ const UpsertSchema = z.object({
 catObra.put(
   '/',
   requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpsertSchema),
   async (c) => {
     const dto = c.req.valid('json')
