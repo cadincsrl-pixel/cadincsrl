@@ -49,7 +49,8 @@ export function requirePermisoOr(combos: Array<{ modulo: string; accion: Accion 
  * Valida que `permisos.<modulo>.<flag>` sea exactamente igual a `expected`.
  *
  * Útil para flags booleanos extra del esquema de permisos (no son acciones
- * CRUD estándar). Ej.: `solo_carga_horas`, `ver_costos`, `forzar_despacho`.
+ * CRUD estándar). Ej.: `ver_costos`, `ver_pii`, `forzar_despacho`,
+ * `administrar_obras`, `resolver_items`.
  *
  * - Admin (`rol='admin'`) hace bypass siempre.
  * - Si el flag no está definido en el JSONB, se usa `defaultActual` como

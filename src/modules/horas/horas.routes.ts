@@ -117,7 +117,7 @@ horas.put('/lote', requirePermiso('tarja', 'actualizacion'), zValidator('json', 
 // El capataz NO debería poder borrar la semana entera (solo carga horas).
 horas.delete('/:obraCod/semana',
   requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   async (c) => {
   const obraCod = c.req.param('obraCod')
   const desde = c.req.query('desde')

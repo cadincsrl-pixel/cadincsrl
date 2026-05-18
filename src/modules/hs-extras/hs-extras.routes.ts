@@ -55,7 +55,7 @@ hsExtras.get('/:obra_cod', requirePermiso('tarja', 'lectura'), async (c) => {
 hsExtras.put(
   '/lote',
   requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpsertHsExtrasLoteSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -70,7 +70,7 @@ hsExtras.put(
 hsExtras.put(
   '/',
   requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpsertHsExtraSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -85,7 +85,7 @@ hsExtras.put(
 // DELETE /api/hs-extras/:id
 hsExtras.delete('/:id',
   requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   async (c) => {
   const idParam = c.req.param('id')
   const id = Number(idParam)

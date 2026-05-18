@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { supabase } from '../../lib/supabase.js'
 import { invalidarCacheObrasUsuario } from '../../lib/obras-usuario.js'
+import { ModuloSchema } from '../../lib/modulos.js'
 import { createClient } from '@supabase/supabase-js'
 
 const usuarios = new Hono()
@@ -68,27 +69,21 @@ usuarios.get('/modulos', async (c) => {
 // Permite tabs[] y flags conocidos por módulo. IMPORTANTE: zod hace strip
 // de claves no listadas, así que cualquier flag nuevo debe agregarse acá
 // o se perderá silenciosamente al guardar.
-// Whitelist de módulos. Tiene que coincidir con MODULOS_VALIDOS en
-// `lib/obras-usuario.ts` y con el CHECK constraint usuario_obras_modulo_chk.
-const ModuloKeySchema = z.enum([
-  'tarja', 'logistica', 'certificaciones', 'herramientas',
-  'caja', 'ropa', 'prestamos', 'admin', 'configuracion', 'flota',
-])
+// Whitelist de módulos: viene de la constante única en `lib/modulos.ts`.
+// Si agregás un módulo nuevo, edita ese archivo y su gemelo en el frontend.
+const ModuloKeySchema = ModuloSchema
 
 const ModuloPermisosSchema = z.object({
-  lectura:          z.boolean().optional(),
-  creacion:         z.boolean().optional(),
-  actualizacion:    z.boolean().optional(),
-  eliminacion:      z.boolean().optional(),
-  tabs:             z.array(z.string()).optional(),
-  ver_costos:       z.boolean().optional(),
-  ver_pii:          z.boolean().optional(),
-  vista_completa:   z.boolean().optional(),
-  solo_carga_horas: z.boolean().optional(), // legacy, en transición
-  resolver_items:   z.boolean().optional(),
-  forzar_despacho:  z.boolean().optional(),
-  // Override de scope por módulo. Si no está, se usa profiles.obras_scope.
-  obras_scope:      z.enum(['todas', 'asignadas']).optional(),
+  lectura:           z.boolean().optional(),
+  creacion:          z.boolean().optional(),
+  actualizacion:     z.boolean().optional(),
+  eliminacion:       z.boolean().optional(),
+  tabs:              z.array(z.string()).optional(),
+  ver_costos:        z.boolean().optional(),
+  ver_pii:           z.boolean().optional(),
+  resolver_items:    z.boolean().optional(),
+  forzar_despacho:   z.boolean().optional(),
+  administrar_obras: z.boolean().optional(),
 })
 
 // Validamos `permisos` como `z.record(ModuloKeySchema, ...)` PERO en zod v3

@@ -54,7 +54,7 @@ tarifas.get(
 tarifas.put(
   '/',
   requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', CreateTarifaSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -70,7 +70,7 @@ tarifas.put(
 tarifas.delete(
   '/:id',
   requirePermiso('tarja', 'eliminacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   async (c) => {
     const id = Number(c.req.param('id'))
     if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)

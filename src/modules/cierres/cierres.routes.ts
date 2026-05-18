@@ -49,7 +49,7 @@ cierres.get('/:obraCod/:semKey', requirePermiso('tarja', 'lectura'), async (c) =
 cierres.post(
   '/',
   requirePermiso('tarja', 'creacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', CreateCierreSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -65,7 +65,7 @@ cierres.post(
 cierres.patch(
   '/:obraCod/:semKey',
   requirePermiso('tarja', 'actualizacion'),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpdateCierreSchema),
   async (c) => {
     const obraCod = c.req.param('obraCod')

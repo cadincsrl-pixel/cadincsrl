@@ -54,7 +54,7 @@ docs.get(
 docs.post(
   '/:leg/documentos/upload-url',
   requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UploadUrlSchema),
   handle(c => documentosService.generarUploadUrl(c.req.param('leg'), c.req.valid('json'))),
 )
@@ -63,7 +63,7 @@ docs.post(
 docs.post(
   '/:leg/documentos',
   requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   zValidator('json', RegistrarSchema),
   handle(c => documentosService.registrar(
     c.req.param('leg'),
@@ -88,7 +88,7 @@ docs.get(
 docs.delete(
   '/:leg/documentos/:id',
   requirePermisoOr([{ modulo: 'personal', accion: 'eliminacion' }, { modulo: 'tarja', accion: 'eliminacion' }]),
-  requireFlag('tarja', 'solo_carga_horas', false),
+  requireFlag('tarja', 'ver_pii', true),
   handle(c => documentosService.softDelete(
     c.req.param('leg'),
     Number(c.req.param('id')),
