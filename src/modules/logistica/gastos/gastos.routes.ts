@@ -130,8 +130,8 @@ gastos.get('/combustible',
 // IMPORTANTE: esta ruta debe ir ANTES de /:id para evitar que el
 // segmento "reintegros-pendientes" sea capturado como parámetro id.
 gastos.get('/reintegros-pendientes', handler(async (c) => {
-  const chofer_id = Number(c.req.query('chofer_id'))
-  if (!chofer_id) throw new HttpError(400, 'CHOFER_ID_REQUERIDO')
+  const raw = c.req.query('chofer_id')
+  const chofer_id = raw ? Number(raw) : null
   const hasta = c.req.query('hasta') || undefined
   return gastosService.getReintegrosPendientes(chofer_id, hasta, c.get('accessToken'))
 }))

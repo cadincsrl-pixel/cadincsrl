@@ -796,17 +796,17 @@ export const gastosService = {
   },
 
   // ── Reintegros pendientes (usado por el cierre de liquidación) ──
-  async getReintegrosPendientes(choferId: number, hasta: string | undefined, token: string) {
+  async getReintegrosPendientes(choferId: number | null, hasta: string | undefined, token: string) {
     const sb = createSupabaseClient(token)
     let q = sb
       .from('gastos_logistica')
-      .select('id, fecha, categoria_id, monto, descripcion, proveedor, comprobante_url, comprobante_nro, categoria:gastos_categorias(codigo,nombre)')
-      .eq('chofer_id', choferId)
+      .select('id, chofer_id, fecha, categoria_id, monto, descripcion, proveedor, comprobante_url, comprobante_nro, categoria:gastos_categorias(codigo,nombre)')
       .eq('pagado_por', 'chofer')
       .eq('estado', 'aprobado')
       .is('liquidacion_id', null)
       .is('deleted_at', null)
       .order('fecha', { ascending: true })
+    if (choferId) q = q.eq('chofer_id', choferId)
     if (hasta) q = q.lte('fecha', hasta)
     const { data, error } = await q
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
