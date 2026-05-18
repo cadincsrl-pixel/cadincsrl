@@ -27,8 +27,10 @@ async function validarResponsableObra(
 // Sincroniza usuario_obras cuando cambia el responsable de una obra.
 // Inserta una row para el nuevo user (modulo=NULL → aplica a todos los
 // módulos donde tenga scope='asignadas') y borra la del viejo si cambió.
-// Idempotente: si el user ya tiene la obra asignada (manualmente o de
-// otro rol), no duplica.
+// Idempotente: si el user ya tiene la obra asignada, no duplica.
+//
+// Permisos v3 (2026-05-18) eliminó la columna usuario_obras.modulo —
+// las asignaciones son globales del par (user_id, obra_cod).
 async function syncUsuarioObrasResponsable(
   obraCod: string,
   userIdAnterior: string | null | undefined,
@@ -37,28 +39,24 @@ async function syncUsuarioObrasResponsable(
 ): Promise<void> {
   if (userIdAnterior === userIdNuevo) return
 
-  // 1) Si había uno anterior y cambió/se quitó, borrar SU row "global"
-  //    (modulo=NULL). NO tocamos rows con modulo específico — esas son
-  //    asignaciones manuales que el admin pudo haber hecho aparte.
+  // 1) Si había uno anterior y cambió/se quitó, borrar su asignación.
   if (userIdAnterior) {
     const { error: errDel } = await supabaseAdmin
       .from('usuario_obras')
       .delete()
       .eq('user_id', userIdAnterior)
       .eq('obra_cod', obraCod)
-      .is('modulo', null)
     if (errDel) throw new Error(errDel.message)
     invalidarCacheObrasUsuario(userIdAnterior)
   }
 
-  // 2) Si hay uno nuevo, upsert (idempotente vs constraint
-  //    user_id+obra_cod+modulo único con NULLS NOT DISTINCT).
+  // 2) Si hay uno nuevo, upsert (idempotente vs constraint user_id+obra_cod).
   if (userIdNuevo) {
     const { error: errIns } = await supabaseAdmin
       .from('usuario_obras')
       .upsert(
-        { user_id: userIdNuevo, obra_cod: obraCod, modulo: null, created_by: callerId },
-        { onConflict: 'user_id,obra_cod,modulo' },
+        { user_id: userIdNuevo, obra_cod: obraCod, created_by: callerId },
+        { onConflict: 'user_id,obra_cod' },
       )
     if (errIns) throw new Error(errIns.message)
     invalidarCacheObrasUsuario(userIdNuevo)
