@@ -7,6 +7,7 @@ import { CreateVehiculoSchema, UpdateVehiculoSchema } from './flota.schema.js'
 import flotaDocs from './flota-docs.routes.js'
 import flotaTipos from './flota-tipos-servicio.routes.js'
 import flotaServicios from './flota-servicios.routes.js'
+import flotaGastos, { flotaGastosCategorias } from './flota-gastos.routes.js'
 import flotaGpsSync from './gps-sync/flota-gps-sync.routes.js'
 
 const flota = new Hono()
@@ -18,6 +19,10 @@ flota.route('/vehiculos', flotaDocs)
 flota.route('/tipos-servicio', flotaTipos)
 // Servicios de mantenimiento: /api/flota/servicios
 flota.route('/servicios', flotaServicios)
+// Gastos genéricos del vehículo: /api/flota/gastos
+flota.route('/gastos', flotaGastos)
+// Catálogo de categorías de gasto: /api/flota/gastos-categorias
+flota.route('/gastos-categorias', flotaGastosCategorias)
 // Sync de GPS MobilQuest: /api/flota/gps/...
 flota.route('/gps', flotaGpsSync)
 
