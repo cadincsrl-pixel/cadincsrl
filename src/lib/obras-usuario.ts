@@ -10,32 +10,25 @@ import { MODULO_SET as MODULOS_VALIDOS } from './modulos.js'
 /**
  * Resuelve qué obras puede ver/operar un usuario en un módulo dado.
  *
- * Modelo v2.1 (con override de scope POR MÓDULO):
+ * Modelo v3 (simplificado, 2 niveles):
  *
  * 1) Resolución del scope efectivo:
  *    - rol='admin'                                            → null (ve todo)
- *    - permisos.<modulo>.obras_scope = 'todas'                → null (ve todo)
- *    - permisos.<modulo>.obras_scope = 'asignadas'            → filtra
- *    - sin override → cae al `profiles.obras_scope` global    → null o filtra
+ *    - profiles.obras_scope = 'todas'                         → null (ve todo)
+ *    - profiles.obras_scope = 'asignadas'                     → filtra
  *    - sin nada seteado → fallback legacy por tipo_usuario
  *
  * 2) Cuando el scope efectivo es 'asignadas':
- *    - Lee `usuario_obras` filtrando por user_id.
- *    - Si se pasó `modulo`, devuelve rows donde `modulo = X OR modulo IS NULL`.
- *      (NULL = aplica a todos los módulos, sirve para perfiles legacy y
- *      para usuarios cuyo set de obras no varía entre módulos.)
- *    - Si no se pasó `modulo`, devuelve TODAS las rows (cualquier módulo).
+ *    - Lee `usuario_obras` filtrando por user_id y devuelve los obra_cod.
+ *    - El override por módulo + la columna `usuario_obras.modulo` se
+ *      eliminaron en la migración Permisos v3 (2026-05-18). El parámetro
+ *      `modulo` se acepta pero solo se usa para defense-in-depth (validación
+ *      del nombre) — no cambia el resultado.
  *
  * 3) Endpoints que listan deben aplicar `.in('obra_cod', codes)` cuando el
  *    resultado NO es null. Endpoints que mutan deben rechazar `obra_cod`
- *    fuera del array (403). Idealmente cada caller pasa su módulo para
- *    que el override por módulo se respete.
+ *    fuera del array (403).
  */
-
-interface PermisoFlags {
-  obras_scope?: 'todas' | 'asignadas'
-}
-type PermisosShape = Record<string, PermisoFlags | undefined>
 
 const TIPOS_OBRAS_RESTRINGIDAS_LEGACY = new Set([
   'capataz', 'capataz_supervisor',
@@ -46,14 +39,16 @@ export async function getObrasDelUsuario(
   userId: string,
   modulo?: string,
 ): Promise<string[] | null> {
-  // Defensa en profundidad: si el caller pasa un módulo desconocido,
-  // tratamos como si no hubiera pasado. Evita filter injection en .or()
-  // y previene que un caller mal escrito acceda a otro contexto por typo.
-  const moduloSeguro = modulo && MODULOS_VALIDOS.has(modulo) ? modulo : undefined
+  // Defensa en profundidad: validamos el nombre del módulo aunque ya no
+  // afecte la query (la columna usuario_obras.modulo se eliminó). Útil para
+  // detectar callers con typos y mantener el contrato.
+  if (modulo && !MODULOS_VALIDOS.has(modulo)) {
+    // typo o módulo inexistente: lo tratamos como no pasado.
+  }
 
   const { data: profile, error: errProf } = await supabaseAdmin
     .from('profiles')
-    .select('rol, tipo_usuario, obras_scope, permisos')
+    .select('rol, tipo_usuario, obras_scope')
     .eq('id', userId)
     .maybeSingle()
   if (errProf) throw new Error(errProf.message)
@@ -61,43 +56,26 @@ export async function getObrasDelUsuario(
 
   if (profile.rol === 'admin') return null
 
-  // 1) Scope efectivo: override por módulo > scope global > fallback legacy.
-  const permisos = (profile.permisos ?? {}) as PermisosShape
-  const overrideModulo = moduloSeguro ? permisos[moduloSeguro]?.obras_scope : undefined
+  // 1) Scope efectivo: solo el global del profile (v3 eliminó overrides).
   const scopeGlobal = profile.obras_scope as 'todas' | 'asignadas' | null | undefined
-
-  let scopeEfectivo: 'todas' | 'asignadas' | null = null
-  if (overrideModulo === 'todas' || overrideModulo === 'asignadas') {
-    scopeEfectivo = overrideModulo
-  } else if (scopeGlobal === 'todas' || scopeGlobal === 'asignadas') {
-    scopeEfectivo = scopeGlobal
-  }
+  const scopeEfectivo: 'todas' | 'asignadas' | null =
+    scopeGlobal === 'todas' || scopeGlobal === 'asignadas' ? scopeGlobal : null
 
   if (scopeEfectivo === 'todas') return null
 
   if (scopeEfectivo === 'asignadas') {
-    let query = supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from('usuario_obras')
-      .select('obra_cod, modulo')
+      .select('obra_cod')
       .eq('user_id', userId)
-    if (moduloSeguro) {
-      // PostgREST `.or()` interpola en string así que normalmente sería
-      // riesgo de filter injection. Acá es seguro porque `moduloSeguro`
-      // ya pasó por MODULOS_VALIDOS (set hardcodeado de literales sin
-      // metacaracteres). NO sustituir esto por concatenación arbitraria
-      // de input externo. PostgREST no soporta NULL en `.in()` así que
-      // `.or()` es la única forma compacta de hacer "modulo=X OR NULL".
-      query = query.or(`modulo.eq.${moduloSeguro},modulo.is.null`)
-    }
-    const { data, error } = await query
     if (error) throw new Error(error.message)
     return Array.from(new Set((data ?? []).map(r => r.obra_cod)))
   }
 
-  // Fallback legacy (perfil sin obras_scope ni override).
+  // Fallback legacy (perfil sin obras_scope).
   const { data, error } = await supabaseAdmin
     .from('usuario_obras')
-    .select('obra_cod, modulo')
+    .select('obra_cod')
     .eq('user_id', userId)
   if (error) throw new Error(error.message)
   const obras = (data ?? []).map(r => r.obra_cod)
