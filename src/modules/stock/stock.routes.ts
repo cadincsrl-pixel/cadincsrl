@@ -8,7 +8,11 @@ import {
   CreateRubroSchema, UpdateRubroSchema,
   CreateMaterialSchema, UpdateMaterialSchema,
   CreateMovimientoSchema,
+  RechazarAjusteSchema,
+  ComprobanteUploadUrlSchema,
 } from './stock.schema.js'
+import { randomUUID } from 'crypto'
+import { supabase as supabaseAdmin } from '../../lib/supabase.js'
 
 const stock = new Hono()
 stock.use('*', authMiddleware)
@@ -56,24 +60,98 @@ stock.get('/movimientos', async (c) => {
 
 stock.post('/movimientos', zValidator('json', CreateMovimientoSchema), async (c) => {
   const dto = c.req.valid('json')
-
-  // Ajustes requieren permiso de eliminación (más restrictivo)
-  if (dto.tipo === 'ajuste') {
-    const supabase = createSupabaseClient(c.get('accessToken'))
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('rol, permisos')
-      .eq('id', c.get('user').id)
-      .single()
-    if (profile?.rol !== 'admin') {
-      const permisos = (profile?.permisos as any)?.certificaciones
-      if (!permisos?.eliminacion) {
-        return c.json({ error: 'No tenés permisos para hacer ajustes de stock' }, 403)
-      }
-    }
-  }
-
+  // Cualquier usuario con `actualizacion` en certificaciones puede DECLARAR
+  // un ajuste — el control real está en la aprobación posterior. Esto
+  // permite al encargado del depósito (sin permiso de aprobar) declarar
+  // diferencias sin pedir permiso a un admin.
   return c.json(await stockService.createMovimiento(dto, c.get('accessToken'), c.get('user').id), 201)
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Ajustes con doble aprobación
+// ─────────────────────────────────────────────────────────────────────────
+
+// Guard: requiere capacidad `aprobar_ajustes_stock` o ser admin.
+async function requireAprobador(c: any): Promise<true | Response> {
+  const supabase = createSupabaseClient(c.get('accessToken'))
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('rol, permisos')
+    .eq('id', c.get('user').id)
+    .single()
+  if (profile?.rol === 'admin') return true
+  const perm = (profile?.permisos as any)?.certificaciones
+  if (perm?.aprobar_ajustes_stock === true) return true
+  return c.json({ error: 'No tenés permiso para aprobar ajustes de stock' }, 403)
+}
+
+// GET /api/stock/ajustes-pendientes — solo aprobadores ven la lista.
+stock.get('/ajustes-pendientes', async (c) => {
+  const guard = await requireAprobador(c)
+  if (guard !== true) return guard
+  return c.json(await stockService.listAjustesPendientes(c.get('accessToken')))
+})
+
+// POST /api/stock/movimientos/:id/aprobar
+stock.post('/movimientos/:id/aprobar', async (c) => {
+  const guard = await requireAprobador(c)
+  if (guard !== true) return guard
+  const id = Number(c.req.param('id'))
+  if (!Number.isFinite(id)) return c.json({ error: 'id inválido' }, 400)
+  try {
+    const data = await stockService.aprobarAjuste(id, c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  } catch (e: any) {
+    return c.json({ error: e.message ?? 'Error al aprobar' }, 400)
+  }
+})
+
+// POST /api/stock/movimientos/:id/rechazar
+stock.post('/movimientos/:id/rechazar', zValidator('json', RechazarAjusteSchema), async (c) => {
+  const guard = await requireAprobador(c)
+  if (guard !== true) return guard
+  const id = Number(c.req.param('id'))
+  if (!Number.isFinite(id)) return c.json({ error: 'id inválido' }, 400)
+  const dto = c.req.valid('json')
+  try {
+    const data = await stockService.rechazarAjuste(id, dto.rechazo_motivo, c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  } catch (e: any) {
+    return c.json({ error: e.message ?? 'Error al rechazar' }, 400)
+  }
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Comprobantes de ajustes (bucket stock-ajustes-docs, privado)
+// ─────────────────────────────────────────────────────────────────────────
+
+const BUCKET_AJUSTES = 'stock-ajustes-docs'
+
+// POST /api/stock/comprobante-upload-url — devuelve signed URL para subir foto/PDF.
+stock.post('/comprobante-upload-url', zValidator('json', ComprobanteUploadUrlSchema), async (c) => {
+  const dto    = c.req.valid('json')
+  const userId = c.get('user').id
+
+  // Validar mime y size acá también (el bucket ya lo valida pero damos mensaje claro).
+  const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'])
+  if (!ALLOWED.has(dto.mime_type))                  return c.json({ error: 'MIME_NO_PERMITIDO' }, 400)
+  if (dto.size_bytes > 5 * 1024 * 1024)              return c.json({ error: 'TAMAÑO_INVALIDO'  }, 400)
+
+  const ext  = dto.mime_type === 'application/pdf' ? 'pdf' : dto.mime_type.split('/')[1]
+  const path = `ajuste/${userId}/${randomUUID()}.${ext}`
+
+  const { data, error } = await supabaseAdmin.storage.from(BUCKET_AJUSTES).createSignedUploadUrl(path)
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ storage_path: path, token: data.token, signed_url: data.signedUrl })
+})
+
+// GET /api/stock/comprobante-url?path=... — signed URL de lectura (15 min).
+stock.get('/comprobante-url', async (c) => {
+  const path = c.req.query('path')
+  if (!path) return c.json({ error: 'path requerido' }, 400)
+  const { data, error } = await supabaseAdmin.storage.from(BUCKET_AJUSTES).createSignedUrl(path, 900)
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ url: data.signedUrl })
 })
 
 export default stock
