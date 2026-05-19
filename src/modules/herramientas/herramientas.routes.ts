@@ -89,14 +89,20 @@ herramientas.get('/movimientos/all', requirePermiso('herramientas', 'lectura'), 
 })
 
 // POST /api/herramientas/movimientos
+//
+// `tipo_key` debe ser uno de los 7 valores del flujo de inventario.
+// El handler usa `estadoMap[tipo_key]` para derivar el nuevo estado de la
+// herramienta — si llegaba un string libre, quedaba con estado undefined
+// y se generaba data inconsistente. Acotamos al enum.
+const TIPOS_MOV = ['alta','asignacion','traslado','devolucion','reparacion','retorno_rep','baja'] as const
 const MovSchema = z.object({
   herramienta_id:   z.number(),
-  tipo_key:         z.string(),
+  tipo_key:         z.enum(TIPOS_MOV),
   obra_origen_cod:  z.string().nullable().optional(),
   obra_destino_cod: z.string().nullable().optional(),
   responsable:      z.string().optional(),
   obs:              z.string().optional(),
-  fecha:            z.string().optional(),
+  fecha:            z.string().datetime().optional(),
 })
 
 herramientas.post('/movimientos', requirePermiso('herramientas', 'actualizacion'), zValidator('json', MovSchema), async (c) => {
