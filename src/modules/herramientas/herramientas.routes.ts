@@ -5,16 +5,19 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { fotosPorHerramienta, fotosPorId } from './herramienta-fotos.routes.js'
+import remitosRoutes from './remitos.routes.js'
 
 const herramientas = new Hono()
 herramientas.use('*', authMiddleware)
 
-// Sub-routers de fotos. Montados ANTES de las rutas dinámicas /:id para
-// dejar bien clara la prioridad:
+// Sub-routers. Montados ANTES de las rutas dinámicas /:id para que las URLs
+// estáticas tengan prioridad:
 //   - /api/herramientas/:id/fotos/...    (galería de una herramienta)
 //   - /api/herramientas/fotos/:fotoId... (operaciones por foto)
+//   - /api/herramientas/remitos/...      (remitos de movimiento)
 herramientas.route('/', fotosPorHerramienta)
 herramientas.route('/fotos', fotosPorId)
+herramientas.route('/remitos', remitosRoutes)
 
 
 // GET /api/herramientas/config
