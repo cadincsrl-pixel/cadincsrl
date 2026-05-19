@@ -98,14 +98,19 @@ herramientas.get('/movimientos/all', requirePermiso('herramientas', 'lectura'), 
 // herramienta — si llegaba un string libre, quedaba con estado undefined
 // y se generaba data inconsistente. Acotamos al enum.
 const TIPOS_MOV = ['alta','asignacion','traslado','devolucion','reparacion','retorno_rep','baja'] as const
+// `responsable_user_id` y `responsable_leg` son FK opcionales — el frontend
+// puede pasar cualquiera (o ninguno, para data legacy). Si vienen, el
+// backend resuelve el nombre y lo guarda en `responsable` como snapshot.
 const MovSchema = z.object({
-  herramienta_id:   z.number(),
-  tipo_key:         z.enum(TIPOS_MOV),
-  obra_origen_cod:  z.string().nullable().optional(),
-  obra_destino_cod: z.string().nullable().optional(),
-  responsable:      z.string().optional(),
-  obs:              z.string().optional(),
-  fecha:            z.string().datetime().optional(),
+  herramienta_id:       z.number(),
+  tipo_key:             z.enum(TIPOS_MOV),
+  obra_origen_cod:      z.string().nullable().optional(),
+  obra_destino_cod:     z.string().nullable().optional(),
+  responsable:          z.string().optional(),
+  responsable_user_id:  z.string().uuid().nullable().optional(),
+  responsable_leg:      z.string().nullable().optional(),
+  obs:                  z.string().optional(),
+  fecha:                z.string().datetime().optional(),
 })
 
 herramientas.post('/movimientos', requirePermiso('herramientas', 'actualizacion'), zValidator('json', MovSchema), async (c) => {
@@ -131,18 +136,40 @@ herramientas.post('/movimientos', requirePermiso('herramientas', 'actualizacion'
     ? dto.obra_destino_cod
     : undefined
 
+  // Resolver snapshot del nombre desde la FK si vino una. La columna
+  // `responsable` text queda como display cache; lookups por FK siguen
+  // andando contra profiles/personal cuando se necesite detalle.
+  let responsableSnapshot = dto.responsable ?? ''
+  if (dto.responsable_user_id) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('nombre')
+      .eq('id', dto.responsable_user_id)
+      .maybeSingle()
+    if (data?.nombre) responsableSnapshot = data.nombre
+  } else if (dto.responsable_leg) {
+    const { data } = await supabase
+      .from('personal')
+      .select('nom')
+      .eq('leg', dto.responsable_leg)
+      .maybeSingle()
+    if (data?.nom) responsableSnapshot = data.nom
+  }
+
   const { data: mov, error: movErr } = await supabase
     .from('herr_movimientos')
     .insert({
-      herramienta_id:   dto.herramienta_id,
-      tipo_key:         dto.tipo_key,
-      obra_origen_cod:  dto.obra_origen_cod  ?? null,
-      obra_destino_cod: dto.obra_destino_cod ?? null,
-      responsable:      dto.responsable ?? '',
-      obs:              dto.obs         ?? '',
-      fecha:            dto.fecha ?? new Date().toISOString(),
-      created_by:       userId,
-      updated_by:       userId,
+      herramienta_id:      dto.herramienta_id,
+      tipo_key:            dto.tipo_key,
+      obra_origen_cod:     dto.obra_origen_cod  ?? null,
+      obra_destino_cod:    dto.obra_destino_cod ?? null,
+      responsable:         responsableSnapshot,
+      responsable_user_id: dto.responsable_user_id ?? null,
+      responsable_leg:     dto.responsable_leg     ?? null,
+      obs:                 dto.obs ?? '',
+      fecha:               dto.fecha ?? new Date().toISOString(),
+      created_by:          userId,
+      updated_by:          userId,
     })
     .select()
     .single()
@@ -151,9 +178,9 @@ herramientas.post('/movimientos', requirePermiso('herramientas', 'actualizacion'
 
   // Actualizar herramienta
   const updatePayload: Record<string, any> = { updated_by: userId }
-  if (nuevoEstado)            updatePayload.estado_key = nuevoEstado
-  if (nuevaObra !== undefined) updatePayload.obra_cod  = nuevaObra
-  if (dto.responsable)        updatePayload.responsable = dto.responsable
+  if (nuevoEstado)             updatePayload.estado_key  = nuevoEstado
+  if (nuevaObra !== undefined) updatePayload.obra_cod    = nuevaObra
+  if (responsableSnapshot)     updatePayload.responsable = responsableSnapshot
 
   await supabase.from('herramientas').update(updatePayload).eq('id', dto.herramienta_id)
 
