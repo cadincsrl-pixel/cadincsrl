@@ -192,12 +192,13 @@ herramientas.post('/movimientos', requirePermiso('herramientas', 'actualizacion'
 })
 
 // POST /api/herramientas/config/tipos
+// La tabla `herr_tipos` no tiene columnas de auditoría (created_by /
+// updated_by) — antes el insert las incluía y rechazaba con 400.
 herramientas.post('/config/tipos', requirePermiso('herramientas', 'creacion'), async (c) => {
   const body = await c.req.json()
-  const userId = c.get('user').id
   const { data, error } = await supabase
     .from('herr_tipos')
-    .insert({ nom: body.nom, icono: body.icono ?? null, orden: body.orden ?? 99, created_by: userId, updated_by: userId })
+    .insert({ nom: body.nom, icono: body.icono ?? null, orden: body.orden ?? 99 })
     .select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data, 201)
@@ -207,10 +208,9 @@ herramientas.post('/config/tipos', requirePermiso('herramientas', 'creacion'), a
 herramientas.patch('/config/tipos/:id', requirePermiso('herramientas', 'actualizacion'), async (c) => {
   const id   = Number(c.req.param('id'))
   const body = await c.req.json()
-  const userId = c.get('user').id
   const { data, error } = await supabase
     .from('herr_tipos')
-    .update({ nom: body.nom, icono: body.icono ?? null, updated_by: userId })
+    .update({ nom: body.nom, icono: body.icono ?? null })
     .eq('id', id).select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
@@ -225,13 +225,13 @@ herramientas.delete('/config/tipos/:id', requirePermiso('herramientas', 'elimina
 })
 
 // PATCH /api/herramientas/config/mov-tipos/:key
+// `herr_mov_tipos` tampoco tiene columnas de auditoría.
 herramientas.patch('/config/mov-tipos/:key', requirePermiso('herramientas', 'actualizacion'), async (c) => {
   const key  = c.req.param('key')
   const body = await c.req.json()
-  const userId = c.get('user').id
   const { data, error } = await supabase
     .from('herr_mov_tipos')
-    .update({ nom: body.nom, icono: body.icono ?? null, descripcion: body.descripcion ?? null, updated_by: userId })
+    .update({ nom: body.nom, icono: body.icono ?? null, descripcion: body.descripcion ?? null })
     .eq('key', key).select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
