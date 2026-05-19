@@ -6,18 +6,22 @@ import { requirePermiso } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { fotosPorHerramienta, fotosPorId } from './herramienta-fotos.routes.js'
 import remitosRoutes from './remitos.routes.js'
+import marcasRoutes  from './marcas.routes.js'
 
 const herramientas = new Hono()
 herramientas.use('*', authMiddleware)
 
 // Sub-routers. Montados ANTES de las rutas dinámicas /:id para que las URLs
 // estáticas tengan prioridad:
-//   - /api/herramientas/:id/fotos/...    (galería de una herramienta)
-//   - /api/herramientas/fotos/:fotoId... (operaciones por foto)
-//   - /api/herramientas/remitos/...      (remitos de movimiento)
+//   - /api/herramientas/:id/fotos/...     (galería de una herramienta)
+//   - /api/herramientas/fotos/:fotoId...  (operaciones por foto)
+//   - /api/herramientas/remitos/...       (remitos de movimiento)
+//   - /api/herramientas/marcas/...        (catálogo marcas)
+//   - /api/herramientas/modelos/...       (catálogo modelos)
 herramientas.route('/', fotosPorHerramienta)
 herramientas.route('/fotos', fotosPorId)
 herramientas.route('/remitos', remitosRoutes)
+herramientas.route('/', marcasRoutes)
 
 
 // GET /api/herramientas/config
@@ -245,7 +249,9 @@ herramientas.get('/', requirePermiso('herramientas', 'lectura'), async (c) => {
       *,
       tipo:herr_tipos(id, nom, icono),
       estado:herr_estados(key, nom, color, icono),
-      obra:obras(cod, nom)
+      obra:obras(cod, nom),
+      marca_ref:herr_marcas(id, nom),
+      modelo_ref:herr_modelos(id, nom)
     `)
     .eq('activo', true)
     .order('codigo')
@@ -255,24 +261,52 @@ herramientas.get('/', requirePermiso('herramientas', 'lectura'), async (c) => {
 })
 
 // POST /api/herramientas
+// `marca_id` / `modelo_id` opcionales — el backend resuelve el snapshot
+// del nombre y lo guarda en marca/modelo (text) para listados sin join.
+// Si se pasan marca/modelo como string libre (compat legacy), se respeta.
 const CreateSchema = z.object({
   codigo:        z.string().min(1),
   nom:           z.string().min(1),
   tipo_id:       z.number().optional(),
   marca:         z.string().optional(),
+  marca_id:      z.number().nullable().optional(),
   modelo:        z.string().optional(),
+  modelo_id:     z.number().nullable().optional(),
   serie:         z.string().optional(),
   fecha_ingreso: z.string().optional(),
   obs:           z.string().optional(),
 })
 
+async function resolverMarcaModelo(input: { marca?: string; marca_id?: number | null; modelo?: string; modelo_id?: number | null }) {
+  let marcaSnap  = input.marca  ?? null
+  let modeloSnap = input.modelo ?? null
+  if (input.marca_id) {
+    const { data } = await supabase.from('herr_marcas').select('nom').eq('id', input.marca_id).maybeSingle()
+    if (data?.nom) marcaSnap = data.nom
+  }
+  if (input.modelo_id) {
+    const { data } = await supabase.from('herr_modelos').select('nom').eq('id', input.modelo_id).maybeSingle()
+    if (data?.nom) modeloSnap = data.nom
+  }
+  return { marcaSnap, modeloSnap }
+}
+
 herramientas.post('/', requirePermiso('herramientas', 'creacion'), zValidator('json', CreateSchema), async (c) => {
   const dto = c.req.valid('json')
   const userId = c.get('user').id
 
+  const { marcaSnap, modeloSnap } = await resolverMarcaModelo(dto)
+
   const { data: herr, error: herrErr } = await supabase
     .from('herramientas')
-    .insert({ ...dto, estado_key: 'disponible', created_by: userId, updated_by: userId })
+    .insert({
+      ...dto,
+      marca:      marcaSnap,
+      modelo:     modeloSnap,
+      estado_key: 'disponible',
+      created_by: userId,
+      updated_by: userId,
+    })
     .select()
     .single()
 
@@ -319,7 +353,9 @@ herramientas.get('/:id', requirePermiso('herramientas', 'lectura'), async (c) =>
       *,
       tipo:herr_tipos(id, nom, icono),
       estado:herr_estados(key, nom, color, icono),
-      obra:obras(cod, nom)
+      obra:obras(cod, nom),
+      marca_ref:herr_marcas(id, nom),
+      modelo_ref:herr_modelos(id, nom)
     `)
     .eq('id', id)
     .single()
@@ -333,7 +369,9 @@ const UpdateSchema = z.object({
   nom:           z.string().min(1).optional(),
   tipo_id:       z.number().optional(),
   marca:         z.string().optional(),
+  marca_id:      z.number().nullable().optional(),
   modelo:        z.string().optional(),
+  modelo_id:     z.number().nullable().optional(),
   serie:         z.string().optional(),
   fecha_ingreso: z.string().optional(),
   obs:           z.string().optional(),
@@ -344,9 +382,18 @@ herramientas.patch('/:id', requirePermiso('herramientas', 'actualizacion'), zVal
   const dto = c.req.valid('json')
   const userId = c.get('user').id
 
+  // Si vinieron marca_id / modelo_id (incluso null para desasignar),
+  // resolvemos el snapshot del nombre. Si solo vino la text, la respetamos.
+  const payload: Record<string, any> = { ...dto, updated_by: userId }
+  if ('marca_id' in dto || 'modelo_id' in dto) {
+    const { marcaSnap, modeloSnap } = await resolverMarcaModelo(dto)
+    if ('marca_id'  in dto) payload.marca  = marcaSnap
+    if ('modelo_id' in dto) payload.modelo = modeloSnap
+  }
+
   const { data, error } = await supabase
     .from('herramientas')
-    .update({ ...dto, updated_by: userId })
+    .update(payload)
     .eq('id', id)
     .select()
     .single()
