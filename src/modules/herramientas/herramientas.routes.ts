@@ -191,6 +191,58 @@ herramientas.post('/movimientos', requirePermiso('herramientas', 'actualizacion'
   return c.json(mov, 201)
 })
 
+// POST /api/herramientas/movimientos/lote
+// Mueve N herramientas a una obra (o las marca en reparación/baja) en una
+// sola transacción atómica vía RPC. Si alguna falla la validación de
+// transición de estado, ninguna se aplica.
+const MovLoteSchema = z.object({
+  herramienta_ids:      z.array(z.number()).min(1).max(100),
+  tipo_key:             z.enum(TIPOS_MOV),
+  obra_destino_cod:     z.string().nullable().optional(),
+  responsable:          z.string().optional(),
+  responsable_user_id:  z.string().uuid().nullable().optional(),
+  responsable_leg:      z.string().nullable().optional(),
+  obs:                  z.string().optional(),
+  fecha:                z.string().datetime().optional(),
+})
+
+herramientas.post('/movimientos/lote', requirePermiso('herramientas', 'actualizacion'), zValidator('json', MovLoteSchema), async (c) => {
+  const dto    = c.req.valid('json')
+  const userId = c.get('user').id
+
+  // Resolver snapshot del nombre del responsable igual que en el singular.
+  let responsableSnapshot = dto.responsable ?? null
+  if (dto.responsable_user_id) {
+    const { data } = await supabase.from('profiles').select('nombre').eq('id', dto.responsable_user_id).maybeSingle()
+    if (data?.nombre) responsableSnapshot = data.nombre
+  } else if (dto.responsable_leg) {
+    const { data } = await supabase.from('personal').select('nom').eq('leg', dto.responsable_leg).maybeSingle()
+    if (data?.nom) responsableSnapshot = data.nom
+  }
+
+  const { data, error } = await supabase.rpc('registrar_movimientos_lote', {
+    p_herramienta_ids:     dto.herramienta_ids,
+    p_tipo_key:            dto.tipo_key,
+    p_obra_destino_cod:    dto.obra_destino_cod ?? null,
+    p_responsable:         responsableSnapshot,
+    p_responsable_user_id: dto.responsable_user_id ?? null,
+    p_responsable_leg:     dto.responsable_leg ?? null,
+    p_obs:                 dto.obs ?? null,
+    p_fecha:               dto.fecha ?? null,
+    p_user_id:             userId,
+  })
+
+  if (error) {
+    const msg = error.message ?? ''
+    if (msg.includes('tipo_incompatible'))   return c.json({ error: 'TIPO_INCOMPATIBLE',   detail: msg }, 409)
+    if (msg.includes('herramienta_no_existe')) return c.json({ error: 'HERRAMIENTA_NO_EXISTE', detail: msg }, 404)
+    if (msg.includes('sin_herramientas'))    return c.json({ error: 'SIN_HERRAMIENTAS' }, 400)
+    return c.json({ error: msg }, 500)
+  }
+
+  return c.json(data, 201)
+})
+
 // POST /api/herramientas/config/tipos
 // La tabla `herr_tipos` no tiene columnas de auditoría (created_by /
 // updated_by) — antes el insert las incluía y rechazaba con 400.
