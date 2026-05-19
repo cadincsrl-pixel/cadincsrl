@@ -249,7 +249,7 @@ herramientas.get('/', requirePermiso('herramientas', 'lectura'), async (c) => {
       *,
       tipo:herr_tipos(id, nom, icono),
       estado:herr_estados(key, nom, color, icono),
-      obra:obras(cod, nom),
+      obra:obras(cod, nom, es_deposito),
       marca_ref:herr_marcas(id, nom),
       modelo_ref:herr_modelos(id, nom)
     `)
@@ -297,6 +297,17 @@ herramientas.post('/', requirePermiso('herramientas', 'creacion'), zValidator('j
 
   const { marcaSnap, modeloSnap } = await resolverMarcaModelo(dto)
 
+  // Toda herramienta nueva nace EN la obra depósito (es_deposito=true). Antes
+  // se creaba con obra_cod=NULL, lo que generaba un segundo "lugar" para el
+  // mismo concepto de depósito. Si no hay obra marcada como depósito en la
+  // DB, queda null y la UI muestra el caso legacy.
+  const { data: obraDepo } = await supabase
+    .from('obras')
+    .select('cod')
+    .eq('es_deposito', true)
+    .limit(1)
+    .maybeSingle()
+
   const { data: herr, error: herrErr } = await supabase
     .from('herramientas')
     .insert({
@@ -304,6 +315,7 @@ herramientas.post('/', requirePermiso('herramientas', 'creacion'), zValidator('j
       marca:      marcaSnap,
       modelo:     modeloSnap,
       estado_key: 'disponible',
+      obra_cod:   obraDepo?.cod ?? null,
       created_by: userId,
       updated_by: userId,
     })
@@ -313,11 +325,12 @@ herramientas.post('/', requirePermiso('herramientas', 'creacion'), zValidator('j
   if (herrErr) return c.json({ error: herrErr.message }, 500)
 
   await supabase.from('herr_movimientos').insert({
-    herramienta_id: herr.id,
-    tipo_key:       'alta',
-    responsable:    'Sistema',
-    obs:            'Alta inicial en sistema',
-    created_by:     userId,
+    herramienta_id:   herr.id,
+    tipo_key:         'alta',
+    obra_destino_cod: obraDepo?.cod ?? null,
+    responsable:      'Sistema',
+    obs:              'Alta inicial en sistema',
+    created_by:       userId,
     updated_by:     userId,
   })
 
@@ -353,7 +366,7 @@ herramientas.get('/:id', requirePermiso('herramientas', 'lectura'), async (c) =>
       *,
       tipo:herr_tipos(id, nom, icono),
       estado:herr_estados(key, nom, color, icono),
-      obra:obras(cod, nom),
+      obra:obras(cod, nom, es_deposito),
       marca_ref:herr_marcas(id, nom),
       modelo_ref:herr_modelos(id, nom)
     `)
