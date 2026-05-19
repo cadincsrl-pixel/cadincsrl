@@ -92,7 +92,10 @@ export const herramientaFotosService = {
     const path = `herramienta/${herramientaId}/${randomUUID()}.${ext}`
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path)
     if (error) throw new HerramientaFotoError(500, 'UPLOAD_URL_ERROR', error.message)
-    return { path, token: data.token, signed_url: data.signedUrl }
+    // `storage_path` es el nombre que espera el cliente (UploadUrlResp). Antes
+    // se devolvía como `path` y el segundo POST llegaba con storage_path
+    // undefined → zod rechazaba con "invalid_type".
+    return { storage_path: path, token: data.token, signed_url: data.signedUrl }
   },
 
   async create(
