@@ -79,10 +79,15 @@ async function filtrarLegsPermitidos(
   // horas pero 0 asignaciones formales, no ve a nadie y la planilla
   // queda en blanco. Caso real (José/cc 24): 143 horas, 6 legs, 0
   // asignaciones → mostraba 0.
+  // Importante: usar .range() explícito porque PostgREST tiene cap default
+  // de 1000 filas. Sin esto, capataces/jefes de obra con muchas semanas
+  // cargadas (>1000 filas en `horas` total) NO veían los trabajadores
+  // recién agregados — el cap recortaba los rows nuevos. Caso real 2026-05-20:
+  // Candela con 1705 filas en sus obras dejó de ver legs 026 y 095 reciéntes.
   const supabase = createSupabaseClient(token)
   const [resAsign, resHoras] = await Promise.all([
-    supabase.from('asignaciones').select('leg').in('obra_cod', allowed),
-    supabase.from('horas').select('leg').in('obra_cod', allowed),
+    supabase.from('asignaciones').select('leg').in('obra_cod', allowed).range(0, 99999),
+    supabase.from('horas').select('leg').in('obra_cod', allowed).range(0, 99999),
   ])
   if (resAsign.error) throw new Error(resAsign.error.message)
   if (resHoras.error) throw new Error(resHoras.error.message)
