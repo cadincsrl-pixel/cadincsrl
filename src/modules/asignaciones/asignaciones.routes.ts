@@ -24,6 +24,7 @@ asignaciones.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   let q = supabase
     .from('asignaciones')
     .select('*')
+    .range(0, 99999) // evitar cap default de PostgREST (1000)
   if (allowed != null) q = q.in('obra_cod', allowed)
   const { data, error } = await q
   if (error) return c.json({ error: error.message }, 500)

@@ -27,6 +27,7 @@ tarifas.get(
       .from('tarifas')
       .select('*')
       .order('desde')
+      .range(0, 99999) // evitar cap PostgREST
     if (allowed != null) q = q.in('obra_cod', allowed)
     const { data, error } = await q
     if (error) return c.json({ error: error.message }, 500)

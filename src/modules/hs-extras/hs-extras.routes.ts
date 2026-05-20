@@ -32,6 +32,7 @@ hsExtras.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
     .select('*')
     .in('obra_cod', allowed)
     .order('sem_key')
+    .range(0, 99999) // evitar cap PostgREST
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data ?? [])
 })

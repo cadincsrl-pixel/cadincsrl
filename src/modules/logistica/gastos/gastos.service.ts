@@ -159,6 +159,7 @@ async function detectarWarningsOdometro(
         .select('cantera_id, deposito_id, km_ida_vuelta')
         .in('cantera_id', canteraIds)
         .in('deposito_id', depositoIds)
+        .range(0, 99999) // evitar cap PostgREST
       const rutaMap = new Map<string, number>()
       for (const r of (rutas ?? []) as any[]) {
         rutaMap.set(`${r.cantera_id}_${r.deposito_id}`, Number(r.km_ida_vuelta ?? 0))

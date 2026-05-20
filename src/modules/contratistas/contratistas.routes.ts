@@ -118,7 +118,7 @@ contratistas.get(
     if (allowed != null && allowed.length === 0) return c.json([])
 
     const supabase = createSupabaseClient(c.get('accessToken'))
-    let q = supabase.from('certificaciones').select('*')
+    let q = supabase.from('certificaciones').select('*').range(0, 99999) // evitar cap PostgREST
     if (allowed != null) q = q.in('obra_cod', allowed)
     const { data, error } = await q
     if (error) return c.json({ error: error.message }, 500)
