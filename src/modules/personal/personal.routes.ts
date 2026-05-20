@@ -79,23 +79,18 @@ async function filtrarLegsPermitidos(
   // horas pero 0 asignaciones formales, no ve a nadie y la planilla
   // queda en blanco. Caso real (José/cc 24): 143 horas, 6 legs, 0
   // asignaciones → mostraba 0.
-  // Importante: usar .range() explícito porque PostgREST tiene cap default
-  // de 1000 filas. Sin esto, capataces/jefes de obra con muchas semanas
-  // cargadas (>1000 filas en `horas` total) NO veían los trabajadores
-  // recién agregados — el cap recortaba los rows nuevos. Caso real 2026-05-20:
-  // Candela con 1705 filas en sus obras dejó de ver legs 026 y 095 reciéntes.
+  // Usamos la RPC `legs_de_obras` que hace SELECT DISTINCT server-side.
+  // La query previa con .from('horas').select('leg').in(...) caía en el hard
+  // cap de PostgREST (1000 filas), incluso pasando .range(0, 99999) — el cap
+  // lo aplica el servidor, no se puede bypassear desde el cliente. Caso real
+  // 2026-05-20: Candela tenía 1705 filas en `horas` de sus obras, el cap
+  // recortaba a 1000 → quedaban 5 legs invisibles (026, 070, 074, 080, 095).
+  // La RPC devuelve ~45 legs únicos en vez de 1705 filas → lejos del cap.
   const supabase = createSupabaseClient(token)
-  const [resAsign, resHoras] = await Promise.all([
-    supabase.from('asignaciones').select('leg').in('obra_cod', allowed).range(0, 99999),
-    supabase.from('horas').select('leg').in('obra_cod', allowed).range(0, 99999),
-  ])
-  if (resAsign.error) throw new Error(resAsign.error.message)
-  if (resHoras.error) throw new Error(resHoras.error.message)
-
-  const legs = new Set<string>()
-  for (const r of (resAsign.data ?? []) as Array<{ leg: string }>) legs.add(r.leg)
-  for (const r of (resHoras.data ?? []) as Array<{ leg: string }>) legs.add(r.leg)
-  return Array.from(legs)
+  const { data, error } = await supabase
+    .rpc('legs_de_obras', { p_obras: allowed })
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((r: { leg: string }) => r.leg)
 }
 
 personal.get(
