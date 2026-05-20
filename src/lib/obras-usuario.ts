@@ -30,7 +30,15 @@ import { MODULO_SET as MODULOS_VALIDOS } from './modulos.js'
  *    fuera del array (403).
  */
 
-const TIPOS_OBRAS_RESTRINGIDAS_LEGACY = new Set([
+/**
+ * Tipos de usuario que, en el modelo viejo (pre-v3), implicaban scope
+ * restringido a las obras asignadas. Hoy esto es solo fallback defensivo:
+ * la migración `20260518_permisos_v3_cleanup.sql` setea `obras_scope` y
+ * `rol_base` para todos los profiles, así que este fallback no debería
+ * ejecutarse en perfiles vigentes. Exportada para que `personal.routes.ts`
+ * y otros sitios usen la misma lista en vez de duplicar el array.
+ */
+export const TIPOS_LEGACY_RESTRINGIDOS = new Set([
   'capataz', 'capataz_supervisor',
   'jefe_obra', 'jefe_obra_supervisor',
 ])
@@ -79,7 +87,7 @@ export async function getObrasDelUsuario(
     .eq('user_id', userId)
   if (error) throw new Error(error.message)
   const obras = (data ?? []).map(r => r.obra_cod)
-  const tipoRestringido = profile.tipo_usuario && TIPOS_OBRAS_RESTRINGIDAS_LEGACY.has(profile.tipo_usuario)
+  const tipoRestringido = profile.tipo_usuario && TIPOS_LEGACY_RESTRINGIDOS.has(profile.tipo_usuario)
   if (tipoRestringido) return Array.from(new Set(obras))
   if (obras.length > 0) return Array.from(new Set(obras))
   return null

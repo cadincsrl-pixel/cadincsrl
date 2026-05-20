@@ -6,7 +6,7 @@ import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
 import { personalService } from './personal.service.js'
 import { CreatePersonalSchema, UpdatePersonalSchema } from './personal.schema.js'
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
-import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
+import { getObrasDelUsuarioCached, TIPOS_LEGACY_RESTRINGIDOS } from '../../lib/obras-usuario.js'
 import documentosRoutes from './documentos.routes.js'
 
 // Decide si el user debe ver columnas limitadas de personal (sin DNI,
@@ -40,12 +40,6 @@ personal.use('*', authMiddleware)
 // /api/personal/:leg/documentos, .../upload-url, .../:id/signed-url, .../:id.
 personal.route('/', documentosRoutes)
 
-// Tipos legacy (compat con perfiles sin rol_base seteado).
-const TIPOS_PERSONAL_RESTRINGIDO_LEGACY = new Set([
-  'capataz', 'capataz_supervisor',
-  'jefe_obra', 'jefe_obra_supervisor',
-])
-
 // Roles base que limitan la visibilidad de personal a los legs asignados
 // a sus obras. Coincide con los roles cuyo scope de obras es 'asignadas'
 // por defecto y necesitan ver solo "su" personal.
@@ -70,7 +64,7 @@ async function filtrarLegsPermitidos(
   // Legacy fallback: usar tipo_usuario.
   const restringido = profile.rol_base
     ? ROLES_BASE_PERSONAL_RESTRINGIDO.has(profile.rol_base)
-    : profile.tipo_usuario != null && TIPOS_PERSONAL_RESTRINGIDO_LEGACY.has(profile.tipo_usuario)
+    : profile.tipo_usuario != null && TIPOS_LEGACY_RESTRINGIDOS.has(profile.tipo_usuario)
 
   if (!restringido) return null
 
