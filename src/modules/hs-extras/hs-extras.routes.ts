@@ -26,13 +26,10 @@ hsExtras.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
     return c.json(data)
   }
 
+  // RPC server-side para evitar el hard cap de PostgREST (1000 rows).
   const supabase = createSupabaseClient(c.get('accessToken'))
   const { data, error } = await supabase
-    .from('tarja_hs_extras')
-    .select('*')
-    .in('obra_cod', allowed)
-    .order('sem_key')
-    .range(0, 99999) // evitar cap PostgREST
+    .rpc('hs_extras_de_obras', { p_obras: allowed })
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data ?? [])
 })

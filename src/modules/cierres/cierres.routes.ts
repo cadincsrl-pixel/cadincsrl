@@ -17,9 +17,9 @@ cierres.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   if (allowed != null && allowed.length === 0) return c.json([])
 
   const supabase = createSupabaseClient(c.get('accessToken'))
-  let q = supabase.from('cierres').select('*').range(0, 99999) // evitar cap PostgREST
-  if (allowed != null) q = q.in('obra_cod', allowed)
-  const { data, error } = await q
+  const { data, error } = allowed != null
+    ? await supabase.rpc('cierres_de_obras', { p_obras: allowed })
+    : await supabase.from('cierres').select('*').range(0, 99999)
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
 })

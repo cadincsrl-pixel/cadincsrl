@@ -20,13 +20,14 @@ asignaciones.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
+  // Si allowed === null (admin / scope=todas) traemos toda la tabla con
+  // .range explícito para defenderse hasta donde llega el client. Para
+  // usuarios con scope restringido usamos la RPC que hace el filtro
+  // server-side sin cap.
   const supabase = createSupabaseClient(token)
-  let q = supabase
-    .from('asignaciones')
-    .select('*')
-    .range(0, 99999) // evitar cap default de PostgREST (1000)
-  if (allowed != null) q = q.in('obra_cod', allowed)
-  const { data, error } = await q
+  const { data, error } = allowed != null
+    ? await supabase.rpc('asignaciones_de_obras', { p_obras: allowed })
+    : await supabase.from('asignaciones').select('*').range(0, 99999)
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
 })

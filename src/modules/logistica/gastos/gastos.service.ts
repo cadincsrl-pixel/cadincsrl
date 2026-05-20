@@ -154,12 +154,13 @@ async function detectarWarningsOdometro(
     const canteraIds  = [...new Set(tramos.map((t: any) => t.cantera_id).filter(Boolean))]
     const depositoIds = [...new Set(tramos.map((t: any) => t.deposito_id).filter(Boolean))]
     if (canteraIds.length > 0 && depositoIds.length > 0) {
+      // RPC para evitar el hard cap de PostgREST (1000 rows). La RPC
+      // devuelve setof rutas completo; acá solo usamos 3 campos.
       const { data: rutas } = await sb
-        .from('rutas')
-        .select('cantera_id, deposito_id, km_ida_vuelta')
-        .in('cantera_id', canteraIds)
-        .in('deposito_id', depositoIds)
-        .range(0, 99999) // evitar cap PostgREST
+        .rpc('rutas_de_canteras_depositos', {
+          p_canteras: canteraIds,
+          p_depositos: depositoIds,
+        })
       const rutaMap = new Map<string, number>()
       for (const r of (rutas ?? []) as any[]) {
         rutaMap.set(`${r.cantera_id}_${r.deposito_id}`, Number(r.km_ida_vuelta ?? 0))
