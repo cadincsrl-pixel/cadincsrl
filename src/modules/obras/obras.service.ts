@@ -255,31 +255,6 @@ export const obrasService = {
     return data
   },
 
-  // Auto-archiva obras sin actividad en los últimos N días.
-  //
-  // Implementación vía RPC `obras_a_auto_archivar` (ver migración
-  // 20260430): el cálculo corre del lado del servidor con NOT EXISTS
-  // contra los índices de horas/certificaciones, así no depende del cap
-  // de filas de PostgREST (~1000) que en la implementación anterior
-  // generaba falsos "sin actividad" → obras archivadas por error.
-  async autoArchivar(_token: string, userId: string) {
-    const { data: candidatas, error: errRpc } = await supabaseAdmin
-      .rpc('obras_a_auto_archivar', { p_dias_atras: 21 })
-    if (errRpc) throw new Error(errRpc.message)
-
-    const cods = (candidatas ?? []).map((r: { cod: string }) => r.cod)
-    if (cods.length === 0) return { archivadas: [] }
-
-    const hoy = new Date().toISOString().slice(0, 10)
-    const { error: errUpd } = await supabaseAdmin
-      .from('obras')
-      .update({ archivada: true, fecha_archivo: hoy, updated_by: userId })
-      .in('cod', cods)
-    if (errUpd) throw new Error(errUpd.message)
-
-    return { archivadas: cods }
-  },
-
   async delete(cod: string, token: string) {
     const supabase = createSupabaseClient(token)
     const { error } = await supabase

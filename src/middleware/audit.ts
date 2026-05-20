@@ -11,7 +11,6 @@ function parseRoute(path: string, method: string): { modulo: string; entidad: st
   const accion = method === 'POST' ? 'crear' : method === 'PATCH' || method === 'PUT' ? 'actualizar' : method === 'DELETE' ? 'eliminar' : method
 
   // Rutas de mantenimiento/bulk: no loguear (se dispararían en cada mount)
-  if (parts.includes('auto-archivar')) return null
   if (parts.includes('mover')) return null
 
   // Acciones especiales de solicitudes

@@ -45,19 +45,6 @@ obras.get('/archivadas', requirePermisoOr([
   return c.json(data)
 })
 
-// POST /api/obras/auto-archivar
-// Es una acción administrativa global; capataz no debería dispararla.
-obras.post(
-  '/auto-archivar',
-  requireFlag('tarja', 'administrar_obras', true),
-  async (c) => {
-    const token = c.get('accessToken')
-    const userId = c.get('user').id
-    const data = await obrasService.autoArchivar(token, userId)
-    return c.json(data)
-  },
-)
-
 // GET /api/obras/proximo-codigo
 //
 // Devuelve el próximo código que se va a usar al crear una obra.
