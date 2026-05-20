@@ -78,22 +78,63 @@ herramientas.get('/stats', requirePermiso('herramientas', 'lectura'), async (c) 
 })
 
 // GET /api/herramientas/movimientos/all
-herramientas.get('/movimientos/all', requirePermiso('herramientas', 'lectura'), async (c) => {
-  const { data, error } = await supabase
-    .from('herr_movimientos')
-    .select(`
-      *,
-      herramienta:herramientas(id, codigo, nom),
-      tipo:herr_mov_tipos(key, nom, icono, color),
-      obra_origen:obras!herr_movimientos_obra_origen_cod_fkey(cod, nom),
-      obra_destino:obras!herr_movimientos_obra_destino_cod_fkey(cod, nom)
-    `)
-    .order('fecha', { ascending: false })
-    .limit(200)
-
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json(data)
+//
+// Soporta paginación y filtros server-side opcionales:
+//   - `limit` / `offset`: si `limit` no se pasa, devuelve hasta 500 (cap duro)
+//     — mantiene compat con consumers que necesitan TODO (ej. cálculo de alertas).
+//   - filtros: `herramienta_id`, `tipo_key`, `obra_cod` (matchea origen o destino),
+//     `desde` / `hasta` (rango de fechas, ISO).
+//   - búsqueda libre (`q`) NO soportada — Supabase no permite filtrar across
+//     joined columns sin RPC. Se mantiene client-side.
+//
+// Response: `{ items, total }`. `total` es el conteo REAL (no acotado por limit).
+const MovListQuery = z.object({
+  limit:           z.coerce.number().int().positive().max(500).optional(),
+  offset:          z.coerce.number().int().nonnegative().default(0),
+  herramienta_id:  z.coerce.number().int().positive().optional(),
+  tipo_key:        z.string().min(1).optional(),
+  obra_cod:        z.string().min(1).optional(),
+  desde:           z.string().min(1).optional(), // ISO date o datetime
+  hasta:           z.string().min(1).optional(),
 })
+
+herramientas.get(
+  '/movimientos/all',
+  requirePermiso('herramientas', 'lectura'),
+  zValidator('query', MovListQuery),
+  async (c) => {
+    const q = c.req.valid('query')
+
+    let query = supabase
+      .from('herr_movimientos')
+      .select(`
+        *,
+        herramienta:herramientas(id, codigo, nom),
+        tipo:herr_mov_tipos(key, nom, icono, color),
+        obra_origen:obras!herr_movimientos_obra_origen_cod_fkey(cod, nom),
+        obra_destino:obras!herr_movimientos_obra_destino_cod_fkey(cod, nom)
+      `, { count: 'exact' })
+      .order('fecha', { ascending: false })
+
+    if (q.herramienta_id) query = query.eq('herramienta_id', q.herramienta_id)
+    if (q.tipo_key)       query = query.eq('tipo_key', q.tipo_key)
+    if (q.obra_cod) {
+      query = query.or(`obra_origen_cod.eq.${q.obra_cod},obra_destino_cod.eq.${q.obra_cod}`)
+    }
+    if (q.desde) query = query.gte('fecha', q.desde)
+    if (q.hasta) query = query.lte('fecha', q.hasta)
+
+    if (q.limit !== undefined) {
+      query = query.range(q.offset, q.offset + q.limit - 1)
+    } else {
+      query = query.limit(500)
+    }
+
+    const { data, error, count } = await query
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ items: data ?? [], total: count ?? 0 })
+  },
+)
 
 // POST /api/herramientas/movimientos
 //
