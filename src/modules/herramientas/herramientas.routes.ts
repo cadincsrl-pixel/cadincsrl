@@ -5,7 +5,6 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { fotosPorHerramienta, fotosPorId } from './herramienta-fotos.routes.js'
-import remitosRoutes from './remitos.routes.js'
 import marcasRoutes  from './marcas.routes.js'
 
 const herramientas = new Hono()
@@ -15,12 +14,10 @@ herramientas.use('*', authMiddleware)
 // estáticas tengan prioridad:
 //   - /api/herramientas/:id/fotos/...     (galería de una herramienta)
 //   - /api/herramientas/fotos/:fotoId...  (operaciones por foto)
-//   - /api/herramientas/remitos/...       (remitos de movimiento)
 //   - /api/herramientas/marcas/...        (catálogo marcas)
 //   - /api/herramientas/modelos/...       (catálogo modelos)
 herramientas.route('/', fotosPorHerramienta)
 herramientas.route('/fotos', fotosPorId)
-herramientas.route('/remitos', remitosRoutes)
 herramientas.route('/', marcasRoutes)
 
 
