@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
 import { documentosService, PersonalDocError } from './documentos.service.js'
+import { supabase as supabaseAdmin } from '../../lib/supabase.js'
 
 const docs = new Hono()
 docs.use('*', authMiddleware)
@@ -48,6 +49,27 @@ docs.get(
   '/:leg/documentos',
   requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
   handle(c => documentosService.listByLeg(c.req.param('leg'), c.get('accessToken'))),
+)
+
+// GET /api/personal/documentos/resumen
+// Devuelve la lista de legs que tienen al menos 1 documento de cada tipo.
+// Usado por banners de alerta en /personal (ej. AlertaDniFaltante) para
+// detectar trabajadores con papelitos pendientes sin hacer N requests
+// individuales. Service role evita el cap de PostgREST si la tabla crece.
+docs.get(
+  '/documentos/resumen',
+  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  async (c) => {
+    const { data, error } = await supabaseAdmin
+      .rpc('legs_con_documento')
+    if (error) return c.json({ error: error.message }, 500)
+    // data: [{ tipo: 'dni', legs: ['001','002',...] }, ...]
+    const resumen: Record<string, string[]> = {}
+    for (const row of (data ?? []) as Array<{ tipo: string; legs: string[] }>) {
+      resumen[row.tipo] = row.legs
+    }
+    return c.json(resumen)
+  },
 )
 
 // POST /api/personal/:leg/documentos/upload-url — genera signed upload URL
