@@ -112,7 +112,7 @@ personal.get(
 
     const supabase = createSupabaseClient(token)
     const select = limitado
-      ? 'leg, nom, condicion, activo_override, created_at, updated_at'
+      ? 'leg, nom, condicion, modalidad, activo_override, created_at, updated_at'
       : '*, personal_cat_historial (cat_id, desde)'
     const { data, error } = await supabase
       .from('personal')
