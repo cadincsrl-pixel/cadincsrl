@@ -311,6 +311,16 @@ export const solicitudesService = {
     })
     if (error) throw mapRpcError(error)
 
+    // Post-RPC: persistir `pagado_por` en el item (la RPC no acepta el param
+    // aún). Cuando se retire del proveedor, _registrarMaterialCliente lee del
+    // item y copia el valor al MCC. Si caller no pasó nada o 'cadinc', el
+    // default de DB ya está correcto.
+    if (dto.pagado_por === 'cliente') {
+      await supabase.from('solicitud_compra_item')
+        .update({ pagado_por: 'cliente' })
+        .eq('id', itemId)
+    }
+
     const { data: item, error: selErr } = await supabase
       .from('solicitud_compra_item')
       .select('*, solicitud_compra(id, obra_cod)')
@@ -359,6 +369,21 @@ export const solicitudesService = {
     // La RPC ya registra en materiales_a_cuenta_cliente (y en stock,
     // si corresponde) dentro de la transacción. NO llamar a
     // _registrarMaterialCliente acá — sería doble registro.
+
+    // Post-RPC: persistir `pagado_por` si el caller especificó 'cliente'.
+    // La RPC no acepta el param aún (default 'cadinc' en DB). Hacemos un
+    // UPDATE adicional en item Y en el MCC recién insertado. Si el caller
+    // no pasó nada o pasó 'cadinc', el default de la DB ya quedó correcto.
+    // TODO: cuando se actualice la RPC para aceptar p_pagado_por, eliminar
+    // este post-update y pasar el param atómicamente.
+    if (dto.pagado_por === 'cliente') {
+      await supabase.from('solicitud_compra_item')
+        .update({ pagado_por: 'cliente' })
+        .eq('id', itemId)
+      await supabase.from('materiales_a_cuenta_cliente')
+        .update({ pagado_por: 'cliente', updated_by: userId })
+        .eq('item_id', itemId)
+    }
 
     const { data: item, error: selErr } = await supabase
       .from('solicitud_compra_item')
@@ -411,6 +436,7 @@ export const solicitudesService = {
         precio_unit:      dto.precio_unit,
         factura_id:       dto.factura_id ?? null,
         fecha_resolucion: new Date().toISOString().slice(0, 10),
+        pagado_por:       dto.pagado_por ?? 'cadinc',
       })
       .eq('id', itemId)
       .eq('estado', 'pendiente')
@@ -622,6 +648,14 @@ export const solicitudesService = {
       .maybeSingle()
     if (obra?.es_deposito) return
 
+    // Despacho de depósito interno siempre es 'cadinc' (el material es propio
+    // de CADINC, no aplica "cliente paga directo" aunque el item lo tenga seteado).
+    // Para compras 'comprado' o 'enviado' (retirado vía remito), respetar el
+    // `pagado_por` del item.
+    const pagadoPor = item.estado === 'de_deposito'
+      ? 'cadinc'
+      : (item.pagado_por ?? 'cadinc')
+
     const registro = {
       obra_cod:         sol.obra_cod,
       solicitud_id:     solicitudId,
@@ -635,6 +669,7 @@ export const solicitudesService = {
       proveedor_id:     item.proveedor_id,
       factura_id:       item.factura_id,
       fecha_resolucion: item.fecha_resolucion ?? new Date().toISOString().slice(0, 10),
+      pagado_por:       pagadoPor,
       created_by:       userId,
       updated_by:       userId,
     }

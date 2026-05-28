@@ -38,11 +38,16 @@ export const UpdateSolicitudSchema = z.object({
 // obra todavía: queda en el galpón del proveedor hasta que se haga un
 // remito de retiro. El item pasa a estado 'en_proveedor' (vs 'comprado'),
 // no se inserta en `materiales_a_cuenta_cliente` hasta que se retire.
+//
+// `pagado_por` indica quién pagó al proveedor:
+// - 'cadinc' (default): CADINC adelantó. Se suma a la cuenta del cliente.
+// - 'cliente': el cliente pagó directo. Solo registro de rendición, no genera deuda.
 export const ComprarItemSchema = z.object({
   proveedor_id:        z.number().int().positive(),
   precio_unit:         z.number().min(0),
   factura_id:          z.number().int().positive().nullable().optional(),
   queda_en_proveedor:  z.boolean().optional().default(false),
+  pagado_por:          z.enum(['cadinc', 'cliente']).optional().default('cadinc'),
 })
 
 // Resolver ítem: despachar de depósito
