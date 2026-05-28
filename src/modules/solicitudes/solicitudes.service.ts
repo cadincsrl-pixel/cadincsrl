@@ -594,6 +594,63 @@ export const solicitudesService = {
     return data
   },
 
+  // Deshace SOLO el envío de un item (estado='enviado'). Lo devuelve a su
+  // estado previo (comprado o de_deposito según cómo se resolvió la compra),
+  // limpia fecha_envio y lo desvincula del remito_envio. Si el remito queda
+  // sin items, lo borra (era un remito de un solo item, ya huérfano).
+  //
+  // NO toca proveedor/precio/factura ni el MCC: la compra/despacho se mantiene.
+  // Para deshacer también la compra, el usuario usa `revertir` desde el estado
+  // resultante (comprado/de_deposito → pendiente).
+  async revertirEnvioItem(itemId: number, token: string) {
+    const supabase = createSupabaseClient(token)
+
+    // 1) Validar que esté enviado y determinar el estado previo.
+    const { data: item, error: selErr } = await supabase
+      .from('solicitud_compra_item')
+      .select('id, estado, proveedor_id')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (selErr) throw new Error(selErr.message)
+    if (!item || item.estado !== 'enviado') {
+      throw new Error('Ítem no encontrado o no está enviado')
+    }
+    // Si tiene proveedor → fue compra externa (comprado). Si no → despacho
+    // de depósito (de_deposito). Cubre los dos caminos de resolución.
+    const estadoPrevio = item.proveedor_id != null ? 'comprado' : 'de_deposito'
+
+    // 2) Desvincular del remito y borrar el remito si queda vacío.
+    const { data: reItems } = await supabase
+      .from('remitos_envio_item')
+      .select('remito_id')
+      .eq('item_id', itemId)
+    const remitoIds = [...new Set((reItems ?? []).map(r => r.remito_id))]
+
+    await supabase.from('remitos_envio_item').delete().eq('item_id', itemId)
+
+    for (const remitoId of remitoIds) {
+      const { count } = await supabase
+        .from('remitos_envio_item')
+        .select('id', { count: 'exact', head: true })
+        .eq('remito_id', remitoId)
+      if ((count ?? 0) === 0) {
+        await supabase.from('remitos_envio').delete().eq('id', remitoId)
+      }
+    }
+
+    // 3) Volver el item a su estado previo, limpiar fecha_envio.
+    const { data, error } = await supabase
+      .from('solicitud_compra_item')
+      .update({ estado: estadoPrevio, fecha_envio: null })
+      .eq('id', itemId)
+      .eq('estado', 'enviado')
+      .select('*, solicitud_compra(id, obra_cod)')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) throw new Error('No se pudo revertir el envío')
+    return data
+  },
+
   async editarItem(itemId: number, dto: EditarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase

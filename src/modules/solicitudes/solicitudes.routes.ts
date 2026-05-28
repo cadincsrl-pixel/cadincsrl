@@ -190,6 +190,15 @@ solicitudes.post('/items/:itemId/revertir', requireResolverItems, itemHandler(as
   )
 }))
 
+// POST /items/:itemId/revertir-envio — deshace SOLO el envío: el item vuelve
+// a su estado previo (comprado/de_deposito), manteniendo la compra. Limpia
+// fecha_envio y desvincula del remito (borra el remito si queda vacío).
+solicitudes.post('/items/:itemId/revertir-envio', requireResolverItems, itemHandler(async (c) => {
+  return solicitudesService.revertirEnvioItem(
+    Number(c.req.param('itemId')), c.get('accessToken')
+  )
+}))
+
 // PATCH /items/:itemId — edita campos de items YA resueltos (ej. corregir
 // precio o proveedor luego de comprado). Es del comprador, no del jefe.
 solicitudes.patch('/items/:itemId', requireResolverItems, zValidator('json', EditarItemSchema), itemHandler(async (c) => {
