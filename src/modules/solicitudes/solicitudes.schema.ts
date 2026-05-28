@@ -48,6 +48,9 @@ export const ComprarItemSchema = z.object({
   factura_id:          z.number().int().positive().nullable().optional(),
   queda_en_proveedor:  z.boolean().optional().default(false),
   pagado_por:          z.enum(['cadinc', 'cliente']).optional().default('cadinc'),
+  // Cantidad realmente comprada si difiere de la solicitada. Si no viene,
+  // se compró lo solicitado (cantidad_comprada queda NULL).
+  cantidad_comprada:   z.number().positive().optional(),
 })
 
 // Resolver ítem: despachar de depósito

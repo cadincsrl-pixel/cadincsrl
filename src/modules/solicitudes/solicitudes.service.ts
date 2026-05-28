@@ -311,14 +311,15 @@ export const solicitudesService = {
     })
     if (error) throw mapRpcError(error)
 
-    // Post-RPC: persistir `pagado_por` en el item (la RPC no acepta el param
-    // aún). Cuando se retire del proveedor, _registrarMaterialCliente lee del
-    // item y copia el valor al MCC. Si caller no pasó nada o 'cadinc', el
-    // default de DB ya está correcto.
-    if (dto.pagado_por === 'cliente') {
-      await supabase.from('solicitud_compra_item')
-        .update({ pagado_por: 'cliente' })
-        .eq('id', itemId)
+    // Post-RPC: persistir `pagado_por` y `cantidad_comprada` en el item (la
+    // RPC no acepta esos params aún). Cuando se retire del proveedor,
+    // _registrarMaterialCliente lee del item y usa COALESCE(cantidad_comprada,
+    // cantidad) al insertar el MCC.
+    const itemPatch: Record<string, unknown> = {}
+    if (dto.pagado_por === 'cliente') itemPatch.pagado_por = 'cliente'
+    if (dto.cantidad_comprada != null) itemPatch.cantidad_comprada = dto.cantidad_comprada
+    if (Object.keys(itemPatch).length > 0) {
+      await supabase.from('solicitud_compra_item').update(itemPatch).eq('id', itemId)
     }
 
     const { data: item, error: selErr } = await supabase
@@ -370,18 +371,27 @@ export const solicitudesService = {
     // si corresponde) dentro de la transacción. NO llamar a
     // _registrarMaterialCliente acá — sería doble registro.
 
-    // Post-RPC: persistir `pagado_por` si el caller especificó 'cliente'.
-    // La RPC no acepta el param aún (default 'cadinc' en DB). Hacemos un
-    // UPDATE adicional en item Y en el MCC recién insertado. Si el caller
-    // no pasó nada o pasó 'cadinc', el default de la DB ya quedó correcto.
-    // TODO: cuando se actualice la RPC para aceptar p_pagado_por, eliminar
-    // este post-update y pasar el param atómicamente.
-    if (dto.pagado_por === 'cliente') {
-      await supabase.from('solicitud_compra_item')
-        .update({ pagado_por: 'cliente' })
-        .eq('id', itemId)
+    // Post-RPC: la RPC no acepta `p_pagado_por` ni `p_cantidad_comprada`
+    // (default 'cadinc' / NULL en DB). Si el caller los especificó, hacemos
+    // UPDATE adicional en el item y recalculamos el MCC recién insertado.
+    // TODO: cuando se actualice la RPC para aceptar estos params, eliminar
+    // este post-update y pasarlos atómicamente.
+    const itemPatch: Record<string, unknown> = {}
+    if (dto.pagado_por === 'cliente') itemPatch.pagado_por = 'cliente'
+    if (dto.cantidad_comprada != null) itemPatch.cantidad_comprada = dto.cantidad_comprada
+    if (Object.keys(itemPatch).length > 0) {
+      await supabase.from('solicitud_compra_item').update(itemPatch).eq('id', itemId)
+
+      // Recalcular el row de MCC con los valores corregidos (la RPC lo
+      // insertó con la cantidad solicitada y pagado_por='cadinc').
+      const mccPatch: Record<string, unknown> = { updated_by: userId }
+      if (dto.pagado_por === 'cliente') mccPatch.pagado_por = 'cliente'
+      if (dto.cantidad_comprada != null) {
+        mccPatch.cantidad = dto.cantidad_comprada
+        mccPatch.precio_total = dto.cantidad_comprada * dto.precio_unit
+      }
       await supabase.from('materiales_a_cuenta_cliente')
-        .update({ pagado_por: 'cliente', updated_by: userId })
+        .update(mccPatch)
         .eq('item_id', itemId)
     }
 
@@ -431,12 +441,13 @@ export const solicitudesService = {
     const { data, error } = await supabase
       .from('solicitud_compra_item')
       .update({
-        estado:           'comprado',
-        proveedor_id:     dto.proveedor_id,
-        precio_unit:      dto.precio_unit,
-        factura_id:       dto.factura_id ?? null,
-        fecha_resolucion: new Date().toISOString().slice(0, 10),
-        pagado_por:       dto.pagado_por ?? 'cadinc',
+        estado:            'comprado',
+        proveedor_id:      dto.proveedor_id,
+        precio_unit:       dto.precio_unit,
+        factura_id:        dto.factura_id ?? null,
+        fecha_resolucion:  new Date().toISOString().slice(0, 10),
+        pagado_por:        dto.pagado_por ?? 'cadinc',
+        cantidad_comprada: dto.cantidad_comprada ?? null,
       })
       .eq('id', itemId)
       .eq('estado', 'pendiente')
@@ -575,12 +586,13 @@ export const solicitudesService = {
     const { data, error } = await supabase
       .from('solicitud_compra_item')
       .update({
-        estado:           'pendiente',
-        proveedor_id:     null,
-        precio_unit:      null,
-        factura_id:       null,
-        fecha_resolucion: null,
-        fecha_envio:      null,
+        estado:            'pendiente',
+        proveedor_id:      null,
+        precio_unit:       null,
+        factura_id:        null,
+        fecha_resolucion:  null,
+        fecha_envio:       null,
+        cantidad_comprada: null,
       })
       .eq('id', itemId)
       .in('estado', ['comprado', 'de_deposito', 'rechazado'])
@@ -713,15 +725,18 @@ export const solicitudesService = {
       ? 'cadinc'
       : (item.pagado_por ?? 'cadinc')
 
+    // Cantidad efectiva: la comprada si difiere de la solicitada, si no la solicitada.
+    const cantidadEfectiva = item.cantidad_comprada ?? item.cantidad
+
     const registro = {
       obra_cod:         sol.obra_cod,
       solicitud_id:     solicitudId,
       item_id:          item.id,
       descripcion:      item.descripcion,
-      cantidad:         item.cantidad,
+      cantidad:         cantidadEfectiva,
       unidad:           item.unidad,
       precio_unit:      item.precio_unit ?? 0,
-      precio_total:     item.cantidad * (item.precio_unit ?? 0),
+      precio_total:     cantidadEfectiva * (item.precio_unit ?? 0),
       origen:           item.estado === 'comprado' ? 'proveedor' : 'deposito',
       proveedor_id:     item.proveedor_id,
       factura_id:       item.factura_id,
