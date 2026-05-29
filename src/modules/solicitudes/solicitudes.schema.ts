@@ -12,6 +12,9 @@ export const CreateSolicitudSchema = z.object({
   obra_cod:  z.string().min(1),
   prioridad: z.enum(['normal', 'urgente']).default('normal'),
   obs:       z.string().nullable().optional().default(null),
+  // Fecha+hora tentativa de entrega ("YYYY-MM-DDTHH:mm" del <datetime-local>).
+  // Se guarda en timestamp sin tz; nullable.
+  entrega_tentativa: z.string().min(1).nullable().optional().default(null),
   items:     z.array(ItemSchema).min(1),
 })
 
@@ -28,6 +31,7 @@ export const UpdateSolicitudSchema = z.object({
   estado:       z.enum(['pendiente', 'aprobada', 'rechazada']).optional(),
   prioridad:    z.enum(['normal', 'urgente']).optional(),
   obs:          z.string().nullable().optional(),
+  entrega_tentativa: z.string().nullable().optional(),
   obra_cod:     z.string().min(1).optional(),
   items:        z.array(UpdateItemSchema).optional(), // si se envía, reemplaza ítems pendientes
   remove_items: z.array(z.number().int().positive()).optional(), // IDs de ítems a eliminar
