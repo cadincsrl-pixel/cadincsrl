@@ -71,8 +71,22 @@ export const remitosEnvioService = {
 
     // Marcar ítems de solicitud como enviados y vincular remito
     if (dto.enviar_items && dto.enviar_items.length > 0) {
+      // ¿El destino es la obra depósito? Si es así, al recibir (marcar enviado)
+      // recién ahora ingresan al stock las compras a proveedor (motivo: la
+      // compra es el pedido, el material llega después y se recibe acá).
+      const { data: obraDest } = await supabase
+        .from('obras').select('es_deposito').eq('cod', dto.obra_cod).maybeSingle()
+      const esDeposito = obraDest?.es_deposito === true
+
       for (const itemId of dto.enviar_items) {
-        await supabase
+        // Estado previo del ítem (antes de marcar enviado) para decidir si suma stock.
+        const { data: itemPrev } = await supabase
+          .from('solicitud_compra_item')
+          .select('estado, material_id, cantidad, cantidad_comprada, precio_unit')
+          .eq('id', itemId)
+          .maybeSingle()
+
+        const { data: updated } = await supabase
           .from('solicitud_compra_item')
           .update({
             estado: 'enviado',
@@ -81,6 +95,36 @@ export const remitosEnvioService = {
           })
           .eq('id', itemId)
           .in('estado', ['comprado', 'de_deposito'])
+          .select('id')
+          .maybeSingle()
+
+        // Compra a proveedor con destino depósito → al recibir ingresa al stock.
+        // (Los despachos de_deposito ya descontaron stock al despachar; no se tocan.)
+        if (updated && esDeposito && itemPrev?.estado === 'comprado' && itemPrev.material_id) {
+          const qty = Number(itemPrev.cantidad_comprada ?? itemPrev.cantidad)
+          const { data: mat } = await supabase
+            .from('stock_materiales').select('stock_actual').eq('id', itemPrev.material_id).maybeSingle()
+          if (mat) {
+            await supabase
+              .from('stock_materiales')
+              .update({
+                stock_actual: Number(mat.stock_actual) + qty,
+                ...(itemPrev.precio_unit != null ? { precio_ref: itemPrev.precio_unit } : {}),
+                updated_by: userId,
+              })
+              .eq('id', itemPrev.material_id)
+          }
+          await supabase.from('stock_movimientos').insert({
+            material_id:       itemPrev.material_id,
+            tipo:              'entrada',
+            cantidad:          qty,
+            motivo:            'compra',
+            obra_cod:          dto.obra_cod,
+            solicitud_item_id: itemId,
+            fecha:             hoy,
+            created_by:        userId,
+          })
+        }
       }
     }
 

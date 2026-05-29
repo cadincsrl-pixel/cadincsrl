@@ -467,42 +467,10 @@ export const solicitudesService = {
     if (error) throw new Error(error.message)
     if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
 
-    // Si la obra es depósito y el ítem tiene material_id, sumar stock
-    if (data.material_id && data.solicitud_compra?.obra_cod) {
-      const { data: obra } = await supabase
-        .from('obras')
-        .select('es_deposito')
-        .eq('cod', data.solicitud_compra.obra_cod)
-        .maybeSingle()
-      if (obra?.es_deposito) {
-        const { data: mat } = await supabase
-          .from('stock_materiales')
-          .select('stock_actual')
-          .eq('id', data.material_id)
-          .maybeSingle()
-        if (mat) {
-          await supabase
-            .from('stock_materiales')
-            .update({
-              stock_actual: mat.stock_actual + data.cantidad,
-              precio_ref: dto.precio_unit,
-              updated_by: userId,
-            })
-            .eq('id', data.material_id)
-        }
-        await supabase.from('stock_movimientos').insert({
-          material_id:       data.material_id,
-          tipo:              'entrada',
-          cantidad:          data.cantidad,
-          motivo:            'compra',
-          obra_cod:          data.solicitud_compra.obra_cod,
-          solicitud_item_id: itemId,
-          fecha:             new Date().toISOString().slice(0, 10),
-          created_by:        userId,
-        })
-      }
-    }
-
+    // NOTA: comprar = pedido al proveedor, el material todavía no llegó.
+    // Para destino depósito, el stock NO entra acá — entra al RECIBIR
+    // (cuando se marca enviado vía remito, ver remitos-envio.service).
+    // Acá solo se registra la compra.
     await this._registrarMaterialCliente(itemId, data.solicitud_id, token, userId)
     return data
   },
@@ -700,6 +668,32 @@ export const solicitudesService = {
       .maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) throw new Error('No se pudo revertir el envío')
+
+    // Si era una compra a depósito, el stock ingresó al RECIBIR (este envío).
+    // Al deshacer, ese ingreso se revierte: el material vuelve a "comprado,
+    // por llegar". Solo se tocan los movimientos entrada/compra del ítem; los
+    // de despacho (salida) NO, porque el material ya había salido del depósito
+    // al despacharse y el ítem vuelve a 'de_deposito' (sigue por enviar).
+    const { data: movsEntrada } = await supabase
+      .from('stock_movimientos')
+      .select('id, material_id, cantidad')
+      .eq('solicitud_item_id', itemId)
+      .eq('tipo', 'entrada')
+      .eq('motivo', 'compra')
+    for (const mov of movsEntrada ?? []) {
+      if (mov.material_id != null) {
+        const { data: mat } = await supabase
+          .from('stock_materiales').select('stock_actual').eq('id', mov.material_id).maybeSingle()
+        if (mat) {
+          await supabase
+            .from('stock_materiales')
+            .update({ stock_actual: Number(mat.stock_actual) - Number(mov.cantidad) })
+            .eq('id', mov.material_id)
+        }
+      }
+      await supabase.from('stock_movimientos').delete().eq('id', mov.id)
+    }
+
     return data
   },
 
