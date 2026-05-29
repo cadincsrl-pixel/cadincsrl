@@ -101,6 +101,16 @@ async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResum
     if (v.mobilquest_device_id) porDeviceId.set(String(v.mobilquest_device_id), v)
   }
 
+  // Devices que YA pertenecen a un camión del módulo Logística: tienen su
+  // propio registro y su propio sync allá. Acá los ignoramos para no marcarlos
+  // como `no_match` ("sin vincular") — no están sin vincular, son de otro
+  // módulo. Evita ruido sin duplicar el vehículo en dos registros.
+  const { data: camionesGps } = await supabase
+    .from('camiones')
+    .select('id_vehiculo_gps')
+    .not('id_vehiculo_gps', 'is', null)
+  const devicesDeCamiones = new Set((camionesGps ?? []).map(c => String(c.id_vehiculo_gps)))
+
   const items: SyncResultItem[] = []
   const logRows: Record<string, unknown>[] = []
 
@@ -118,6 +128,9 @@ async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResum
     }
 
     if (!vehiculo) {
+      // El device pertenece a un camión de Logística → lo ignoramos (no es
+      // "sin vincular", está vinculado en su módulo). No se loguea ni cuenta.
+      if (devicesDeCamiones.has(d.id_vehiculo)) continue
       items.push(result)
       logRows.push({
         vehiculo_id:     null,
