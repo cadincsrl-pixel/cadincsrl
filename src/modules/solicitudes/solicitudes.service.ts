@@ -6,7 +6,7 @@ import type {
   ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto,
 } from './solicitudes.schema.js'
 
-type ItemEstado = 'pendiente' | 'comprado' | 'de_deposito' | 'enviado' | 'rechazado'
+type ItemEstado = 'pendiente' | 'comprado' | 'de_deposito' | 'en_proveedor' | 'retirado' | 'enviado' | 'rechazado'
 
 // ── Feature flag ─────────────────────────────────────────────
 // Si USE_RPC_RESOLVER === 'true', resolverItem{Compra,Despacho} usan las
@@ -74,19 +74,25 @@ export function mapRpcError(error: PostgrestError): HttpError {
   }
 }
 
+// Estados que cuentan como "gestionado" (la compra/despacho/retiro ya se actuó).
+// Incluye en_proveedor (comprado, esperando retiro) y retirado (traído, listo
+// para enviar) — antes faltaban y dejaban la solicitud en 'pendiente' aunque
+// todos sus ítems estuvieran en gestión.
+const ESTADOS_RESUELTOS: ItemEstado[] = ['comprado', 'de_deposito', 'en_proveedor', 'retirado', 'enviado']
+
 function calcProgreso(items: Array<{ estado: ItemEstado }>): string {
   const actionable = items.filter(i => i.estado !== 'rechazado')
   if (actionable.length === 0) return 'pendiente'
   const allEnviado  = actionable.every(i => i.estado === 'enviado')
   if (allEnviado) return 'enviada'
-  const allResuelto = actionable.every(i => ['comprado', 'de_deposito', 'enviado'].includes(i.estado))
+  const allResuelto = actionable.every(i => ESTADOS_RESUELTOS.includes(i.estado))
   if (allResuelto) return 'en_gestion'
   return 'pendiente'
 }
 
 function countResumen(items: Array<{ estado: ItemEstado }>) {
   const actionable = items.filter(i => i.estado !== 'rechazado')
-  const resueltos  = actionable.filter(i => ['comprado', 'de_deposito', 'enviado'].includes(i.estado)).length
+  const resueltos  = actionable.filter(i => ESTADOS_RESUELTOS.includes(i.estado)).length
   const enviados   = actionable.filter(i => i.estado === 'enviado').length
   return { total: actionable.length, resueltos, enviados }
 }
@@ -606,6 +612,35 @@ export const solicitudesService = {
     if (error) throw new Error(error.message)
     if (!data) throw new Error('Ítem no encontrado o no se puede revertir')
 
+    // Revertir los movimientos de stock que generó la resolución:
+    //  - despacho de depósito → 'salida' (hay que reponer)
+    //  - compra a obra depósito → 'entrada' (hay que descontar)
+    // Se reversan por la cantidad EFECTIVAMENTE movida (stock_movimientos.cantidad)
+    // y se borran, para no dejar stock_actual descuadrado ni movimientos
+    // huérfanos. (rechazado → pendiente nunca generó movimientos: no-op.)
+    // Cubre los dos caminos (legacy y RPC), ambos taggean solicitud_item_id.
+    const { data: movs } = await supabase
+      .from('stock_movimientos')
+      .select('id, material_id, tipo, cantidad')
+      .eq('solicitud_item_id', itemId)
+    for (const mov of movs ?? []) {
+      if (mov.material_id != null) {
+        const { data: mat } = await supabase
+          .from('stock_materiales')
+          .select('stock_actual')
+          .eq('id', mov.material_id)
+          .maybeSingle()
+        if (mat) {
+          const delta = mov.tipo === 'entrada' ? -Number(mov.cantidad) : Number(mov.cantidad)
+          await supabase
+            .from('stock_materiales')
+            .update({ stock_actual: Number(mat.stock_actual) + delta })
+            .eq('id', mov.material_id)
+        }
+      }
+      await supabase.from('stock_movimientos').delete().eq('id', mov.id)
+    }
+
     // Borrar registro de materiales_a_cuenta_cliente si existía
     await supabase.from('materiales_a_cuenta_cliente').delete().eq('item_id', itemId)
     return data
@@ -683,8 +718,13 @@ export const solicitudesService = {
     // Actualizar materiales_a_cuenta_cliente si existe
     const updates: any = {}
     if (dto.precio_unit !== undefined) {
+      // Recalcular con la cantidad EFECTIVA (la comprada si difiere de la
+      // solicitada), igual que _registrarMaterialCliente. Antes usaba
+      // data.cantidad (solicitada) y descuadraba el precio_total del MCC
+      // cuando cantidad_comprada != cantidad.
+      const cantidadEfectiva = data.cantidad_comprada ?? data.cantidad
       updates.precio_unit = dto.precio_unit
-      updates.precio_total = data.cantidad * dto.precio_unit
+      updates.precio_total = cantidadEfectiva * dto.precio_unit
     }
     if (dto.proveedor_id !== undefined) updates.proveedor_id = dto.proveedor_id
     if (dto.factura_id !== undefined) updates.factura_id = dto.factura_id

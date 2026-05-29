@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
+import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import { solicitudesService, HttpError } from './solicitudes.service.js'
 import {
   CreateSolicitudSchema, UpdateSolicitudSchema,
@@ -131,8 +132,33 @@ async function requireResolverItems(c: any, next: any) {
   await next()
 }
 
+// Guard: valida que el usuario tenga acceso a la obra de la solicitud del ítem.
+// Las acciones de resolución operan sobre :itemId, no sobre la solicitud, así
+// que requirePermiso (módulo) y requireResolverItems (flag) no alcanzan: un
+// usuario con obras_scope acotado no debe resolver ítems de obras ajenas.
+// Consistente con el obra-scope que ya validan getById/update/delete.
+// Si getObrasDelUsuarioCached devuelve null (admin/sin restricción), pasa.
+async function requireItemObraScope(c: any, next: any) {
+  const allowed = await getObrasDelUsuarioCached(c.get('user').id, 'certificaciones')
+  if (allowed != null) {
+    const itemId = Number(c.req.param('itemId'))
+    const { data, error } = await supabase
+      .from('solicitud_compra_item')
+      .select('solicitud_compra(obra_cod)')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (error) return c.json({ error: error.message }, 500)
+    if (!data) return c.json({ error: 'ITEM_NO_EXISTE' }, 404)
+    const obraCod = (data as any).solicitud_compra?.obra_cod
+    if (!obraCod || !allowed.includes(obraCod)) {
+      return c.json({ error: 'OBRA_SIN_ACCESO' }, 403)
+    }
+  }
+  await next()
+}
+
 // ── Acciones sobre ítems ──
-solicitudes.post('/items/:itemId/comprar', requireResolverItems, zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/comprar', requireResolverItems, requireItemObraScope, zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
   return solicitudesService.comprarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
@@ -147,6 +173,7 @@ solicitudes.post('/items/:itemId/comprar', requireResolverItems, zValidator('jso
 //      igual que los demás endpoints de /items (DRY).
 solicitudes.post('/items/:itemId/despachar',
   requireResolverItems,
+  requireItemObraScope,
   zValidator('json', DespacharItemSchema),
   async (c, next) => {
     const body = c.req.valid('json')
@@ -172,19 +199,19 @@ solicitudes.post('/items/:itemId/despachar',
   }),
 )
 
-solicitudes.post('/items/:itemId/enviar', requireResolverItems, zValidator('json', EnviarItemSchema), itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/enviar', requireResolverItems, requireItemObraScope, zValidator('json', EnviarItemSchema), itemHandler(async (c) => {
   return solicitudesService.enviarItem(
     Number(c.req.param('itemId')), c.req.valid('json').fecha_envio, c.get('accessToken')
   )
 }))
 
-solicitudes.post('/items/:itemId/rechazar', requireResolverItems, itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/rechazar', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.rechazarItem(
     Number(c.req.param('itemId')), c.get('accessToken')
   )
 }))
 
-solicitudes.post('/items/:itemId/revertir', requireResolverItems, itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/revertir', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.revertirItem(
     Number(c.req.param('itemId')), c.get('accessToken')
   )
@@ -193,7 +220,7 @@ solicitudes.post('/items/:itemId/revertir', requireResolverItems, itemHandler(as
 // POST /items/:itemId/revertir-envio — deshace SOLO el envío: el item vuelve
 // a su estado previo (comprado/de_deposito), manteniendo la compra. Limpia
 // fecha_envio y desvincula del remito (borra el remito si queda vacío).
-solicitudes.post('/items/:itemId/revertir-envio', requireResolverItems, itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/revertir-envio', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.revertirEnvioItem(
     Number(c.req.param('itemId')), c.get('accessToken')
   )
@@ -201,7 +228,7 @@ solicitudes.post('/items/:itemId/revertir-envio', requireResolverItems, itemHand
 
 // PATCH /items/:itemId — edita campos de items YA resueltos (ej. corregir
 // precio o proveedor luego de comprado). Es del comprador, no del jefe.
-solicitudes.patch('/items/:itemId', requireResolverItems, zValidator('json', EditarItemSchema), itemHandler(async (c) => {
+solicitudes.patch('/items/:itemId', requireResolverItems, requireItemObraScope, zValidator('json', EditarItemSchema), itemHandler(async (c) => {
   return solicitudesService.editarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )
