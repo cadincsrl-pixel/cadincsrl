@@ -1,6 +1,6 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 import { createHash, randomUUID } from 'node:crypto'
-import { createSupabaseClient, supabase } from '../../../lib/supabase.js'
+import { createSupabaseClient, supabase, supabase as supabaseAdmin } from '../../../lib/supabase.js'
 import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto, UpdateAdelantoDto } from './liquidaciones.schema.js'
 
 const BUCKET_ADELANTOS = 'adelantos-logistica'
@@ -107,13 +107,12 @@ export const liquidacionesService = {
     return data
   },
 
-  async create(dto: CreateLiquidacionDto, token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
-
+  async create(dto: CreateLiquidacionDto, _token: string, userId: string) {
     // Delegamos al RPC transaccional — garantiza que si algún vínculo
     // falla (tramo/adelanto/gasto no valido), nada se persiste y la
     // liquidación no queda a medio crear. Ver migración 20260423_liquidaciones_reintegros.
-    const { data, error } = await supabase.rpc('create_liquidacion_con_reintegros', {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { data, error } = await supabaseAdmin.rpc('create_liquidacion_con_reintegros', {
       p_chofer_id:            dto.chofer_id,
       p_fecha_desde:          dto.fecha_desde,
       p_fecha_hasta:          dto.fecha_hasta,
@@ -184,7 +183,8 @@ export const liquidacionesService = {
     const supabase = createSupabaseClient(token)
     // RPC transaccional: desliga tramos/adelantos/gastos y pone estado='borrador'
     // atómicamente con FOR UPDATE. Migración 20260424_rpc_reabrir_eliminar_liquidacion.
-    const { data, error } = await supabase.rpc('reabrir_liquidacion', {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { data, error } = await supabaseAdmin.rpc('reabrir_liquidacion', {
       p_liquidacion_id: id,
       p_user_id:        userId,
     })
@@ -201,10 +201,10 @@ export const liquidacionesService = {
     return liq ?? data
   },
 
-  async delete(id: number, token: string, userId?: string) {
-    const supabase = createSupabaseClient(token)
+  async delete(id: number, _token: string, userId?: string) {
     // RPC transaccional: desliga children y borra.
-    const { data, error } = await supabase.rpc('eliminar_liquidacion', {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { data, error } = await supabaseAdmin.rpc('eliminar_liquidacion', {
       p_liquidacion_id: id,
       p_user_id:        userId ?? null,
     })

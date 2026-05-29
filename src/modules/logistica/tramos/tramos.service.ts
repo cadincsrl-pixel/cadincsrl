@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../../../lib/supabase.js'
+import { createSupabaseClient, supabase as supabaseAdmin } from '../../../lib/supabase.js'
 import type { CreateTramoDto, UpdateTramoDto, RegistrarDescargaDto } from './tramos.schema.js'
 
 // Helper para errores con código que el handler HTTP mapea a status
@@ -25,12 +25,12 @@ export const tramosService = {
     return data
   },
 
-  async mover(id: number, dir: 'up' | 'down', token: string, userId?: string) {
-    const supabase = createSupabaseClient(token)
+  async mover(id: number, dir: 'up' | 'down', _token: string, userId?: string) {
     // RPC transaccional con FOR UPDATE sobre ambos tramos — evita
     // duplicados de orden_dia bajo concurrencia. Migración
     // 20260424_rpc_mover_tramo_orden.
-    const { data, error } = await supabase.rpc('mover_tramo_orden', {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { data, error } = await supabaseAdmin.rpc('mover_tramo_orden', {
       p_tramo_id: id,
       p_dir:      dir,
       p_user_id:  userId ?? null,

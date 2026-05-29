@@ -1,5 +1,5 @@
 import type { PostgrestError } from '@supabase/supabase-js'
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
@@ -278,7 +278,9 @@ export const solicitudesService = {
     // RPC transaccional: revierte stock con FOR UPDATE, valida remitos_envio,
     // y borra solicitud_compra (CASCADE borra items + MCC).
     // Migración 20260424_rpc_eliminar_solicitud.
-    const { data, error } = await supabase.rpc('eliminar_solicitud', {
+    // Vía supabaseAdmin: es SECURITY DEFINER y la migración 20260527 revocó
+    // EXECUTE para `authenticated` (rol efectivo del token client). Ver P0.
+    const { data, error } = await supabaseAdmin.rpc('eliminar_solicitud', {
       p_solicitud_id: id,
       p_user_id:      userId,
     })
@@ -302,7 +304,8 @@ export const solicitudesService = {
   // (la facturación al cliente espera al retiro real, decisión B).
   async comprarItemEnProveedor(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const { error } = await supabase.rpc('resolver_item_en_proveedor', {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { error } = await supabaseAdmin.rpc('resolver_item_en_proveedor', {
       p_item_id:      itemId,
       p_proveedor_id: dto.proveedor_id,
       p_precio_unit:  dto.precio_unit,
@@ -359,7 +362,8 @@ export const solicitudesService = {
   // comparado con mantener estabilidad del frontend).
   async comprarItemViaRPC(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const { error } = await supabase.rpc('resolver_item_compra', {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { error } = await supabaseAdmin.rpc('resolver_item_compra', {
       p_item_id:      itemId,
       p_proveedor_id: dto.proveedor_id,
       p_precio_unit:  dto.precio_unit,
@@ -412,7 +416,8 @@ export const solicitudesService = {
     forzarSinStock: boolean = false,
   ) {
     const supabase = createSupabaseClient(token)
-    const { error } = await supabase.rpc('resolver_item_despacho', {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { error } = await supabaseAdmin.rpc('resolver_item_despacho', {
       p_item_id:          itemId,
       p_precio_unit:      dto.precio_unit,
       p_user_id:          userId,

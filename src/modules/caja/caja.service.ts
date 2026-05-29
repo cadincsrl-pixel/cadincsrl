@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
 import type { CreateMovimientoDto, UpdateMovimientoDto } from './caja.schema.js'
 
 export const cajaService = {
@@ -75,9 +75,10 @@ export const cajaService = {
    * window function (migración 20260424_rpc_recalcular_saldos_caja).
    * Reemplaza el loop N+1 anterior que tenía race condition bajo concurrencia.
    */
-  async _recalcularTodos(token: string) {
-    const supabase = createSupabaseClient(token)
-    const { error } = await supabase.rpc('sp_recalcular_saldos_caja')
+  async _recalcularTodos(_token: string) {
+    // supabaseAdmin: sp_recalcular_saldos_caja es SECURITY DEFINER y la migración
+    // 20260527 revocó EXECUTE para `authenticated` (rol efectivo del token client).
+    const { error } = await supabaseAdmin.rpc('sp_recalcular_saldos_caja')
     if (error) throw new Error(`Error recalculando saldos: ${error.message}`)
   },
 

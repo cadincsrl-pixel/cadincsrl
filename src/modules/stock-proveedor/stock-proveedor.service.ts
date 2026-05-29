@@ -128,7 +128,8 @@ export const stockProveedorService = {
     const comp  = await procesarComprobante(dto.comprobante_path)
 
     const sb = createSupabaseClient(token)
-    const { data: remitoId, error } = await sb.rpc('retirar_de_proveedor', {
+    // supabase (admin): SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { data: remitoId, error } = await supabase.rpc('retirar_de_proveedor', {
       p_proveedor_id:     dto.proveedor_id,
       p_obra_cod:         dto.obra_cod,
       p_fecha:            fecha,
