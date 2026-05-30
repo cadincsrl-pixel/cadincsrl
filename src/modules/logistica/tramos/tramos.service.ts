@@ -81,6 +81,23 @@ export const tramosService = {
     const patch = Object.fromEntries(
       Object.entries(dto).filter(([, v]) => v !== undefined)
     )
+
+    // Guard: un tramo ya liquidado/cobrado tiene su km/toneladas/empresa
+    // snapshoteados en la liquidación/cobro; editar cualquier campo (salvo obs)
+    // los desincronizaría. Bloqueamos. (El front ya mapea TRAMO_COBRADO/LIQUIDADO.)
+    const tocaFinancieros = Object.keys(patch).some(k => k !== 'obs')
+    if (tocaFinancieros) {
+      const { data: tramo, error: e0 } = await supabase
+        .from('tramos')
+        .select('id, liquidacion_id, cobro_id')
+        .eq('id', id)
+        .maybeSingle()
+      if (e0) throw new Error(e0.message)
+      if (!tramo)               throw codedError('TRAMO_NO_EXISTE', 'Tramo no encontrado')
+      if (tramo.liquidacion_id) throw codedError('TRAMO_LIQUIDADO', 'No se puede editar: el tramo está liquidado')
+      if (tramo.cobro_id)       throw codedError('TRAMO_COBRADO',   'No se puede editar: el tramo está cobrado')
+    }
+
     const { data, error } = await supabase
       .from('tramos')
       .update({ ...patch, updated_by: userId })

@@ -30,8 +30,15 @@ tramos.post('/', zValidator('json', CreateTramoSchema), async (c) => {
 })
 
 tramos.patch('/:id', zValidator('json', UpdateTramoSchema), async (c) => {
-  const data = await tramosService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
-  return c.json(data)
+  try {
+    const data = await tramosService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  } catch (err: any) {
+    if (err.code === 'TRAMO_NO_EXISTE') return c.json({ error: err.code, message: err.message }, 404)
+    if (err.code === 'TRAMO_LIQUIDADO') return c.json({ error: err.code, message: err.message }, 409)
+    if (err.code === 'TRAMO_COBRADO')   return c.json({ error: err.code, message: err.message }, 409)
+    return c.json({ error: err.message }, 500)
+  }
 })
 
 tramos.post('/:id/descarga', zValidator('json', RegistrarDescargaSchema), async (c) => {

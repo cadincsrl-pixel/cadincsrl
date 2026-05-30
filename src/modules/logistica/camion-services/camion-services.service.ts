@@ -132,13 +132,25 @@ export const camionServicesService = {
       .select('km_actuales')
       .eq('id', dto.camion_id)
       .maybeSingle()
-    if (!cam || Number(cam.km_actuales ?? 0) < Number(dto.km_service)) {
+    const kmActual = Number(cam?.km_actuales ?? 0)
+    if (!cam || kmActual < Number(dto.km_service)) {
       await sb
         .from('camiones')
         .update({ km_actuales: dto.km_service, updated_by: userId })
         .eq('id', dto.camion_id)
     }
-    return data
+
+    // Warning NO-bloqueante: el service trae un km menor al odómetro actual
+    // del camión (típico: carga de un service histórico, o un typo). No
+    // bloqueamos — el odómetro puede retroceder (cambio de tablero/unidad).
+    const warnings: Array<{ code: string; detail?: unknown }> = []
+    if (cam && kmActual > 0 && Number(dto.km_service) < kmActual) {
+      warnings.push({
+        code: 'KM_SERVICE_MENOR_ODOMETRO',
+        detail: { km_actuales: kmActual, km_service: Number(dto.km_service) },
+      })
+    }
+    return warnings.length ? { ...data, warnings } : data
   },
 
   async update(id: number, dto: UpdateServiceDto, token: string, userId: string) {
