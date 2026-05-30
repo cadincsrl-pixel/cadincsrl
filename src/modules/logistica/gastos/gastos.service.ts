@@ -19,6 +19,10 @@ export class HttpError extends Error {
 // Si `liquidacion_id != null`, TODO es inmutable (ver canMutate).
 const CAMPOS_FINANCIEROS = new Set<keyof UpdateGastoDto>([
   'monto', 'pagado_por', 'chofer_id', 'camion_id', 'categoria_id', 'comprobante_path',
+  // 'fecha' es financiero de facto: getReintegrosPendientes filtra por
+  // fecha<=hasta, así que mover la fecha de un gasto chofer aprobado lo
+  // mete/saca de la ventana de una liquidación. Inmutable una vez aprobado.
+  'fecha',
 ])
 
 function extFromMime(mime: string): string {

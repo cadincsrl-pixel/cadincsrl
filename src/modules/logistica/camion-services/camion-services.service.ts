@@ -34,9 +34,17 @@ async function sha256OfBlob(blob: Blob): Promise<string> {
 // contra la UNIQUE parcial de comprobante_hash.
 async function procesarComprobante(
   path: string | null | undefined,
+  camionId: number,
   serviceIdExcluir?: number,
 ): Promise<{ url: string; hash: string } | null> {
   if (!path) return null
+  // El path lo genera pathForUpload como `services/YYYY/MM/camion_<id>_<uuid>.<ext>`.
+  // Validar que el segmento camion_<id>_ corresponda al camión del service
+  // antes de descargar/hashear, para evitar adjuntar un comprobante de otro
+  // camión (IDOR sobre el bucket / colisión de hash cruzada).
+  if (!path.includes(`camion_${camionId}_`)) {
+    throw new CamionServiceError(400, 'COMPROBANTE_PATH_INVALIDO', { path, camion_id: camionId })
+  }
   const dl = await supabase.storage.from(BUCKET).download(path)
   if (dl.error || !dl.data) {
     throw new CamionServiceError(400, 'COMPROBANTE_INEXISTENTE', { path })
@@ -92,7 +100,7 @@ export const camionServicesService = {
   // a actualizar manualmente o vía GPS).
   async create(dto: CreateServiceDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
-    const comp = await procesarComprobante(dto.comprobante_path)
+    const comp = await procesarComprobante(dto.comprobante_path, dto.camion_id)
     const fecha = dto.fecha ?? new Date().toISOString().slice(0, 10)
 
     const { data, error } = await sb
@@ -144,7 +152,7 @@ export const camionServicesService = {
     if (dto.comprobante_path !== undefined) {
       const { data: prev } = await sb
         .from('camion_services')
-        .select('comprobante_url')
+        .select('comprobante_url, camion_id')
         .eq('id', id)
         .maybeSingle()
       const prevPath = prev?.comprobante_url ?? null
@@ -153,7 +161,8 @@ export const camionServicesService = {
         patch.comprobante_url  = null
         patch.comprobante_hash = null
       } else {
-        const comp = await procesarComprobante(dto.comprobante_path, id)
+        if (!prev) throw new CamionServiceError(404, 'SERVICE_NO_EXISTE', { id })
+        const comp = await procesarComprobante(dto.comprobante_path, prev.camion_id, id)
         patch.comprobante_url  = comp?.url  ?? null
         patch.comprobante_hash = comp?.hash ?? null
       }

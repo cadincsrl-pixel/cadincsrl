@@ -9,13 +9,13 @@ export const CreateTramoSchema = z.object({
 
   // Carga (tipo='cargado')
   fecha_carga:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  toneladas_carga:      z.number().optional(),
+  toneladas_carga:      z.number().min(0).optional(),
   remito_carga:         z.string().optional().default(''),
   remito_carga_img_url: z.string().url().nullable().optional(),
 
   // Descarga (se registra después via PATCH)
   fecha_descarga:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  toneladas_descarga:      z.number().optional(),
+  toneladas_descarga:      z.number().min(0).optional(),
   remito_descarga:         z.string().optional().default(''),
   remito_descarga_img_url: z.string().url().nullable().optional(),
 
@@ -45,11 +45,11 @@ export const UpdateTramoSchema = z.object({
   deposito_id:        z.number().nullable().optional(),
   empresa_id:         z.number().nullable().optional(),
   fecha_carga:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  toneladas_carga:         z.number().optional(),
+  toneladas_carga:         z.number().min(0).optional(),
   remito_carga:            z.string().optional(),
   remito_carga_img_url:    z.string().url().nullable().optional(),
   fecha_descarga:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  toneladas_descarga:      z.number().optional(),
+  toneladas_descarga:      z.number().min(0).optional(),
   remito_descarga:         z.string().optional(),
   remito_descarga_img_url: z.string().url().nullable().optional(),
   fecha_vacio:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -59,7 +59,7 @@ export const UpdateTramoSchema = z.object({
 
 export const RegistrarDescargaSchema = z.object({
   fecha_descarga:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  toneladas_descarga:      z.number().optional(),
+  toneladas_descarga:      z.number().min(0).optional(),
   remito_descarga:         z.string().optional().default(''),
   remito_descarga_img_url: z.string().url().nullable().optional(),
 })

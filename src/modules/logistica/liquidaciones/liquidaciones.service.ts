@@ -146,6 +146,19 @@ export const liquidacionesService = {
 
   async update(id: number, dto: UpdateLiquidacionDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Gate de estado: editar campos financieros de una liquidación 'cerrada'
+    // reescribiría montos sin re-vincular los children (tramos/adelantos/gastos).
+    // El flujo correcto es reabrir -> editar -> cerrar. Bloqueamos acá.
+    const { data: liq, error: e0 } = await supabase
+      .from('liquidaciones')
+      .select('estado')
+      .eq('id', id)
+      .maybeSingle()
+    if (e0) throw new LiqHttpError(500, 'DB_ERROR', e0.message)
+    if (!liq) throw new LiqHttpError(404, 'LIQUIDACION_NO_EXISTE')
+    if (liq.estado !== 'borrador') throw new LiqHttpError(409, 'LIQUIDACION_CERRADA')
+
     const { data, error } = await supabase
       .from('liquidaciones')
       .update({ ...dto, updated_by: userId })

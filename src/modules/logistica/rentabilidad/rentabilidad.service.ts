@@ -1,3 +1,4 @@
+import { HTTPException } from 'hono/http-exception'
 import { createSupabaseClient } from '../../../lib/supabase.js'
 import type { ParametrosDto, CreateViajeDto, UpdateViajeDto } from './rentabilidad.schema.js'
 
@@ -75,13 +76,22 @@ export const rentabilidadService = {
       .update({ ...dto, updated_by: userId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
-      .single()
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!data) throw new HTTPException(404, { message: 'Viaje no encontrado' })
     return data
   },
 
   async deleteViaje(id: number, token: string) {
     const sb = createSupabaseClient(token)
+    // Chequear existencia para devolver 404 en vez de un 200 silencioso.
+    const { data: prev, error: e0 } = await sb
+      .from('rentabilidad_viajes')
+      .select('id')
+      .eq('id', id)
+      .maybeSingle()
+    if (e0) throw new Error(e0.message)
+    if (!prev) throw new HTTPException(404, { message: 'Viaje no encontrado' })
     const { error } = await sb.from('rentabilidad_viajes').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }

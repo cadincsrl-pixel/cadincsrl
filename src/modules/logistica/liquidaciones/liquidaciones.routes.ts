@@ -36,8 +36,10 @@ liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) =
 })
 
 liquidaciones.patch('/:id', zValidator('json', UpdateLiquidacionSchema), async (c) => {
-  const data = await liquidacionesService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
-  return c.json(data)
+  try {
+    const data = await liquidacionesService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  } catch (err) { return handleLiqError(err, c) }
 })
 
 liquidaciones.patch('/:id/cerrar', async (c) => {

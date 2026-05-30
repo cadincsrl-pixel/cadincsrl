@@ -93,6 +93,20 @@ export const tramosService = {
 
   async registrarDescarga(id: number, dto: RegistrarDescargaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Precondiciones: no permitir pisar la descarga de un tramo ya liquidado
+    // o cobrado (toneladas_descarga es la base del cálculo aguas abajo).
+    // Mismo guard que revertirDescarga.
+    const { data: tramo, error: e0 } = await supabase
+      .from('tramos')
+      .select('id, liquidacion_id, cobro_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (e0) throw new Error(e0.message)
+    if (!tramo)               throw codedError('TRAMO_NO_EXISTE', 'Tramo no encontrado')
+    if (tramo.liquidacion_id) throw codedError('TRAMO_LIQUIDADO', 'No se puede registrar descarga: el tramo está liquidado')
+    if (tramo.cobro_id)       throw codedError('TRAMO_COBRADO',   'No se puede registrar descarga: el tramo está cobrado')
+
     const { data, error } = await supabase
       .from('tramos')
       .update({ ...dto, estado: 'completado', updated_by: userId })
