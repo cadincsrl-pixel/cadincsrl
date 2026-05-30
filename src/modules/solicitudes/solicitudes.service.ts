@@ -1,6 +1,7 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
+import { registrarItemEvento } from '../../lib/item-eventos.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
   ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto,
@@ -146,6 +147,23 @@ export const solicitudesService = {
     }
   },
 
+  // Historial de transiciones de un ítem (timeline de trazabilidad).
+  // Devuelve los eventos CRUDOS en orden cronológico ASC (el front muestra el
+  // más reciente como "actual"). El nombre del usuario lo resuelve el front con
+  // usePerfilesMap: user_id -> auth.users, no hay FK a profiles para embeber.
+  // El obra-scope lo valida `requireItemObraScope` en el route (no se duplica).
+  async getItemEventos(itemId: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('solicitud_item_eventos')
+      .select('*')
+      .eq('item_id', itemId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
   async create(dto: CreateSolicitudDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { items, ...cabecera } = dto
@@ -184,10 +202,23 @@ export const solicitudesService = {
       return row
     })
 
-    const { error: itemsErr } = await supabase
+    const { data: itemsCreados, error: itemsErr } = await supabase
       .from('solicitud_compra_item')
       .insert(itemsData)
+      .select('id, cantidad')
     if (itemsErr) throw new Error(itemsErr.message)
+
+    // Evento 'creado': arranca el timeline de trazabilidad de cada ítem.
+    for (const it of itemsCreados ?? []) {
+      await registrarItemEvento(supabase, {
+        itemId:      it.id,
+        solicitudId: solicitud.id,
+        accion:      'creado',
+        estadoNuevo: 'pendiente',
+        cantidad:    it.cantidad,
+        userId,
+      })
+    }
 
     return this.getById(solicitud.id, token, userId)
   },
@@ -259,8 +290,19 @@ export const solicitudesService = {
             estado:       'pendiente',
           }
           if (it.material_id) row.material_id = it.material_id
-          const { error: insErr } = await supabase.from('solicitud_compra_item').insert(row)
+          const { data: nuevo, error: insErr } = await supabase
+            .from('solicitud_compra_item').insert(row).select('id, cantidad').maybeSingle()
           if (insErr) throw new Error(`Error insertando ítem: ${insErr.message}`)
+          if (nuevo) {
+            await registrarItemEvento(supabase, {
+              itemId:      nuevo.id,
+              solicitudId: id,
+              accion:      'creado',
+              estadoNuevo: 'pendiente',
+              cantidad:    nuevo.cantidad,
+              userId,
+            })
+          }
         }
       }
     }
@@ -300,9 +342,31 @@ export const solicitudesService = {
   // Si dto.queda_en_proveedor=true, en cambio dispara la RPC de
   // 'en_proveedor' (no hay camino legacy: feature nuevo).
   async comprarItem(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
-    if (dto.queda_en_proveedor) return this.comprarItemEnProveedor(itemId, dto, token, userId)
-    if (useRpcResolver()) return this.comprarItemViaRPC(itemId, dto, token, userId)
-    return this.comprarItemLegacy(itemId, dto, token, userId)
+    const item = dto.queda_en_proveedor
+      ? await this.comprarItemEnProveedor(itemId, dto, token, userId)
+      : useRpcResolver()
+        ? await this.comprarItemViaRPC(itemId, dto, token, userId)
+        : await this.comprarItemLegacy(itemId, dto, token, userId)
+
+    // Evento de transición (cubre los 3 caminos: legacy, RPC, en_proveedor).
+    const estadoNuevo = (item as any)?.estado ?? (dto.queda_en_proveedor ? 'en_proveedor' : 'comprado')
+    await registrarItemEvento(createSupabaseClient(token), {
+      itemId,
+      solicitudId:    (item as any)?.solicitud_id ?? null,
+      accion:         estadoNuevo === 'en_proveedor' ? 'en_proveedor' : 'comprado',
+      estadoAnterior: 'pendiente',
+      estadoNuevo,
+      cantidad:       dto.cantidad_comprada ?? null,
+      meta: {
+        proveedor_id:       dto.proveedor_id,
+        precio_unit:        dto.precio_unit,
+        factura_id:         dto.factura_id ?? null,
+        pagado_por:         dto.pagado_por ?? 'cadinc',
+        queda_en_proveedor: !!dto.queda_en_proveedor,
+      },
+      userId,
+    })
+    return item
   },
 
   // RPC `resolver_item_en_proveedor`: marca item='en_proveedor' + suma
@@ -352,8 +416,22 @@ export const solicitudesService = {
     userId: string,
     forzarSinStock: boolean = false,
   ) {
-    if (useRpcResolver()) return this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
-    return this.despacharItemLegacy(itemId, dto, token, userId, forzarSinStock)
+    const item = useRpcResolver()
+      ? await this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
+      : await this.despacharItemLegacy(itemId, dto, token, userId, forzarSinStock)
+
+    // Evento de transición (cubre legacy + RPC).
+    await registrarItemEvento(createSupabaseClient(token), {
+      itemId,
+      solicitudId:    (item as any)?.solicitud_id ?? null,
+      accion:         'despachado',
+      estadoAnterior: 'pendiente',
+      estadoNuevo:    (item as any)?.estado ?? 'de_deposito',
+      cantidad:       (item as any)?.cantidad ?? null,
+      meta:           { precio_unit: dto.precio_unit, forzar_sin_stock: forzarSinStock },
+      userId,
+    })
+    return item
   },
 
   // Camino RPC — transaccional en Postgres (resolver_item_compra).
@@ -529,7 +607,7 @@ export const solicitudesService = {
     return data
   },
 
-  async enviarItem(itemId: number, fechaEnvio: string | undefined, token: string) {
+  async enviarItem(itemId: number, fechaEnvio: string | undefined, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('solicitud_compra_item')
@@ -544,10 +622,19 @@ export const solicitudesService = {
       .maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) throw new Error('Ítem no encontrado o no está listo para enviar')
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId: data.solicitud_id ?? null,
+      accion:      'enviado',
+      estadoNuevo: 'enviado',
+      cantidad:    data.cantidad ?? null,
+      meta:        { fecha_envio: data.fecha_envio },
+      userId:      userId ?? null,
+    })
     return data
   },
 
-  async rechazarItem(itemId: number, token: string) {
+  async rechazarItem(itemId: number, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('solicitud_compra_item')
@@ -558,11 +645,22 @@ export const solicitudesService = {
       .maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    data.solicitud_id ?? null,
+      accion:         'rechazado',
+      estadoAnterior: 'pendiente',
+      estadoNuevo:    'rechazado',
+      userId:         userId ?? null,
+    })
     return data
   },
 
-  async revertirItem(itemId: number, token: string) {
+  async revertirItem(itemId: number, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
+    // Estado previo (entre comprado/de_deposito/rechazado) para la traza.
+    const { data: prev } = await supabase
+      .from('solicitud_compra_item').select('estado').eq('id', itemId).maybeSingle()
     const { data, error } = await supabase
       .from('solicitud_compra_item')
       .update({
@@ -612,6 +710,15 @@ export const solicitudesService = {
 
     // Borrar registro de materiales_a_cuenta_cliente si existía
     await supabase.from('materiales_a_cuenta_cliente').delete().eq('item_id', itemId)
+
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    data.solicitud_id ?? null,
+      accion:         'revertido',
+      estadoAnterior: prev?.estado ?? null,
+      estadoNuevo:    'pendiente',
+      userId:         userId ?? null,
+    })
     return data
   },
 
@@ -623,7 +730,7 @@ export const solicitudesService = {
   // NO toca proveedor/precio/factura ni el MCC: la compra/despacho se mantiene.
   // Para deshacer también la compra, el usuario usa `revertir` desde el estado
   // resultante (comprado/de_deposito → pendiente).
-  async revertirEnvioItem(itemId: number, token: string) {
+  async revertirEnvioItem(itemId: number, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
 
     // 1) Validar que esté enviado y determinar el estado previo.
@@ -695,6 +802,14 @@ export const solicitudesService = {
       await supabase.from('stock_movimientos').delete().eq('id', mov.id)
     }
 
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    (data as any).solicitud_id ?? null,
+      accion:         'envio_revertido',
+      estadoAnterior: 'enviado',
+      estadoNuevo:    estadoPrevio,
+      userId:         userId ?? null,
+    })
     return data
   },
 

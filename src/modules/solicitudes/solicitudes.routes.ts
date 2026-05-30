@@ -158,6 +158,15 @@ async function requireItemObraScope(c: any, next: any) {
 }
 
 // ── Acciones sobre ítems ──
+
+// GET /items/:itemId/eventos — historial de transiciones del ítem (timeline).
+// Solo lectura: requirePermiso('certificaciones','lectura') ya aplica a GET /*
+// (línea 23). Gateamos por obra con requireItemObraScope (no requiere
+// resolver_items: ver el historial es lectura, no resolución).
+solicitudes.get('/items/:itemId/eventos', requireItemObraScope, itemHandler(async (c) => {
+  return solicitudesService.getItemEventos(Number(c.req.param('itemId')), c.get('accessToken'))
+}))
+
 solicitudes.post('/items/:itemId/comprar', requireResolverItems, requireItemObraScope, zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
   return solicitudesService.comprarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
@@ -201,19 +210,19 @@ solicitudes.post('/items/:itemId/despachar',
 
 solicitudes.post('/items/:itemId/enviar', requireResolverItems, requireItemObraScope, zValidator('json', EnviarItemSchema), itemHandler(async (c) => {
   return solicitudesService.enviarItem(
-    Number(c.req.param('itemId')), c.req.valid('json').fecha_envio, c.get('accessToken')
+    Number(c.req.param('itemId')), c.req.valid('json').fecha_envio, c.get('accessToken'), c.get('user').id
   )
 }))
 
 solicitudes.post('/items/:itemId/rechazar', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.rechazarItem(
-    Number(c.req.param('itemId')), c.get('accessToken')
+    Number(c.req.param('itemId')), c.get('accessToken'), c.get('user').id
   )
 }))
 
 solicitudes.post('/items/:itemId/revertir', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.revertirItem(
-    Number(c.req.param('itemId')), c.get('accessToken')
+    Number(c.req.param('itemId')), c.get('accessToken'), c.get('user').id
   )
 }))
 
@@ -222,7 +231,7 @@ solicitudes.post('/items/:itemId/revertir', requireResolverItems, requireItemObr
 // fecha_envio y desvincula del remito (borra el remito si queda vacío).
 solicitudes.post('/items/:itemId/revertir-envio', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.revertirEnvioItem(
-    Number(c.req.param('itemId')), c.get('accessToken')
+    Number(c.req.param('itemId')), c.get('accessToken'), c.get('user').id
   )
 }))
 

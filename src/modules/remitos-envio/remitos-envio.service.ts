@@ -1,4 +1,5 @@
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { registrarItemEvento } from '../../lib/item-eventos.js'
 import type { CreateRemitoEnvioDto } from './remitos-envio.schema.js'
 
 export const remitosEnvioService = {
@@ -100,6 +101,20 @@ export const remitosEnvioService = {
           .in('estado', ['comprado', 'de_deposito', 'retirado'])
           .select('id')
           .maybeSingle()
+
+        // Traza: solo si efectivamente pasó a 'enviado'.
+        if (updated) {
+          await registrarItemEvento(supabase, {
+            itemId,
+            solicitudId:    dto.solicitud_id ?? null,
+            accion:         'enviado',
+            estadoAnterior: itemPrev?.estado ?? null,
+            estadoNuevo:    'enviado',
+            cantidad:       itemPrev ? Number(itemPrev.cantidad_comprada ?? itemPrev.cantidad) : null,
+            meta:           { remito_id: remito.id, numero, obra_cod: dto.obra_cod, recibido_en_deposito: esDeposito },
+            userId,
+          })
+        }
 
         // Compra a proveedor con destino depósito → al recibir ingresa al stock.
         // (Los despachos de_deposito ya descontaron stock al despachar; no se tocan.)

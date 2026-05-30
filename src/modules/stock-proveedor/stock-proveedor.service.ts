@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
+import { registrarItemEvento } from '../../lib/item-eventos.js'
 import type { ListStockDto, CrearRemitoRetiroDto } from './stock-proveedor.schema.js'
 
 const BUCKET = 'remitos-retiro-proveedor'
@@ -145,6 +146,28 @@ export const stockProveedorService = {
         await supabase.storage.from(BUCKET).remove([comp.url]).catch(() => undefined)
       }
       throw mapRpcError(error)
+    }
+
+    // Traza: la RPC transiciona en_proveedor -> retirado (o lo deja en
+    // en_proveedor si el retiro fue parcial). Registramos un evento por ítem.
+    const itemIds = dto.items.map(i => i.item_id)
+    const { data: itemsAhora } = await sb
+      .from('solicitud_compra_item')
+      .select('id, estado, solicitud_id')
+      .in('id', itemIds)
+    const itemById = new Map((itemsAhora ?? []).map(i => [i.id, i]))
+    for (const it of dto.items) {
+      const cur = itemById.get(it.item_id)
+      await registrarItemEvento(sb, {
+        itemId:         it.item_id,
+        solicitudId:    cur?.solicitud_id ?? null,
+        accion:         cur?.estado === 'retirado' ? 'retirado' : 'retiro_parcial',
+        estadoAnterior: 'en_proveedor',
+        estadoNuevo:    cur?.estado ?? 'en_proveedor',
+        cantidad:       it.cantidad,
+        meta:           { remito_id: remitoId, proveedor_id: dto.proveedor_id, obra_cod: dto.obra_cod },
+        userId,
+      })
     }
 
     const { data: full, error: e2 } = await sb
