@@ -48,6 +48,8 @@ import cuentaClienteRoutes from './modules/cuenta-cliente/cuenta-cliente.routes.
 import adminRoutes from './modules/admin/admin.routes.js'
 import remitosEnvioRoutes from './modules/remitos-envio/remitos-envio.routes.js'
 import { cajaRoutes } from './modules/caja/caja.routes.js'
+import prestamosRoutes from './modules/prestamos/prestamos.routes.js'
+import ropaRoutes from './modules/ropa/ropa.routes.js'
 import flotaRoutes from './modules/flota/flota.routes.js'
 import flotaGpsInternalRoutes from './modules/flota/gps-sync/flota-gps-sync.internal.routes.js'
 
@@ -118,6 +120,8 @@ app.route('/api/cuenta-cliente', cuentaClienteRoutes)
 app.route('/api/admin', adminRoutes)
 app.route('/api/remitos-envio', remitosEnvioRoutes)
 app.route('/api/caja', cajaRoutes)
+app.route('/api/prestamos', prestamosRoutes)
+app.route('/api/ropa', ropaRoutes)
 app.route('/api/flota', flotaRoutes)
 
 // ── Manejo global de errores ──
