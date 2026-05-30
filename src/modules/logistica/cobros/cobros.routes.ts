@@ -8,9 +8,10 @@ import adjuntosRoutes from './adjuntos.routes.js'
 
 const cobros = new Hono()
 cobros.use('*', authMiddleware)
-cobros.on(['GET'],           '*', requirePermiso('logistica', 'lectura'))
-cobros.on(['POST', 'PATCH'], '*', requirePermiso('logistica', 'actualizacion'))
-cobros.on(['DELETE'],        '*', requirePermiso('logistica', 'eliminacion'))
+cobros.on(['GET'],    '*', requirePermiso('logistica', 'lectura'))
+cobros.on(['POST'],   '*', requirePermiso('logistica', 'creacion'))
+cobros.on(['PATCH'],  '*', requirePermiso('logistica', 'actualizacion'))
+cobros.on(['DELETE'], '*', requirePermiso('logistica', 'eliminacion'))
 
 // Sub-router de adjuntos: /api/logistica/cobros/:id/adjuntos/...
 cobros.route('/', adjuntosRoutes)
@@ -21,8 +22,15 @@ cobros.get('/', async (c) => {
 })
 
 cobros.post('/', zValidator('json', CreateCobroSchema), async (c) => {
-  const data = await cobrosService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
-  return c.json(data, 201)
+  try {
+    const data = await cobrosService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+    return c.json(data, 201)
+  } catch (err: any) {
+    if (err?.code === 'TRAMO_NO_EXISTE')    return c.json({ error: 'TRAMO_NO_EXISTE' }, 400)
+    if (err?.code === 'TRAMO_OTRA_EMPRESA') return c.json({ error: 'TRAMO_OTRA_EMPRESA', detail: err.detail }, 400)
+    if (err?.code === 'TRAMO_YA_COBRADO')   return c.json({ error: 'TRAMO_YA_COBRADO',   detail: err.detail }, 409)
+    throw err
+  }
 })
 
 cobros.patch('/:id/cobrar', async (c) => {
@@ -43,8 +51,14 @@ cobros.patch('/:id/revertir', async (c) => {
 })
 
 cobros.delete('/:id', async (c) => {
-  const data = await cobrosService.delete(Number(c.req.param('id')), c.get('accessToken'))
-  return c.json(data)
+  try {
+    const data = await cobrosService.delete(Number(c.req.param('id')), c.get('accessToken'))
+    return c.json(data)
+  } catch (err: any) {
+    if (err?.code === 'COBRO_NO_EXISTE')  return c.json({ error: 'COBRO_NO_EXISTE' }, 404)
+    if (err?.code === 'COBRO_YA_COBRADO') return c.json({ error: 'COBRO_YA_COBRADO' }, 409)
+    throw err
+  }
 })
 
 export default cobros

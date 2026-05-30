@@ -16,7 +16,36 @@ export const cobrosService = {
   async create(dto: CreateCobroDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
-    // 1. Crear el cobro
+    // 1. Validar tramos ANTES de crear el cobro (evita huérfanos): que existan,
+    // pertenezcan a la empresa del cobro y no estén ya cobrados.
+    if (dto.tramo_ids && dto.tramo_ids.length > 0) {
+      const { data: tramos, error: errVal } = await supabase
+        .from('tramos')
+        .select('id, empresa_id, cobro_id')
+        .in('id', dto.tramo_ids)
+      if (errVal) throw new Error(errVal.message)
+      if (!tramos || tramos.length !== dto.tramo_ids.length) {
+        const e = new Error('TRAMO_NO_EXISTE') as Error & { code?: string }
+        e.code = 'TRAMO_NO_EXISTE'
+        throw e
+      }
+      const otraEmpresa = tramos.filter(t => t.empresa_id !== dto.empresa_id)
+      if (otraEmpresa.length > 0) {
+        const e = new Error('TRAMO_OTRA_EMPRESA') as Error & { code?: string; detail?: number[] }
+        e.code = 'TRAMO_OTRA_EMPRESA'
+        e.detail = otraEmpresa.map(t => t.id)
+        throw e
+      }
+      const yaCobrados = tramos.filter(t => t.cobro_id != null)
+      if (yaCobrados.length > 0) {
+        const e = new Error('TRAMO_YA_COBRADO') as Error & { code?: string; detail?: number[] }
+        e.code = 'TRAMO_YA_COBRADO'
+        e.detail = yaCobrados.map(t => t.id)
+        throw e
+      }
+    }
+
+    // 2. Crear el cobro
     const { data: cobro, error: errCobro } = await supabase
       .from('cobros')
       .insert({
@@ -33,13 +62,17 @@ export const cobrosService = {
       .single()
     if (errCobro) throw new Error(errCobro.message)
 
-    // 2. Marcar tramos con cobro_id
+    // 3. Marcar tramos con cobro_id. Si falla, borrar el cobro recién creado
+    // (best-effort, sin RPC no es transaccional pero evita el huérfano típico).
     if (dto.tramo_ids && dto.tramo_ids.length > 0) {
       const { error: errTramos } = await supabase
         .from('tramos')
         .update({ cobro_id: cobro.id })
         .in('id', dto.tramo_ids)
-      if (errTramos) throw new Error(errTramos.message)
+      if (errTramos) {
+        await supabase.from('cobros').delete().eq('id', cobro.id)
+        throw new Error(errTramos.message)
+      }
     }
 
     return cobro
@@ -91,7 +124,22 @@ export const cobrosService = {
 
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
-    // Liberar tramos
+    // Bloquear delete si el cobro ya está cobrado: borrarlo perdería el
+    // rastro de plata efectivamente entrada y liberaría tramos ya facturados.
+    const { data: cobro, error: errSel } = await supabase
+      .from('cobros').select('estado').eq('id', id).maybeSingle()
+    if (errSel) throw new Error(errSel.message)
+    if (!cobro) {
+      const e = new Error('COBRO_NO_EXISTE') as Error & { code?: string }
+      e.code = 'COBRO_NO_EXISTE'
+      throw e
+    }
+    if (cobro.estado === 'cobrado') {
+      const e = new Error('COBRO_YA_COBRADO') as Error & { code?: string }
+      e.code = 'COBRO_YA_COBRADO'
+      throw e
+    }
+    // Liberar tramos y borrar.
     await supabase.from('tramos').update({ cobro_id: null }).eq('cobro_id', id)
     const { error } = await supabase.from('cobros').delete().eq('id', id)
     if (error) throw new Error(error.message)
