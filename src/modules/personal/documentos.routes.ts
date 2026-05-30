@@ -45,9 +45,11 @@ function handle<T>(fn: (c: any) => Promise<T>) {
 }
 
 // GET /api/personal/:leg/documentos — lista
+// PII (DNI/alta_temprana/telegramas): además de lectura, exige ver_pii.
 docs.get(
   '/:leg/documentos',
   requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  requireFlag('tarja', 'ver_pii', true),
   handle(c => documentosService.listByLeg(c.req.param('leg'), c.get('accessToken'))),
 )
 
@@ -96,9 +98,11 @@ docs.post(
 )
 
 // GET /api/personal/:leg/documentos/:id/signed-url — URL temporal view/download
+// PII (descarga del documento real): además de lectura, exige ver_pii.
 docs.get(
   '/:leg/documentos/:id/signed-url',
   requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  requireFlag('tarja', 'ver_pii', true),
   handle(c => documentosService.signedUrl(
     c.req.param('leg'),
     Number(c.req.param('id')),

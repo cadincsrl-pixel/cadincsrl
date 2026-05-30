@@ -94,7 +94,10 @@ export const remitosEnvioService = {
             remito_envio_id: remito.id,
           })
           .eq('id', itemId)
-          .in('estado', ['comprado', 'de_deposito'])
+          // 'retirado' = ya se trajo del proveedor (flujo en_proveedor → retirar),
+          // queda listo para enviar. Antes faltaba acá y el ítem se quedaba
+          // colgado en 'retirado' sin fecha_envio aunque el remito se creara.
+          .in('estado', ['comprado', 'de_deposito', 'retirado'])
           .select('id')
           .maybeSingle()
 

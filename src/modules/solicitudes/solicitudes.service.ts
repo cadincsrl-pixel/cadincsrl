@@ -538,7 +538,8 @@ export const solicitudesService = {
         fecha_envio: fechaEnvio ?? new Date().toISOString().slice(0, 10),
       })
       .eq('id', itemId)
-      .in('estado', ['comprado', 'de_deposito'])
+      // 'retirado' = traído del proveedor, listo para enviar (flujo §5.8).
+      .in('estado', ['comprado', 'de_deposito', 'retirado'])
       .select()
       .maybeSingle()
     if (error) throw new Error(error.message)
