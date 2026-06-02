@@ -7,9 +7,20 @@ const HoraSQL = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Formato requerido: H
 
 // ── Enums (espejan los CHECK constraints del schema en Supabase) ──
 export const TipoMaquinaEnum = z.enum([
-  'hidrogrua',
+  'cargadora_frontal',
+  'retroexcavadora',
   'retropala',
+  'excavadora',
+  'miniexcavadora',
   'minicargadora',
+  'motoniveladora',
+  'topadora',
+  'compactador',
+  'pavimentadora',
+  'manipulador_telescopico',
+  'hidrogrua',
+  'grua',
+  'camion_volcador',
   'trailer_canasta',
   'otro',
 ])
@@ -21,6 +32,7 @@ export const CreateMaquinaSchema = z.object({
   nombre:         z.string().min(1, 'El nombre es requerido'),
   tipo:           TipoMaquinaEnum.default('otro'),
   identificacion: z.string().nullable().optional(),
+  seguro:         z.string().nullable().optional(),
   estado:         EstadoMaquinaEnum.default('activa'),
   obs:            z.string().nullable().optional(),
 })
@@ -31,6 +43,7 @@ export const UpdateMaquinaSchema = z.object({
   nombre:         z.string().min(1).optional(),
   tipo:           TipoMaquinaEnum.optional(),
   identificacion: z.string().nullable().optional(),
+  seguro:         z.string().nullable().optional(),
   estado:         EstadoMaquinaEnum.optional(),
   obs:            z.string().nullable().optional(),
 })
