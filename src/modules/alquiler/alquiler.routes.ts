@@ -15,6 +15,8 @@ import {
   ListPartesQuerySchema,
   ListRemitosQuerySchema,
   ReporteHorasQuerySchema,
+  SeguroUploadUrlSchema,
+  SeguroRegistrarSchema,
 } from './alquiler.schema.js'
 
 const alquiler = new Hono()
@@ -43,6 +45,24 @@ alquiler.patch('/maquinas/:id', zValidator('json', UpdateMaquinaSchema), async (
 
 alquiler.delete('/maquinas/:id', async (c) => {
   return c.json(await alquilerService.deleteMaquina(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
+})
+
+// ── Póliza de seguro de la máquina (admin-only; bucket alquiler-docs) ──
+// Flujo de 2 pasos: pedir URL firmada de subida → registrar el storage_path.
+alquiler.post('/maquinas/:id/seguro-poliza/upload-url', zValidator('json', SeguroUploadUrlSchema), async (c) => {
+  return c.json(await alquilerService.seguroUploadUrl(Number(c.req.param('id')), c.req.valid('json'), c.get('user').id))
+})
+
+alquiler.post('/maquinas/:id/seguro-poliza', zValidator('json', SeguroRegistrarSchema), async (c) => {
+  return c.json(await alquilerService.seguroRegistrar(Number(c.req.param('id')), c.req.valid('json'), c.get('user').id, c.get('accessToken')), 201)
+})
+
+alquiler.get('/maquinas/:id/seguro-poliza', async (c) => {
+  return c.json(await alquilerService.seguroSignedUrl(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
+})
+
+alquiler.delete('/maquinas/:id/seguro-poliza', async (c) => {
+  return c.json(await alquilerService.seguroDelete(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Asignación máquina ↔ obra ─────────────────────────────────
@@ -122,6 +142,12 @@ alquiler.delete('/remitos/:id', async (c) => {
 // Horas por máquina en un período (scopeado por identidad).
 alquiler.get('/reportes/horas', zValidator('query', ReporteHorasQuerySchema), async (c) => {
   return c.json(await alquilerService.getReporteHorasPorMaquina(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
+})
+
+// ── Notificaciones (campana, scopeada al módulo alquiler) ─────
+// Máquinas con seguro vencido / por vencer (scopeadas por identidad).
+alquiler.get('/notificaciones/seguros', async (c) => {
+  return c.json(await alquilerService.getSegurosVencimientos(c.get('accessToken'), c.get('user').id))
 })
 
 export default alquiler

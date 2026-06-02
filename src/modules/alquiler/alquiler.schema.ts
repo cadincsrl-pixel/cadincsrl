@@ -33,6 +33,7 @@ export const CreateMaquinaSchema = z.object({
   tipo:           TipoMaquinaEnum.default('otro'),
   identificacion: z.string().nullable().optional(),
   seguro:         z.string().nullable().optional(),
+  seguro_vence:   FechaISO.nullable().optional(),
   estado:         EstadoMaquinaEnum.default('activa'),
   obs:            z.string().nullable().optional(),
 })
@@ -44,8 +45,25 @@ export const UpdateMaquinaSchema = z.object({
   tipo:           TipoMaquinaEnum.optional(),
   identificacion: z.string().nullable().optional(),
   seguro:         z.string().nullable().optional(),
+  seguro_vence:   FechaISO.nullable().optional(),
   estado:         EstadoMaquinaEnum.optional(),
   obs:            z.string().nullable().optional(),
+})
+
+// ── Póliza de seguro (archivo adjunto en bucket alquiler-docs) ──
+// Flujo de 2 pasos (igual que vehiculo-docs): pedir signed upload URL,
+// el cliente sube el archivo, y se registra el storage_path en la máquina.
+export const SeguroUploadUrlSchema = z.object({
+  nombre_archivo: z.string().min(1),
+  mime_type:      z.string().min(1),
+  size_bytes:     z.number().int().positive(),
+})
+
+export const SeguroRegistrarSchema = z.object({
+  storage_path:   z.string().min(1),
+  nombre_archivo: z.string().min(1),
+  mime_type:      z.string().min(1),
+  size_bytes:     z.number().int().positive(),
 })
 
 // ── Obras ─────────────────────────────────────────────────────
@@ -148,3 +166,5 @@ export type UpdateParteDto        = z.infer<typeof UpdateParteSchema>
 export type ListPartesQuery       = z.infer<typeof ListPartesQuerySchema>
 export type ListRemitosQuery      = z.infer<typeof ListRemitosQuerySchema>
 export type ReporteHorasQuery     = z.infer<typeof ReporteHorasQuerySchema>
+export type SeguroUploadUrlDto    = z.infer<typeof SeguroUploadUrlSchema>
+export type SeguroRegistrarDto    = z.infer<typeof SeguroRegistrarSchema>

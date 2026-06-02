@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { HTTPException } from 'hono/http-exception'
 import type {
@@ -12,7 +13,27 @@ import type {
   ListPartesQuery,
   ListRemitosQuery,
   ReporteHorasQuery,
+  SeguroUploadUrlDto,
+  SeguroRegistrarDto,
 } from './alquiler.schema.js'
+
+// ── Storage de la póliza de seguro (bucket privado alquiler-docs) ──
+const SEGURO_BUCKET = 'alquiler-docs'
+const SEGURO_ALLOWED_MIME = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf',
+])
+const SEGURO_MAX_BYTES = 10 * 1024 * 1024
+function seguroExtFromMime(mime: string): string {
+  const map: Record<string, string> = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+    'image/heic': 'heic', 'image/heif': 'heif', 'application/pdf': 'pdf',
+  }
+  return map[mime] ?? 'bin'
+}
+async function sha256OfBlob(blob: Blob): Promise<string> {
+  const buf = Buffer.from(await blob.arrayBuffer())
+  return createHash('sha256').update(buf).digest('hex')
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  SCOPE POR IDENTIDAD (Fase 3)
@@ -480,5 +501,138 @@ export const alquilerService = {
         dias:           a.dias.size,
       }))
       .sort((x, y) => y.total_horas - x.total_horas)
+  },
+
+  // ── Póliza de seguro (archivo adjunto, admin-only) ────────────
+  // Flujo de 2 pasos (calcado de vehiculo-docs): pedir signed upload URL →
+  // el cliente sube el archivo al bucket → registrar el storage_path.
+  async seguroUploadUrl(maquinaId: number, dto: SeguroUploadUrlDto, userId: string) {
+    await requireAdmin(userId)
+    if (!SEGURO_ALLOWED_MIME.has(dto.mime_type)) {
+      throw new HTTPException(400, { message: 'Tipo de archivo no permitido (foto o PDF)' })
+    }
+    if (dto.size_bytes <= 0 || dto.size_bytes > SEGURO_MAX_BYTES) {
+      throw new HTTPException(400, { message: 'Archivo demasiado grande (máx 10 MB)' })
+    }
+    const ext  = seguroExtFromMime(dto.mime_type)
+    const path = `maquina/${maquinaId}/${randomUUID()}.${ext}`
+    const { data, error } = await supabaseAdmin.storage.from(SEGURO_BUCKET).createSignedUploadUrl(path)
+    if (error) throw new HTTPException(500, { message: error.message })
+    return { path, token: data.token, signed_url: data.signedUrl }
+  },
+
+  async seguroRegistrar(maquinaId: number, dto: SeguroRegistrarDto, userId: string, token: string) {
+    await requireAdmin(userId)
+    // Verificar que el archivo realmente se subió y que el path es de esta máquina.
+    if (!dto.storage_path.startsWith(`maquina/${maquinaId}/`)) {
+      throw new HTTPException(400, { message: 'Path inválido' })
+    }
+    const dl = await supabaseAdmin.storage.from(SEGURO_BUCKET).download(dto.storage_path)
+    if (dl.error || !dl.data) {
+      throw new HTTPException(400, { message: 'El archivo no se subió correctamente' })
+    }
+    const hash = await sha256OfBlob(dl.data)
+
+    const sb = createSupabaseClient(token)
+    // Path de la póliza anterior (para borrar el archivo viejo del bucket).
+    const { data: prev } = await sb
+      .from('alquiler_maquinas').select('seguro_poliza_path').eq('id', maquinaId).single()
+
+    const { data, error } = await sb
+      .from('alquiler_maquinas')
+      .update({
+        seguro_poliza_path:   dto.storage_path,
+        seguro_poliza_nombre: dto.nombre_archivo,
+        seguro_poliza_mime:   dto.mime_type,
+        seguro_poliza_size:   dl.data.size,
+        seguro_poliza_hash:   hash,
+        updated_by:           userId,
+      })
+      .eq('id', maquinaId)
+      .select()
+      .single()
+    if (error) throw new HTTPException(500, { message: error.message })
+
+    // Limpiar el archivo anterior si cambió (best-effort).
+    const prevPath = (prev as { seguro_poliza_path?: string | null } | null)?.seguro_poliza_path
+    if (prevPath && prevPath !== dto.storage_path) {
+      await supabaseAdmin.storage.from(SEGURO_BUCKET).remove([prevPath]).catch(() => undefined)
+    }
+    return data
+  },
+
+  async seguroSignedUrl(maquinaId: number, token: string, userId: string) {
+    await requireAdmin(userId)
+    const sb = createSupabaseClient(token)
+    const { data: maq, error } = await sb
+      .from('alquiler_maquinas')
+      .select('seguro_poliza_path, seguro_poliza_nombre')
+      .eq('id', maquinaId)
+      .single()
+    if (error) throw new HTTPException(500, { message: error.message })
+    if (!maq?.seguro_poliza_path) {
+      throw new HTTPException(404, { message: 'La máquina no tiene póliza adjunta' })
+    }
+    const { data, error: sErr } = await supabaseAdmin.storage
+      .from(SEGURO_BUCKET)
+      .createSignedUrl(maq.seguro_poliza_path, 900, { download: maq.seguro_poliza_nombre ?? undefined })
+    if (sErr) throw new HTTPException(500, { message: sErr.message })
+    return { url: data.signedUrl, nombre_archivo: maq.seguro_poliza_nombre }
+  },
+
+  async seguroDelete(maquinaId: number, token: string, userId: string) {
+    await requireAdmin(userId)
+    const sb = createSupabaseClient(token)
+    const { data: maq } = await sb
+      .from('alquiler_maquinas').select('seguro_poliza_path').eq('id', maquinaId).single()
+
+    const { data, error } = await sb
+      .from('alquiler_maquinas')
+      .update({
+        seguro_poliza_path:   null,
+        seguro_poliza_nombre: null,
+        seguro_poliza_mime:   null,
+        seguro_poliza_size:   null,
+        seguro_poliza_hash:   null,
+        updated_by:           userId,
+      })
+      .eq('id', maquinaId)
+      .select()
+      .single()
+    if (error) throw new HTTPException(500, { message: error.message })
+
+    const prevPath = (maq as { seguro_poliza_path?: string | null } | null)?.seguro_poliza_path
+    if (prevPath) {
+      await supabaseAdmin.storage.from(SEGURO_BUCKET).remove([prevPath]).catch(() => undefined)
+    }
+    return data
+  },
+
+  // ── Notificaciones: seguros de máquinas vencidos / por vencer ──
+  // Devuelve las máquinas con `seguro_vence` cargado (scopeado por identidad);
+  // el frontend clasifica vencido / por-vencer. La campana lo muestra SOLO en
+  // el módulo Alquiler.
+  async getSegurosVencimientos(token: string, userId: string) {
+    const scope = await getScope(userId)
+    const sb = createSupabaseClient(token)
+    let q = sb
+      .from('alquiler_maquinas')
+      .select('id, nombre, identificacion, seguro, seguro_vence')
+      .not('seguro_vence', 'is', null)
+
+    if (!scope.isAdmin) {
+      const obraIds = accessibleObraIds(scope)
+      if (obraIds.length === 0) return []
+      // máquinas asignadas en las obras accesibles del usuario
+      const { data: asigs } = await supabaseAdmin
+        .from('alquiler_obra_maquinas').select('maquina_id').in('obra_id', obraIds)
+      const maquinaIds = [...new Set((asigs ?? []).map(a => a.maquina_id as number))]
+      if (maquinaIds.length === 0) return []
+      q = q.in('id', maquinaIds)
+    }
+
+    const { data, error } = await q.order('seguro_vence', { ascending: true })
+    if (error) throw new Error(error.message)
+    return data
   },
 }
