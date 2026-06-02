@@ -14,6 +14,7 @@ import {
   UpdateParteSchema,
   ListPartesQuerySchema,
   ListRemitosQuerySchema,
+  ReporteHorasQuerySchema,
 } from './alquiler.schema.js'
 
 const alquiler = new Hono()
@@ -29,7 +30,7 @@ alquiler.on(['DELETE'],       '*', requirePermiso('alquiler', 'eliminacion'))
 
 // ── Máquinas ──────────────────────────────────────────────────
 alquiler.get('/maquinas', async (c) => {
-  return c.json(await alquilerService.getMaquinas(c.get('accessToken')))
+  return c.json(await alquilerService.getMaquinas(c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.post('/maquinas', zValidator('json', CreateMaquinaSchema), async (c) => {
@@ -41,14 +42,14 @@ alquiler.patch('/maquinas/:id', zValidator('json', UpdateMaquinaSchema), async (
 })
 
 alquiler.delete('/maquinas/:id', async (c) => {
-  return c.json(await alquilerService.deleteMaquina(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.deleteMaquina(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Asignación máquina ↔ obra ─────────────────────────────────
 // IMPORTANTE: estas rutas con sufijo /maquinas deben declararse ANTES de
 // /obras/:id para que el router no capture "maquinas" como :id.
 alquiler.get('/obras/:id/maquinas', async (c) => {
-  return c.json(await alquilerService.getObraMaquinas(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.getObraMaquinas(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.post('/obras/:id/maquinas', zValidator('json', CreateObraMaquinaSchema), async (c) => {
@@ -61,16 +62,16 @@ alquiler.patch('/obra-maquinas/:id', zValidator('json', UpdateObraMaquinaSchema)
 })
 
 alquiler.delete('/obra-maquinas/:id', async (c) => {
-  return c.json(await alquilerService.deleteObraMaquina(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.deleteObraMaquina(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Obras ─────────────────────────────────────────────────────
 alquiler.get('/obras', async (c) => {
-  return c.json(await alquilerService.getObras(c.get('accessToken')))
+  return c.json(await alquilerService.getObras(c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.get('/obras/:id', async (c) => {
-  return c.json(await alquilerService.getObraById(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.getObraById(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.post('/obras', zValidator('json', CreateObraSchema), async (c) => {
@@ -82,12 +83,12 @@ alquiler.patch('/obras/:id', zValidator('json', UpdateObraSchema), async (c) => 
 })
 
 alquiler.delete('/obras/:id', async (c) => {
-  return c.json(await alquilerService.deleteObra(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.deleteObra(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Partes ────────────────────────────────────────────────────
 alquiler.get('/partes', zValidator('query', ListPartesQuerySchema), async (c) => {
-  return c.json(await alquilerService.getPartes(c.req.valid('query'), c.get('accessToken')))
+  return c.json(await alquilerService.getPartes(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.post('/partes', zValidator('json', CreateParteSchema), async (c) => {
@@ -99,22 +100,28 @@ alquiler.patch('/partes/:id', zValidator('json', UpdateParteSchema), async (c) =
 })
 
 alquiler.delete('/partes/:id', async (c) => {
-  return c.json(await alquilerService.deleteParte(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.deleteParte(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Remitos (Fase 2) ──────────────────────────────────────────
 // Emitir el remito de un parte (idempotente: re-emitir conserva el número).
 // POST → gate de 'creacion'. El parte_id viaja en la URL; sin body.
 alquiler.post('/partes/:id/remito', async (c) => {
-  return c.json(await alquilerService.emitirRemito(Number(c.req.param('id')), c.get('user').id), 201)
+  return c.json(await alquilerService.emitirRemito(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id), 201)
 })
 
 alquiler.get('/remitos', zValidator('query', ListRemitosQuerySchema), async (c) => {
-  return c.json(await alquilerService.getRemitos(c.req.valid('query'), c.get('accessToken')))
+  return c.json(await alquilerService.getRemitos(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.delete('/remitos/:id', async (c) => {
-  return c.json(await alquilerService.deleteRemito(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.deleteRemito(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
+})
+
+// ── Reportes (Fase 3) ─────────────────────────────────────────
+// Horas por máquina en un período (scopeado por identidad).
+alquiler.get('/reportes/horas', zValidator('query', ReporteHorasQuerySchema), async (c) => {
+  return c.json(await alquilerService.getReporteHorasPorMaquina(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
 })
 
 export default alquiler

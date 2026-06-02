@@ -116,6 +116,14 @@ export const ListRemitosQuerySchema = z.object({
   hasta:      FechaISO.optional(),
 })
 
+// ── Reportes (Fase 3) ─────────────────────────────────────────
+// Horas por máquina: filtros opcionales (obra + rango por fecha de parte).
+export const ReporteHorasQuerySchema = z.object({
+  obra_id:    z.coerce.number().int().positive().optional(),
+  desde:      FechaISO.optional(),
+  hasta:      FechaISO.optional(),
+})
+
 export type CreateMaquinaDto      = z.infer<typeof CreateMaquinaSchema>
 export type UpdateMaquinaDto      = z.infer<typeof UpdateMaquinaSchema>
 export type CreateObraDto         = z.infer<typeof CreateObraSchema>
@@ -126,3 +134,4 @@ export type CreateParteDto        = z.infer<typeof CreateParteSchema>
 export type UpdateParteDto        = z.infer<typeof UpdateParteSchema>
 export type ListPartesQuery       = z.infer<typeof ListPartesQuerySchema>
 export type ListRemitosQuery      = z.infer<typeof ListRemitosQuerySchema>
+export type ReporteHorasQuery     = z.infer<typeof ReporteHorasQuerySchema>
