@@ -106,6 +106,16 @@ export const ListPartesQuerySchema = z.object({
   hasta:      FechaISO.optional(),
 })
 
+// ── Remitos (Fase 2) ──────────────────────────────────────────
+// Listado de remitos emitidos. Todos los filtros son opcionales (la pestaña
+// Remitos puede mostrar todos). El rango filtra por fecha_trabajo.
+export const ListRemitosQuerySchema = z.object({
+  obra_id:    z.coerce.number().int().positive().optional(),
+  maquina_id: z.coerce.number().int().positive().optional(),
+  desde:      FechaISO.optional(),
+  hasta:      FechaISO.optional(),
+})
+
 export type CreateMaquinaDto      = z.infer<typeof CreateMaquinaSchema>
 export type UpdateMaquinaDto      = z.infer<typeof UpdateMaquinaSchema>
 export type CreateObraDto         = z.infer<typeof CreateObraSchema>
@@ -115,3 +125,4 @@ export type UpdateObraMaquinaDto  = z.infer<typeof UpdateObraMaquinaSchema>
 export type CreateParteDto        = z.infer<typeof CreateParteSchema>
 export type UpdateParteDto        = z.infer<typeof UpdateParteSchema>
 export type ListPartesQuery       = z.infer<typeof ListPartesQuerySchema>
+export type ListRemitosQuery      = z.infer<typeof ListRemitosQuerySchema>

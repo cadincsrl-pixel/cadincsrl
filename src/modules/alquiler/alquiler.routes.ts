@@ -13,6 +13,7 @@ import {
   CreateParteSchema,
   UpdateParteSchema,
   ListPartesQuerySchema,
+  ListRemitosQuerySchema,
 } from './alquiler.schema.js'
 
 const alquiler = new Hono()
@@ -99,6 +100,21 @@ alquiler.patch('/partes/:id', zValidator('json', UpdateParteSchema), async (c) =
 
 alquiler.delete('/partes/:id', async (c) => {
   return c.json(await alquilerService.deleteParte(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+// ── Remitos (Fase 2) ──────────────────────────────────────────
+// Emitir el remito de un parte (idempotente: re-emitir conserva el número).
+// POST → gate de 'creacion'. El parte_id viaja en la URL; sin body.
+alquiler.post('/partes/:id/remito', async (c) => {
+  return c.json(await alquilerService.emitirRemito(Number(c.req.param('id')), c.get('user').id), 201)
+})
+
+alquiler.get('/remitos', zValidator('query', ListRemitosQuerySchema), async (c) => {
+  return c.json(await alquilerService.getRemitos(c.req.valid('query'), c.get('accessToken')))
+})
+
+alquiler.delete('/remitos/:id', async (c) => {
+  return c.json(await alquilerService.deleteRemito(Number(c.req.param('id')), c.get('accessToken')))
 })
 
 export default alquiler

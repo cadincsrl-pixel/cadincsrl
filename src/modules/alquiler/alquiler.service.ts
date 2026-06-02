@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import type {
   CreateMaquinaDto,
   UpdateMaquinaDto,
@@ -9,6 +9,7 @@ import type {
   CreateParteDto,
   UpdateParteDto,
   ListPartesQuery,
+  ListRemitosQuery,
 } from './alquiler.schema.js'
 
 export const alquilerService = {
@@ -212,6 +213,50 @@ export const alquilerService = {
   async deleteParte(id: number, token: string) {
     const supabase = createSupabaseClient(token)
     const { error } = await supabase.from('alquiler_partes').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
+  },
+
+  // ── Remitos (Fase 2) ──────────────────────────────────────────
+  // Emite (o refresca) el remito de un parte. La numeración RA-NNNN y el
+  // snapshot los hace el RPC `emitir_remito_alquiler`, que es idempotente:
+  // re-emitir el mismo parte conserva el número y refresca los datos.
+  //
+  // §9: el RPC es SECURITY DEFINER → SIEMPRE con el cliente admin
+  // (service_role). El gate de permiso (requirePermiso) ya corrió en el
+  // middleware ANTES de llegar acá; el RPC recibe el userId explícito.
+  async emitirRemito(parteId: number, userId: string) {
+    const { data, error } = await supabaseAdmin.rpc('emitir_remito_alquiler', {
+      p_parte_id: parteId,
+      p_user_id:  userId,
+    })
+    if (error) {
+      if (error.message?.includes('PARTE_NO_EXISTE')) {
+        throw new Error('No se encontró el parte para emitir el remito')
+      }
+      throw new Error(error.message)
+    }
+    return data
+  },
+
+  async getRemitos(query: ListRemitosQuery, token: string) {
+    const supabase = createSupabaseClient(token)
+    let q = supabase.from('alquiler_remitos').select('*')
+    if (query.obra_id    != null) q = q.eq('obra_id', query.obra_id)
+    if (query.maquina_id != null) q = q.eq('maquina_id', query.maquina_id)
+    if (query.desde) q = q.gte('fecha_trabajo', query.desde)
+    if (query.hasta) q = q.lte('fecha_trabajo', query.hasta)
+    // Más recientes primero por emisión; desempate por id.
+    const { data, error } = await q
+      .order('fecha_emision', { ascending: false })
+      .order('id', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteRemito(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('alquiler_remitos').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }
   },
