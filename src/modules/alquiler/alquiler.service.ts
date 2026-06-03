@@ -4,6 +4,8 @@ import { HTTPException } from 'hono/http-exception'
 import type {
   CreateMaquinaDto,
   UpdateMaquinaDto,
+  CreateClienteDto,
+  UpdateClienteDto,
   CreateObraDto,
   UpdateObraDto,
   CreateObraMaquinaDto,
@@ -172,6 +174,59 @@ export const alquilerService = {
     return { success: true }
   },
 
+  // ── Clientes (ficha; admin-only para ABM) ─────────────────────
+  async getClientes(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('alquiler_clientes').select('*').order('nombre')
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async getClienteById(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('alquiler_clientes').select('*').eq('id', id).single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async createCliente(dto: CreateClienteDto, token: string, userId: string) {
+    await requireAdmin(userId)
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('alquiler_clientes')
+      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select().single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateCliente(id: number, dto: UpdateClienteDto, token: string, userId: string) {
+    await requireAdmin(userId)
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('alquiler_clientes')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id).select().single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteCliente(id: number, token: string, userId: string) {
+    await requireAdmin(userId)
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('alquiler_clientes').delete().eq('id', id)
+    if (error) {
+      // 23503 = FK violation: el cliente tiene obras asociadas.
+      if ((error as { code?: string }).code === '23503') {
+        throw new Error('No se puede borrar: el cliente tiene obras asociadas')
+      }
+      throw new Error(error.message)
+    }
+    return { success: true }
+  },
+
   // ── Obras ─────────────────────────────────────────────────────
   // Listado SCOPEADO: el no-admin solo ve sus obras (como jefe o maquinista).
   async getObras(token: string, userId: string) {
@@ -261,6 +316,7 @@ export const alquilerService = {
         maquina_id:         dto.maquina_id,
         maquinista_leg:     dto.maquinista_leg ?? null,
         maquinista_user_id: dto.maquinista_user_id ?? null,
+        precio_hora:        dto.precio_hora ?? null,
         created_by:         userId,
         updated_by:         userId,
       })
@@ -283,6 +339,7 @@ export const alquilerService = {
     const patch: Record<string, unknown> = { updated_by: userId }
     if (dto.maquinista_leg     !== undefined) patch.maquinista_leg     = dto.maquinista_leg ?? null
     if (dto.maquinista_user_id !== undefined) patch.maquinista_user_id = dto.maquinista_user_id ?? null
+    if (dto.precio_hora        !== undefined) patch.precio_hora        = dto.precio_hora ?? null
     const { data, error } = await supabase
       .from('alquiler_obra_maquinas')
       .update(patch)

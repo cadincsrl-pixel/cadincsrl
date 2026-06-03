@@ -66,10 +66,29 @@ export const SeguroRegistrarSchema = z.object({
   size_bytes:     z.number().int().positive(),
 })
 
+// ── Clientes (ficha; Fase A cuenta corriente) ─────────────────
+export const CreateClienteSchema = z.object({
+  nombre:   z.string().min(1, 'El nombre es requerido'),
+  cuit:     z.string().nullable().optional(),
+  contacto: z.string().nullable().optional(),
+  tel:      z.string().nullable().optional(),
+  email:    z.string().nullable().optional(),
+  obs:      z.string().nullable().optional(),
+})
+export const UpdateClienteSchema = z.object({
+  nombre:   z.string().min(1).optional(),
+  cuit:     z.string().nullable().optional(),
+  contacto: z.string().nullable().optional(),
+  tel:      z.string().nullable().optional(),
+  email:    z.string().nullable().optional(),
+  obs:      z.string().nullable().optional(),
+})
+
 // ── Obras ─────────────────────────────────────────────────────
 export const CreateObraSchema = z.object({
   nombre:            z.string().min(1, 'El nombre es requerido'),
   cliente:           z.string().nullable().optional(),
+  cliente_id:        z.number().int().positive().nullable().optional(),
   ubicacion:         z.string().nullable().optional(),
   descripcion:       z.string().nullable().optional(),
   jefe_obra_user_id: z.string().uuid().nullable().optional(),
@@ -81,6 +100,7 @@ export const CreateObraSchema = z.object({
 export const UpdateObraSchema = z.object({
   nombre:            z.string().min(1).optional(),
   cliente:           z.string().nullable().optional(),
+  cliente_id:        z.number().int().positive().nullable().optional(),
   ubicacion:         z.string().nullable().optional(),
   descripcion:       z.string().nullable().optional(),
   jefe_obra_user_id: z.string().uuid().nullable().optional(),
@@ -96,14 +116,17 @@ export const CreateObraMaquinaSchema = z.object({
   maquinista_leg:     z.string().nullable().optional(),
   // legacy: maquinista como usuario del sistema (Fase 3). Se mantiene opcional.
   maquinista_user_id: z.string().uuid().nullable().optional(),
+  // precio por hora de esta máquina EN esta obra (cuenta corriente).
+  precio_hora:        z.number().nonnegative().nullable().optional(),
 })
 
-// Solo se puede cambiar el maquinista. El par (obra, máquina) es la identidad
-// de la asignación (UNIQUE); para reasignar la máquina a otra obra se borra y
-// se crea una nueva.
+// Se puede cambiar el maquinista y/o el precio/hora. El par (obra, máquina) es
+// la identidad de la asignación (UNIQUE); para reasignar la máquina a otra obra
+// se borra y se crea una nueva.
 export const UpdateObraMaquinaSchema = z.object({
   maquinista_leg:     z.string().nullable().optional(),
   maquinista_user_id: z.string().uuid().nullable().optional(),
+  precio_hora:        z.number().nonnegative().nullable().optional(),
 })
 
 // ── Partes ────────────────────────────────────────────────────
@@ -161,6 +184,8 @@ export const ReporteHorasQuerySchema = z.object({
 
 export type CreateMaquinaDto      = z.infer<typeof CreateMaquinaSchema>
 export type UpdateMaquinaDto      = z.infer<typeof UpdateMaquinaSchema>
+export type CreateClienteDto      = z.infer<typeof CreateClienteSchema>
+export type UpdateClienteDto      = z.infer<typeof UpdateClienteSchema>
 export type CreateObraDto         = z.infer<typeof CreateObraSchema>
 export type UpdateObraDto         = z.infer<typeof UpdateObraSchema>
 export type CreateObraMaquinaDto  = z.infer<typeof CreateObraMaquinaSchema>

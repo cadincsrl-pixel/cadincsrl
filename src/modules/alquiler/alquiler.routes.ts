@@ -6,6 +6,8 @@ import { alquilerService } from './alquiler.service.js'
 import {
   CreateMaquinaSchema,
   UpdateMaquinaSchema,
+  CreateClienteSchema,
+  UpdateClienteSchema,
   CreateObraSchema,
   UpdateObraSchema,
   CreateObraMaquinaSchema,
@@ -83,6 +85,27 @@ alquiler.patch('/obra-maquinas/:id', zValidator('json', UpdateObraMaquinaSchema)
 
 alquiler.delete('/obra-maquinas/:id', async (c) => {
   return c.json(await alquilerService.deleteObraMaquina(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
+})
+
+// ── Clientes (ficha; ABM admin-only en el service) ────────────
+alquiler.get('/clientes', async (c) => {
+  return c.json(await alquilerService.getClientes(c.get('accessToken')))
+})
+
+alquiler.get('/clientes/:id', async (c) => {
+  return c.json(await alquilerService.getClienteById(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+alquiler.post('/clientes', zValidator('json', CreateClienteSchema), async (c) => {
+  return c.json(await alquilerService.createCliente(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+alquiler.patch('/clientes/:id', zValidator('json', UpdateClienteSchema), async (c) => {
+  return c.json(await alquilerService.updateCliente(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+alquiler.delete('/clientes/:id', async (c) => {
+  return c.json(await alquilerService.deleteCliente(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Obras ─────────────────────────────────────────────────────
