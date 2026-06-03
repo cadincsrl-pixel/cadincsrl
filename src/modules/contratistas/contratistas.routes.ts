@@ -8,6 +8,8 @@ import {
   UpdateContratistaSchema,
   AsigContratistaSchema,
   CertificacionSchema,
+  DniUploadUrlSchema,
+  DniRegistrarSchema,
 } from './contratistas.schema.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -72,6 +74,59 @@ contratistas.delete(
     if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
     const token = c.get('accessToken')
     const data = await contratistasService.delete(id, token)
+    return c.json(data)
+  },
+)
+
+// ── DNI adjunto del contratista (foto/PDF, bucket contratista-docs) ──
+// Mismo gating que la edición del contratista (jefatura con ver_pii). El DNI
+// es PII → el GET de la URL firmada también exige ver_pii.
+contratistas.post(
+  '/:id/dni/upload-url',
+  requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'ver_pii', true),
+  zValidator('json', DniUploadUrlSchema),
+  async (c) => {
+    const id = Number(c.req.param('id'))
+    if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
+    const data = await contratistasService.dniUploadUrl(id, c.req.valid('json'))
+    return c.json(data)
+  },
+)
+
+contratistas.post(
+  '/:id/dni',
+  requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'ver_pii', true),
+  zValidator('json', DniRegistrarSchema),
+  async (c) => {
+    const id = Number(c.req.param('id'))
+    if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
+    const data = await contratistasService.dniRegistrar(id, c.req.valid('json'), c.get('user').id, c.get('accessToken'))
+    return c.json(data, 201)
+  },
+)
+
+contratistas.get(
+  '/:id/dni/signed-url',
+  requirePermiso('tarja', 'lectura'),
+  requireFlag('tarja', 'ver_pii', true),
+  async (c) => {
+    const id = Number(c.req.param('id'))
+    if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
+    const data = await contratistasService.dniSignedUrl(id, c.get('accessToken'))
+    return c.json(data)
+  },
+)
+
+contratistas.delete(
+  '/:id/dni',
+  requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'ver_pii', true),
+  async (c) => {
+    const id = Number(c.req.param('id'))
+    if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
+    const data = await contratistasService.dniDelete(id, c.get('accessToken'), c.get('user').id)
     return c.json(data)
   },
 )
