@@ -190,6 +190,27 @@ export const CuentaCorrienteQuerySchema = z.object({
   hasta:      FechaISO.optional(),
 })
 
+// ── Cobros del cliente (Fase C) ───────────────────────────────
+export const MedioCobroEnum = z.enum(['efectivo', 'transferencia', 'cheque', 'otro'])
+export const CreateCobroSchema = z.object({
+  cliente_id: z.number().int().positive(),
+  fecha:      FechaISO,
+  monto:      z.number().positive('El monto debe ser mayor a 0'),
+  medio:      MedioCobroEnum.default('efectivo'),
+  obs:        z.string().nullable().optional(),
+})
+export const UpdateCobroSchema = z.object({
+  fecha:  FechaISO.optional(),
+  monto:  z.number().positive().optional(),
+  medio:  MedioCobroEnum.optional(),
+  obs:    z.string().nullable().optional(),
+})
+export const CobrosQuerySchema = z.object({
+  cliente_id: z.coerce.number().int().positive().optional(),
+  desde:      FechaISO.optional(),
+  hasta:      FechaISO.optional(),
+})
+
 export type CreateMaquinaDto      = z.infer<typeof CreateMaquinaSchema>
 export type UpdateMaquinaDto      = z.infer<typeof UpdateMaquinaSchema>
 export type CreateClienteDto      = z.infer<typeof CreateClienteSchema>
@@ -204,5 +225,8 @@ export type ListPartesQuery       = z.infer<typeof ListPartesQuerySchema>
 export type ListRemitosQuery      = z.infer<typeof ListRemitosQuerySchema>
 export type ReporteHorasQuery     = z.infer<typeof ReporteHorasQuerySchema>
 export type CuentaCorrienteQuery  = z.infer<typeof CuentaCorrienteQuerySchema>
+export type CreateCobroDto        = z.infer<typeof CreateCobroSchema>
+export type UpdateCobroDto        = z.infer<typeof UpdateCobroSchema>
+export type CobrosQuery           = z.infer<typeof CobrosQuerySchema>
 export type SeguroUploadUrlDto    = z.infer<typeof SeguroUploadUrlSchema>
 export type SeguroRegistrarDto    = z.infer<typeof SeguroRegistrarSchema>

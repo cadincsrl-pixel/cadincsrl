@@ -16,6 +16,9 @@ import type {
   ListRemitosQuery,
   ReporteHorasQuery,
   CuentaCorrienteQuery,
+  CreateCobroDto,
+  UpdateCobroDto,
+  CobrosQuery,
   SeguroUploadUrlDto,
   SeguroRegistrarDto,
 } from './alquiler.schema.js'
@@ -650,22 +653,122 @@ export const alquilerService = {
       o.devengado += imp
     }
 
-    const clienteIds = [...byCliente.values()].map(c => c.cliente_id).filter((x): x is number => x != null)
-    const { data: clientes } = clienteIds.length
-      ? await supabase.from('alquiler_clientes').select('id, nombre').in('id', clienteIds)
+    // ── Cobros (Fase C): saldo = devengado − cobros (mismo filtro de fecha) ──
+    const devengadoCids = [...byCliente.values()]
+      .map(c => c.cliente_id).filter((x): x is number => x != null)
+
+    let cq = supabase.from('alquiler_cobros').select('cliente_id, monto')
+    if (query.cliente_id != null) cq = cq.eq('cliente_id', query.cliente_id)
+    // No-admin: solo cobros de clientes con devengado accesible (no leakear).
+    if (!scope.isAdmin) cq = cq.in('cliente_id', devengadoCids.length ? devengadoCids : [-1])
+    if (query.desde) cq = cq.gte('fecha', query.desde)
+    if (query.hasta) cq = cq.lte('fecha', query.hasta)
+    const { data: cobrosRows } = await cq
+    const cobrosPorCliente = new Map<number, number>()
+    for (const cb of cobrosRows ?? []) {
+      const cid = cb.cliente_id as number
+      cobrosPorCliente.set(cid, (cobrosPorCliente.get(cid) ?? 0) + Number(cb.monto ?? 0))
+    }
+
+    // Clientes a mostrar: los del devengado + (admin) los que solo tienen cobros.
+    const cids = new Set<number>(devengadoCids)
+    if (scope.isAdmin) for (const cid of cobrosPorCliente.keys()) cids.add(cid)
+
+    const allCids = [...cids]
+    const { data: clientes } = allCids.length
+      ? await supabase.from('alquiler_clientes').select('id, nombre').in('id', allCids)
       : { data: [] as { id: number; nombre: string }[] }
     const nombreCliente = new Map((clientes ?? []).map(c => [c.id as number, c.nombre as string]))
 
-    let result = [...byCliente.values()].map(c => ({
-      cliente_id:     c.cliente_id,
-      cliente_nombre: c.cliente_id != null ? (nombreCliente.get(c.cliente_id) ?? '—') : 'Sin cliente',
-      devengado:      Math.round(c.devengado * 100) / 100,
-      obras: [...c.obras.values()]
-        .map(o => ({ ...o, devengado: Math.round(o.devengado * 100) / 100 }))
-        .sort((a, b) => b.devengado - a.devengado),
-    }))
-    if (query.cliente_id != null) result = result.filter(c => c.cliente_id === query.cliente_id)
-    return result.sort((a, b) => b.devengado - a.devengado)
+    const round = (n: number) => Math.round(n * 100) / 100
+    const obrasDe = (cid: number) => {
+      const c = byCliente.get(cid)
+      return c
+        ? [...c.obras.values()].map(o => ({ ...o, devengado: round(o.devengado) })).sort((a, b) => b.devengado - a.devengado)
+        : []
+    }
+
+    interface CtaItem {
+      cliente_id: number | null; cliente_nombre: string
+      devengado: number; cobros: number; saldo: number
+      obras: { obra_id: number; obra_nombre: string; devengado: number }[]
+    }
+    const result: CtaItem[] = []
+
+    // "Sin cliente": devengado de obras sin ficha (no tiene cobros).
+    const sinCliente = byCliente.get(0)
+    if (sinCliente && query.cliente_id == null) {
+      result.push({
+        cliente_id: null, cliente_nombre: 'Sin cliente',
+        devengado: round(sinCliente.devengado), cobros: 0, saldo: round(sinCliente.devengado),
+        obras: obrasDe(0),
+      })
+    }
+    for (const cid of cids) {
+      const devengado = round(byCliente.get(cid)?.devengado ?? 0)
+      const cobros = round(cobrosPorCliente.get(cid) ?? 0)
+      result.push({
+        cliente_id: cid, cliente_nombre: nombreCliente.get(cid) ?? '—',
+        devengado, cobros, saldo: round(devengado - cobros), obras: obrasDe(cid),
+      })
+    }
+
+    const final = query.cliente_id != null ? result.filter(r => r.cliente_id === query.cliente_id) : result
+    return final.sort((a, b) => b.saldo - a.saldo)
+  },
+
+  // ── Cobros del cliente (Fase C; writes admin-only) ────────────
+  async getCobros(query: CobrosQuery, token: string, userId: string) {
+    const scope = await getScope(userId)
+    const supabase = createSupabaseClient(token)
+    let q = supabase.from('alquiler_cobros').select('*')
+    if (query.cliente_id != null) q = q.eq('cliente_id', query.cliente_id)
+    if (query.desde) q = q.gte('fecha', query.desde)
+    if (query.hasta) q = q.lte('fecha', query.hasta)
+    if (!scope.isAdmin) {
+      // No-admin: solo cobros de clientes con obras accesibles.
+      const ids = accessibleObraIds(scope)
+      if (ids.length === 0) return []
+      const { data: obras } = await supabaseAdmin
+        .from('alquiler_obras').select('cliente_id').in('id', ids)
+      const clienteIds = [...new Set((obras ?? []).map(o => o.cliente_id).filter((x): x is number => x != null))]
+      if (clienteIds.length === 0) return []
+      q = q.in('cliente_id', clienteIds)
+    }
+    const { data, error } = await q
+      .order('fecha', { ascending: false }).order('id', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async createCobro(dto: CreateCobroDto, token: string, userId: string) {
+    await requireAdmin(userId)
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('alquiler_cobros')
+      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select().single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateCobro(id: number, dto: UpdateCobroDto, token: string, userId: string) {
+    await requireAdmin(userId)
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('alquiler_cobros')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id).select().single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteCobro(id: number, token: string, userId: string) {
+    await requireAdmin(userId)
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('alquiler_cobros').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
   },
 
   // ── Póliza de seguro (archivo adjunto, admin-only) ────────────

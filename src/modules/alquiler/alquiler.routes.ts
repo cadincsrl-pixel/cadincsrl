@@ -18,6 +18,9 @@ import {
   ListRemitosQuerySchema,
   ReporteHorasQuerySchema,
   CuentaCorrienteQuerySchema,
+  CreateCobroSchema,
+  UpdateCobroSchema,
+  CobrosQuerySchema,
   SeguroUploadUrlSchema,
   SeguroRegistrarSchema,
 } from './alquiler.schema.js'
@@ -168,9 +171,26 @@ alquiler.get('/reportes/horas', zValidator('query', ReporteHorasQuerySchema), as
   return c.json(await alquilerService.getReporteHorasPorMaquina(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
 })
 
-// Cuenta corriente: devengado por cliente (Fase B; Fase C suma cobros/saldo).
+// Cuenta corriente: devengado − cobros = saldo, por cliente (scopeado).
 alquiler.get('/cuenta-corriente', zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
   return c.json(await alquilerService.getCuentaCorriente(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
+})
+
+// ── Cobros del cliente (Fase C; writes admin-only en el service) ──
+alquiler.get('/cobros', zValidator('query', CobrosQuerySchema), async (c) => {
+  return c.json(await alquilerService.getCobros(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
+})
+
+alquiler.post('/cobros', zValidator('json', CreateCobroSchema), async (c) => {
+  return c.json(await alquilerService.createCobro(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+alquiler.patch('/cobros/:id', zValidator('json', UpdateCobroSchema), async (c) => {
+  return c.json(await alquilerService.updateCobro(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+alquiler.delete('/cobros/:id', async (c) => {
+  return c.json(await alquilerService.deleteCobro(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Notificaciones (campana, scopeada al módulo alquiler) ─────
