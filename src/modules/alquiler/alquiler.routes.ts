@@ -17,6 +17,7 @@ import {
   ListPartesQuerySchema,
   ListRemitosQuerySchema,
   ReporteHorasQuerySchema,
+  CuentaCorrienteQuerySchema,
   SeguroUploadUrlSchema,
   SeguroRegistrarSchema,
 } from './alquiler.schema.js'
@@ -165,6 +166,11 @@ alquiler.delete('/remitos/:id', async (c) => {
 // Horas por máquina en un período (scopeado por identidad).
 alquiler.get('/reportes/horas', zValidator('query', ReporteHorasQuerySchema), async (c) => {
   return c.json(await alquilerService.getReporteHorasPorMaquina(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
+})
+
+// Cuenta corriente: devengado por cliente (Fase B; Fase C suma cobros/saldo).
+alquiler.get('/cuenta-corriente', zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
+  return c.json(await alquilerService.getCuentaCorriente(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
 })
 
 // ── Notificaciones (campana, scopeada al módulo alquiler) ─────

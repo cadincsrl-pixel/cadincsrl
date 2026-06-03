@@ -182,6 +182,14 @@ export const ReporteHorasQuerySchema = z.object({
   hasta:      FechaISO.optional(),
 })
 
+// ── Cuenta corriente (Fase B/C) ───────────────────────────────
+// Devengado (y luego cobros) por cliente. Filtros opcionales.
+export const CuentaCorrienteQuerySchema = z.object({
+  cliente_id: z.coerce.number().int().positive().optional(),
+  desde:      FechaISO.optional(),
+  hasta:      FechaISO.optional(),
+})
+
 export type CreateMaquinaDto      = z.infer<typeof CreateMaquinaSchema>
 export type UpdateMaquinaDto      = z.infer<typeof UpdateMaquinaSchema>
 export type CreateClienteDto      = z.infer<typeof CreateClienteSchema>
@@ -195,5 +203,6 @@ export type UpdateParteDto        = z.infer<typeof UpdateParteSchema>
 export type ListPartesQuery       = z.infer<typeof ListPartesQuerySchema>
 export type ListRemitosQuery      = z.infer<typeof ListRemitosQuerySchema>
 export type ReporteHorasQuery     = z.infer<typeof ReporteHorasQuerySchema>
+export type CuentaCorrienteQuery  = z.infer<typeof CuentaCorrienteQuerySchema>
 export type SeguroUploadUrlDto    = z.infer<typeof SeguroUploadUrlSchema>
 export type SeguroRegistrarDto    = z.infer<typeof SeguroRegistrarSchema>

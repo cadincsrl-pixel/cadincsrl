@@ -15,6 +15,7 @@ import type {
   ListPartesQuery,
   ListRemitosQuery,
   ReporteHorasQuery,
+  CuentaCorrienteQuery,
   SeguroUploadUrlDto,
   SeguroRegistrarDto,
 } from './alquiler.schema.js'
@@ -121,6 +122,13 @@ async function requireAdmin(userId: string): Promise<void> {
   if (data?.rol !== 'admin') {
     forbidden('Solo un administrador puede gestionar la flota y las obras de alquiler')
   }
+}
+
+// Importe devengado de un parte = horas × precio_hora (de la asignación),
+// redondeado a 2 decimales. null si la máquina no tiene precio fijado.
+function calcImporte(horas: number | null | undefined, precio: number | null): number | null {
+  if (precio == null) return null
+  return Math.round(Number(horas ?? 0) * precio * 100) / 100
 }
 
 export const alquilerService = {
@@ -347,6 +355,23 @@ export const alquilerService = {
       .select('*, maquina:alquiler_maquinas(*)')
       .single()
     if (error) throw new Error(error.message)
+
+    // Si cambió el precio/hora, recalcular el importe de los partes de esta
+    // (obra, máquina) — así cargar partes antes de fijar la tarifa queda bien.
+    if (dto.precio_hora !== undefined && data) {
+      const nuevoPrecio = dto.precio_hora ?? null
+      const obraId = (data as { obra_id: number }).obra_id
+      const maquinaId = (data as { maquina_id: number }).maquina_id
+      const { data: partes } = await supabase
+        .from('alquiler_partes').select('id, horas')
+        .eq('obra_id', obraId).eq('maquina_id', maquinaId)
+      for (const p of partes ?? []) {
+        await supabase
+          .from('alquiler_partes')
+          .update({ precio_hora: nuevoPrecio, importe: calcImporte(p.horas as number | null, nuevoPrecio) })
+          .eq('id', p.id)
+      }
+    }
     return data
   },
 
@@ -385,9 +410,16 @@ export const alquilerService = {
       forbidden('Solo podés cargar partes de tus máquinas asignadas')
     }
     const supabase = createSupabaseClient(token)
+    // Importe devengado = horas × precio_hora de la asignación (obra,máquina).
+    const { data: asig } = await supabase
+      .from('alquiler_obra_maquinas')
+      .select('precio_hora')
+      .eq('obra_id', dto.obra_id).eq('maquina_id', dto.maquina_id)
+      .maybeSingle()
+    const precio = asig?.precio_hora != null ? Number(asig.precio_hora) : null
     const { data, error } = await supabase
       .from('alquiler_partes')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .insert({ ...dto, precio_hora: precio, importe: calcImporte(dto.horas, precio), created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) {
@@ -405,7 +437,7 @@ export const alquilerService = {
     // El (obra, máquina) del parte define el scope; lo leemos antes de mutar.
     const { data: parte, error: errGet } = await supabase
       .from('alquiler_partes')
-      .select('obra_id, maquina_id')
+      .select('obra_id, maquina_id, horas')
       .eq('id', id)
       .single()
     if (errGet) throw new Error(errGet.message)
@@ -414,9 +446,18 @@ export const alquilerService = {
       forbidden('Solo podés editar partes de tus máquinas asignadas')
     }
 
+    // Recalcular el importe con el precio vigente y las horas (nuevas o las que ya tenía).
+    const { data: asig } = await supabase
+      .from('alquiler_obra_maquinas')
+      .select('precio_hora')
+      .eq('obra_id', parte.obra_id as number).eq('maquina_id', parte.maquina_id as number)
+      .maybeSingle()
+    const precio = asig?.precio_hora != null ? Number(asig.precio_hora) : null
+    const horas = dto.horas !== undefined ? dto.horas : (parte.horas as number | null)
+
     const { data, error } = await supabase
       .from('alquiler_partes')
-      .update({ ...dto, updated_by: userId })
+      .update({ ...dto, precio_hora: precio, importe: calcImporte(horas, precio), updated_by: userId })
       .eq('id', id)
       .select()
       .single()
@@ -563,6 +604,68 @@ export const alquilerService = {
         dias:           a.dias.size,
       }))
       .sort((x, y) => y.total_horas - x.total_horas)
+  },
+
+  // ── Cuenta corriente (Fase B: devengado por cliente) ──────────
+  // Devengado = Σ importe de los partes (horas × precio_hora congelado),
+  // agregado por cliente y desglosado por obra. Scopeado por identidad.
+  // (Fase C sumará cobros y el saldo.)
+  async getCuentaCorriente(query: CuentaCorrienteQuery, token: string, userId: string) {
+    const scope = await getScope(userId)
+    const supabase = createSupabaseClient(token)
+
+    let pq = supabase
+      .from('alquiler_partes')
+      .select('obra_id, maquina_id, importe, obra:alquiler_obras(id, nombre, cliente_id)')
+    if (!scope.isAdmin) {
+      const ids = accessibleObraIds(scope)
+      if (ids.length === 0) return []
+      pq = pq.in('obra_id', ids)
+    }
+    if (query.desde) pq = pq.gte('fecha', query.desde)
+    if (query.hasta) pq = pq.lte('fecha', query.hasta)
+    const { data, error } = await pq
+    if (error) throw new Error(error.message)
+
+    interface ParteRow {
+      obra_id: number; maquina_id: number; importe: number | null
+      obra: { id: number; nombre: string; cliente_id: number | null } | null
+    }
+    const rows = ((data ?? []) as unknown as ParteRow[])
+      .filter(p => canView(scope, p.obra_id, p.maquina_id))
+
+    // Agregar por cliente → obra.
+    interface ObraAgg { obra_id: number; obra_nombre: string; devengado: number }
+    interface ClienteAgg { cliente_id: number | null; devengado: number; obras: Map<number, ObraAgg> }
+    const byCliente = new Map<number, ClienteAgg>() // key: cliente_id ?? 0 ("sin cliente")
+    for (const p of rows) {
+      if (!p.obra) continue
+      const cid = p.obra.cliente_id ?? 0
+      const imp = Number(p.importe ?? 0)
+      let c = byCliente.get(cid)
+      if (!c) { c = { cliente_id: p.obra.cliente_id, devengado: 0, obras: new Map() }; byCliente.set(cid, c) }
+      c.devengado += imp
+      let o = c.obras.get(p.obra.id)
+      if (!o) { o = { obra_id: p.obra.id, obra_nombre: p.obra.nombre, devengado: 0 }; c.obras.set(p.obra.id, o) }
+      o.devengado += imp
+    }
+
+    const clienteIds = [...byCliente.values()].map(c => c.cliente_id).filter((x): x is number => x != null)
+    const { data: clientes } = clienteIds.length
+      ? await supabase.from('alquiler_clientes').select('id, nombre').in('id', clienteIds)
+      : { data: [] as { id: number; nombre: string }[] }
+    const nombreCliente = new Map((clientes ?? []).map(c => [c.id as number, c.nombre as string]))
+
+    let result = [...byCliente.values()].map(c => ({
+      cliente_id:     c.cliente_id,
+      cliente_nombre: c.cliente_id != null ? (nombreCliente.get(c.cliente_id) ?? '—') : 'Sin cliente',
+      devengado:      Math.round(c.devengado * 100) / 100,
+      obras: [...c.obras.values()]
+        .map(o => ({ ...o, devengado: Math.round(o.devengado * 100) / 100 }))
+        .sort((a, b) => b.devengado - a.devengado),
+    }))
+    if (query.cliente_id != null) result = result.filter(c => c.cliente_id === query.cliente_id)
+    return result.sort((a, b) => b.devengado - a.devengado)
   },
 
   // ── Póliza de seguro (archivo adjunto, admin-only) ────────────
