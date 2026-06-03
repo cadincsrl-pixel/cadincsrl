@@ -92,6 +92,9 @@ export const UpdateObraSchema = z.object({
 // ── Asignación máquina ↔ obra ─────────────────────────────────
 export const CreateObraMaquinaSchema = z.object({
   maquina_id:         z.number().int().positive(),
+  // maquinista = trabajador del listado de personal (FK a personal.leg).
+  maquinista_leg:     z.string().nullable().optional(),
+  // legacy: maquinista como usuario del sistema (Fase 3). Se mantiene opcional.
   maquinista_user_id: z.string().uuid().nullable().optional(),
 })
 
@@ -99,6 +102,7 @@ export const CreateObraMaquinaSchema = z.object({
 // de la asignación (UNIQUE); para reasignar la máquina a otra obra se borra y
 // se crea una nueva.
 export const UpdateObraMaquinaSchema = z.object({
+  maquinista_leg:     z.string().nullable().optional(),
   maquinista_user_id: z.string().uuid().nullable().optional(),
 })
 

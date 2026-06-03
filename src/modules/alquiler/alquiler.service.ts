@@ -259,6 +259,7 @@ export const alquilerService = {
       .insert({
         obra_id:            obraId,
         maquina_id:         dto.maquina_id,
+        maquinista_leg:     dto.maquinista_leg ?? null,
         maquinista_user_id: dto.maquinista_user_id ?? null,
         created_by:         userId,
         updated_by:         userId,
@@ -278,9 +279,13 @@ export const alquilerService = {
   async updateObraMaquina(id: number, dto: UpdateObraMaquinaDto, token: string, userId: string) {
     await requireAdmin(userId)
     const supabase = createSupabaseClient(token)
+    // Patch flexible: solo toca lo que vino en el body.
+    const patch: Record<string, unknown> = { updated_by: userId }
+    if (dto.maquinista_leg     !== undefined) patch.maquinista_leg     = dto.maquinista_leg ?? null
+    if (dto.maquinista_user_id !== undefined) patch.maquinista_user_id = dto.maquinista_user_id ?? null
     const { data, error } = await supabase
       .from('alquiler_obra_maquinas')
-      .update({ maquinista_user_id: dto.maquinista_user_id ?? null, updated_by: userId })
+      .update(patch)
       .eq('id', id)
       .select('*, maquina:alquiler_maquinas(*)')
       .single()
