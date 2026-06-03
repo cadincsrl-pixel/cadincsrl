@@ -194,7 +194,7 @@ export const alquilerService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_obras')
-      .select('*, alquiler_obra_maquinas(*, alquiler_maquinas(*))')
+      .select('*, maquinas:alquiler_obra_maquinas(*, maquina:alquiler_maquinas(*))')
       .eq('id', id)
       .single()
     if (error) throw new Error(error.message)
@@ -243,7 +243,7 @@ export const alquilerService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_obra_maquinas')
-      .select('*, alquiler_maquinas(*)')
+      .select('*, maquina:alquiler_maquinas(*)')
       .eq('obra_id', obraId)
       .order('id')
     if (error) throw new Error(error.message)
@@ -263,7 +263,7 @@ export const alquilerService = {
         created_by:         userId,
         updated_by:         userId,
       })
-      .select('*, alquiler_maquinas(*)')
+      .select('*, maquina:alquiler_maquinas(*)')
       .single()
     if (error) {
       // 23505 = unique_violation: la máquina ya está asignada a esta obra.
@@ -282,7 +282,7 @@ export const alquilerService = {
       .from('alquiler_obra_maquinas')
       .update({ maquinista_user_id: dto.maquinista_user_id ?? null, updated_by: userId })
       .eq('id', id)
-      .select('*, alquiler_maquinas(*)')
+      .select('*, maquina:alquiler_maquinas(*)')
       .single()
     if (error) throw new Error(error.message)
     return data
@@ -304,7 +304,7 @@ export const alquilerService = {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('alquiler_partes')
-      .select('*, alquiler_maquinas(*)')
+      .select('*, maquina:alquiler_maquinas(*)')
       .eq('obra_id', query.obra_id)
 
     if (query.maquina_id != null) q = q.eq('maquina_id', query.maquina_id)
