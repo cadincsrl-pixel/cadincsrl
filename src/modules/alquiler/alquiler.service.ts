@@ -42,51 +42,56 @@ async function sha256OfBlob(blob: Blob): Promise<string> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  SCOPE POR IDENTIDAD (Fase 3)
+//  SCOPE POR IDENTIDAD
 // ───────────────────────────────────────────────────────────────────
 //  La seguridad real vive acá (CLAUDE.md §5.4: RLS permisiva, el backend
-//  filtra). `requirePermiso('alquiler', accion)` ya gatea POR ACCIÓN
-//  (un jefe con solo `lectura` no puede mutar). El scope agrega POR FILA:
+//  filtra). `requirePermiso('alquiler', accion)` ya gatea POR ACCIÓN. El
+//  scope agrega POR FILA en las lecturas/cargas:
 //
 //   - admin            → ve y opera TODO.
+//   - operador/encargado (cualquier usuario con el módulo que NO sea jefe de
+//                        obra) → ve y carga TODO. El ABM (crear/borrar
+//                        máquinas/obras/clientes/cobros) sigue siendo
+//                        admin-only vía `requireAdmin`.
 //   - jefe de obra     → ve (read-only) SOLO las obras donde es jefe
-//                        (jefe_obra_user_id = él). El read-only ya sale del
-//                        gate de acción: no tiene creacion/actualizacion.
-//   - maquinista       → ve y carga SOLO sus máquinas (las asignaciones
-//                        alquiler_obra_maquinas.maquinista_user_id = él).
+//                        (jefe_obra_user_id = él). El read-only sale del gate
+//                        de acción: tiene `lectura`, no creacion/actualizacion.
 //
-//  Un usuario puede ser jefe de una obra Y maquinista en otra.
+//  NOTA: el maquinista ahora es un trabajador del listado de PERSONAL
+//  (maquinista_leg, sin login), así que el viejo scoping por
+//  maquinista_user_id quedó obsoleto: los maquinistas no entran al sistema.
+//  Solo los JEFES se limitan; el resto de los usuarios con el módulo ven todo.
 // ═══════════════════════════════════════════════════════════════════
 interface AlquilerScope {
-  isAdmin:            boolean
-  jefeObraIds:        number[]        // obras donde es jefe (ve todas sus máquinas)
-  maquinistaObraIds:  number[]        // obras donde es maquinista de ≥1 máquina
-  maquinistaPairs:    Set<string>     // `${obra_id}:${maquina_id}` que puede CARGAR
+  isAdmin:            boolean        // true = VE TODO (admin u operador no-jefe)
+  jefeObraIds:        number[]        // obras donde es jefe (si es jefe → limitado a estas)
+  maquinistaObraIds:  number[]        // (obsoleto, queda vacío)
+  maquinistaPairs:    Set<string>     // (obsoleto, queda vacío)
+}
+
+// "Ve todo": admin u operador/encargado no-jefe. No afecta el ABM (eso lo
+// gobierna requireAdmin con el rol real).
+const SCOPE_VE_TODO: AlquilerScope = {
+  isAdmin: true, jefeObraIds: [], maquinistaObraIds: [], maquinistaPairs: new Set(),
 }
 
 async function getScope(userId: string): Promise<AlquilerScope> {
-  // El rol (admin) vive en profiles; lo leemos con el cliente admin igual
-  // que el middleware de permisos.
   const { data: profile } = await supabaseAdmin
-    .from('profiles')
-    .select('rol')
-    .eq('id', userId)
-    .single()
+    .from('profiles').select('rol').eq('id', userId).single()
 
-  if (profile?.rol === 'admin') {
-    return { isAdmin: true, jefeObraIds: [], maquinistaObraIds: [], maquinistaPairs: new Set() }
-  }
+  // admin → ve y opera todo.
+  if (profile?.rol === 'admin') return SCOPE_VE_TODO
 
-  const [{ data: jefeObras }, { data: asigs }] = await Promise.all([
-    supabaseAdmin.from('alquiler_obras').select('id').eq('jefe_obra_user_id', userId),
-    supabaseAdmin.from('alquiler_obra_maquinas').select('obra_id, maquina_id').eq('maquinista_user_id', userId),
-  ])
+  // Obras donde el usuario es JEFE de obra.
+  const { data: jefeObras } = await supabaseAdmin
+    .from('alquiler_obras').select('id').eq('jefe_obra_user_id', userId)
+  const jefeObraIds = (jefeObras ?? []).map(o => o.id as number)
 
-  const jefeObraIds       = (jefeObras ?? []).map(o => o.id as number)
-  const maquinistaObraIds = [...new Set((asigs ?? []).map(a => a.obra_id as number))]
-  const maquinistaPairs   = new Set((asigs ?? []).map(a => `${a.obra_id}:${a.maquina_id}`))
+  // No es jefe de ninguna obra → operador/encargado → ve todo (el ABM sigue
+  // admin-only). Solo los jefes quedan limitados a sus obras.
+  if (jefeObraIds.length === 0) return SCOPE_VE_TODO
 
-  return { isAdmin: false, jefeObraIds, maquinistaObraIds, maquinistaPairs }
+  return { isAdmin: false, jefeObraIds, maquinistaObraIds: [], maquinistaPairs: new Set() }
 }
 
 // Obras que el usuario puede VER (jefe ∪ maquinista).
@@ -135,19 +140,28 @@ function calcImporte(horas: number | null | undefined, precio: number | null): n
 }
 
 export const alquilerService = {
-  // ── Máquinas (catálogo de flota; admin-only) ──────────────────
-  // El catálogo completo solo lo necesitan superficies de ABM (tab Máquinas
-  // y el dropdown de asignación), que son admin. El maquinista/jefe NUNCA
-  // pide este endpoint (usa getObraMaquinas, ya scopeado). Lo gateamos a
-  // admin para no filtrar patentes/obs de toda la flota a un no-admin con
-  // `lectura` (hallazgo M1 de la auditoría de seguridad).
+  // ── Máquinas (catálogo de flota; scopeado) ────────────────────
+  // admin/operador (ve todo) → catálogo completo. Jefe de obra → solo las
+  // máquinas asignadas a sus obras (no le filtramos toda la flota). El ABM
+  // (crear/editar/borrar) sigue siendo admin-only más abajo.
   async getMaquinas(token: string, userId: string) {
-    await requireAdmin(userId)
+    const scope = await getScope(userId)
     const supabase = createSupabaseClient(token)
+    if (scope.isAdmin) {
+      const { data, error } = await supabase
+        .from('alquiler_maquinas').select('*').order('nombre')
+      if (error) throw new Error(error.message)
+      return data
+    }
+    // Jefe → máquinas asignadas a sus obras.
+    const ids = accessibleObraIds(scope)
+    if (ids.length === 0) return []
+    const { data: asigs } = await supabaseAdmin
+      .from('alquiler_obra_maquinas').select('maquina_id').in('obra_id', ids)
+    const maquinaIds = [...new Set((asigs ?? []).map(a => a.maquina_id as number))]
+    if (maquinaIds.length === 0) return []
     const { data, error } = await supabase
-      .from('alquiler_maquinas')
-      .select('*')
-      .order('nombre')
+      .from('alquiler_maquinas').select('*').in('id', maquinaIds).order('nombre')
     if (error) throw new Error(error.message)
     return data
   },
