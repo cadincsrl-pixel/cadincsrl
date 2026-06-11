@@ -49,7 +49,7 @@ export const empresasService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('tarifas_empresa_cantera')
-      .select('*, empresas_transportistas(nombre), canteras(nombre, localidad)')
+      .select('*, empresas_transportistas(nombre), canteras(nombre, localidad), depositos(nombre, localidad)')
       .order('empresa_id')
       .order('cantera_id')
       .order('vigente_desde', { ascending: false })

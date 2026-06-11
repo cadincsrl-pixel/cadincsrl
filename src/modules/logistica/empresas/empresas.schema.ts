@@ -23,14 +23,17 @@ export const UpdateEmpresaSchema = z.object({
 export const CreateTarifaEmpresaSchema = z.object({
   empresa_id:    z.number(),
   cantera_id:    z.number(),
+  // null/ausente = tarifa general de la cantera; con valor = tarifa
+  // específica para descargas en ese depósito (gana sobre la general).
+  deposito_id:   z.number().nullable().optional(),
   valor_ton:     z.number().min(0),
   vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   obs:           z.string().optional().default(''),
 })
 
 // Update solo permite cambiar valor/fecha/obs. La identidad
-// (empresa+cantera) es la del registro y se mantiene; si se quiere cambiar
-// el par, se elimina y se crea una nueva.
+// (empresa+cantera+depósito) es la del registro y se mantiene; si se quiere
+// cambiar el par, se elimina y se crea una nueva.
 export const UpdateTarifaEmpresaSchema = z.object({
   valor_ton:     z.number().min(0).optional(),
   vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
