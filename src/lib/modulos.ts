@@ -22,6 +22,7 @@ export const MODULOS = [
   'configuracion',
   'flota',
   'alquiler',
+  'aridos',
   'admin',
 ] as const
 
