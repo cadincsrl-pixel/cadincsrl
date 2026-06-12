@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { mobileQuestClient } from '../logistica/gps-sync/mobile-quest.client.js'
 import { geocode, distancia } from '../logistica/maps/google-maps.client.js'
 import type {
@@ -214,6 +214,31 @@ export const aridosService = {
     const { error } = await supabase.from('aridos_movimientos').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }
+  },
+
+  // ── Remito de la venta (RV-NNNN, idempotente) ────────────────
+  // La RPC es SECURITY DEFINER → se llama con el cliente admin
+  // (CLAUDE.md §9: authenticated no tiene EXECUTE). Los permisos del
+  // módulo ya se validaron en el middleware de la ruta.
+  async emitirRemitoVenta(movimientoId: number, token: string, userId: string) {
+    const { error } = await supabaseAdmin.rpc('emitir_remito_arido', {
+      p_movimiento_id: movimientoId,
+      p_user_id:       userId,
+    })
+    if (error) {
+      if (error.message.includes('SOLO_VENTAS')) throw new Error('Solo las ventas emiten remito')
+      if (error.message.includes('NO_EXISTE'))   throw new Error('No se encontró la venta')
+      throw new Error(error.message)
+    }
+    // Re-fetch con los joins para que el front muestre todo
+    const supabase = createSupabaseClient(token)
+    const { data, error: errGet } = await supabase
+      .from('aridos_movimientos')
+      .select(MOV_SELECT)
+      .eq('id', movimientoId)
+      .single()
+    if (errGet) throw new Error(errGet.message)
+    return data
   },
 
   // ── Stock del depósito ──────────────────────────────────────

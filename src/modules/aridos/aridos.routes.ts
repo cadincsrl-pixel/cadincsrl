@@ -94,6 +94,11 @@ aridos.delete('/movimientos/:id', async (c) => {
   return c.json(await aridosService.deleteMovimiento(Number(c.req.param('id')), c.get('accessToken')))
 })
 
+// Emitir (o re-obtener) el remito RV-NNNN de una venta — idempotente.
+aridos.post('/movimientos/:id/remito', async (c) => {
+  return c.json(await aridosService.emitirRemitoVenta(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id), 201)
+})
+
 // ── Canteras propias ──────────────────────────────────────────
 aridos.get('/canteras', async (c) => {
   return c.json(await aridosService.getCanteras(c.get('accessToken')))
