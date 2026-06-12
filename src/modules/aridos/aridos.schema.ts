@@ -52,9 +52,12 @@ export const UpdatePrecioSchema = z.object({
 // ── Movimientos (venta / acopio / ajuste) ─────────────────────
 // origen 'obra' = retiro de escombro: sale de la obra del cliente
 // hacia el depósito (no toca stock).
+const HORA = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/)
+
 export const CreateMovimientoSchema = z.object({
   tipo:        z.enum(['venta', 'acopio', 'ajuste']),
   fecha:       FECHA,
+  hora:        HORA.nullable().optional(),
   material_id: z.number(),
   cantidad:    z.number(),
   origen:      z.enum(['cantera', 'deposito', 'obra']).nullable().optional(),
@@ -85,6 +88,7 @@ export const CreateMovimientoSchema = z.object({
 
 export const UpdateMovimientoSchema = z.object({
   fecha:       FECHA.optional(),
+  hora:        HORA.nullable().optional(),
   material_id: z.number().optional(),
   cantidad:    z.number().optional(),
   origen:      z.enum(['cantera', 'deposito', 'obra']).nullable().optional(),
