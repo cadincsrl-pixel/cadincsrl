@@ -22,7 +22,7 @@ const ALLOWED_MIME = new Set([
 const MAX_SIZE_BYTES = 10 * 1024 * 1024
 
 export type Entidad = 'camion' | 'batea'
-export type VehiculoDocTipo = 'titulo' | 'tarjeta_verde' | 'rto' | 'poliza_seguro'
+export type VehiculoDocTipo = 'titulo' | 'tarjeta_verde' | 'rto' | 'poliza_seguro' | 'homologacion' | 'registro_modificacion'
 
 export class VehiculoDocError extends Error {
   constructor(public status: number, public code: string, public detail?: unknown) {

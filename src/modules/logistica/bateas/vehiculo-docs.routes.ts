@@ -10,7 +10,7 @@ import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { vehiculoDocsService, VehiculoDocError, type Entidad } from './vehiculo-docs.service.js'
 
-const TipoEnum = z.enum(['titulo', 'tarjeta_verde', 'rto', 'poliza_seguro'])
+const TipoEnum = z.enum(['titulo', 'tarjeta_verde', 'rto', 'poliza_seguro', 'homologacion', 'registro_modificacion'])
 
 const UploadUrlSchema = z.object({
   tipo:           TipoEnum,
