@@ -128,10 +128,13 @@ export const UpdateCanteraSchema = z.object({
 })
 
 // ── Unidades (camión + chofer del negocio de áridos, con GPS) ──
+// id_vehiculo_gps se elige del catálogo Mobile Quest en el form (más
+// confiable que matchear por patente).
 export const CreateUnidadSchema = z.object({
   nombre:  z.string().min(1, 'El nombre es requerido'),
   patente: z.string().min(1, 'La patente es requerida'),
   chofer:  z.string().nullable().optional(),
+  id_vehiculo_gps: z.string().nullable().optional(),
   obs:     z.string().nullable().optional(),
 })
 
@@ -139,6 +142,7 @@ export const UpdateUnidadSchema = z.object({
   nombre:  z.string().min(1).optional(),
   patente: z.string().min(1).optional(),
   chofer:  z.string().nullable().optional(),
+  id_vehiculo_gps: z.string().nullable().optional(),
   obs:     z.string().nullable().optional(),
   activo:  z.boolean().optional(),
 })

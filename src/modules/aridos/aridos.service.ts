@@ -341,8 +341,9 @@ export const aridosService = {
     const patch: Record<string, unknown> = { ...dto, updated_by: userId }
     if (dto.patente) {
       patch.patente = dto.patente.toUpperCase().trim()
-      // Si cambió la patente, el mapping GPS viejo deja de valer.
-      patch.id_vehiculo_gps = null
+      // Si cambió la patente sin elegir vehículo GPS, el mapping viejo
+      // deja de valer (con id explícito del catálogo, se respeta).
+      if (dto.id_vehiculo_gps === undefined) patch.id_vehiculo_gps = null
     }
     const { data, error } = await supabase
       .from('aridos_unidades')
@@ -362,6 +363,16 @@ export const aridosService = {
       throw new Error(error.message)
     }
     return { success: true }
+  },
+
+  // ── Catálogo de vehículos GPS (Mobile Quest) ─────────────────
+  // Para elegir el vehículo por ID en el form de unidades en vez de
+  // confiar en el matching por patente.
+  async getGpsCatalogo() {
+    const cat = await mobileQuestClient.listarVehiculos()
+    return cat
+      .map(v => ({ id_vehiculo: v.id_vehiculo, patente: v.patente, alias: v.modelo ?? null }))
+      .sort((a, b) => (a.alias ?? a.patente).localeCompare(b.alias ?? b.patente))
   },
 
   // ── Posición GPS + tiempo de llegada a destino ───────────────

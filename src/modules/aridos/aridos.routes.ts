@@ -118,6 +118,10 @@ aridos.get('/unidades/:id/eta', zValidator('query', EtaQuerySchema), async (c) =
   return c.json(await aridosService.getUnidadEta(Number(c.req.param('id')), c.req.valid('query').direccion, c.get('accessToken')))
 })
 
+aridos.get('/gps-catalogo', async (c) => {
+  return c.json(await aridosService.getGpsCatalogo())
+})
+
 aridos.get('/unidades', async (c) => {
   return c.json(await aridosService.getUnidades(c.get('accessToken')))
 })
