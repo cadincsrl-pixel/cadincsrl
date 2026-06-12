@@ -50,16 +50,21 @@ export const UpdatePrecioSchema = z.object({
 })
 
 // ── Movimientos (venta / acopio / ajuste) ─────────────────────
+// origen 'obra' = retiro de escombro: sale de la obra del cliente
+// hacia el depósito (no toca stock).
 export const CreateMovimientoSchema = z.object({
   tipo:        z.enum(['venta', 'acopio', 'ajuste']),
   fecha:       FECHA,
   material_id: z.number(),
   cantidad:    z.number(),
-  origen:      z.enum(['cantera', 'deposito']).nullable().optional(),
+  origen:      z.enum(['cantera', 'deposito', 'obra']).nullable().optional(),
   cantera_id:  z.number().nullable().optional(),
   cliente_id:  z.number().nullable().optional(),
   precio_unit: z.number().min(0).nullable().optional(),
   importe:     z.number().min(0).nullable().optional(),
+  precio_especial:   z.boolean().optional().default(false),
+  entrega_direccion: z.string().nullable().optional(),
+  municipio_id:      z.number().nullable().optional(),
   chofer_id:   z.number().nullable().optional(),
   camion_id:   z.number().nullable().optional(),
   flete_obs:   z.string().nullable().optional(),
@@ -80,11 +85,14 @@ export const UpdateMovimientoSchema = z.object({
   fecha:       FECHA.optional(),
   material_id: z.number().optional(),
   cantidad:    z.number().optional(),
-  origen:      z.enum(['cantera', 'deposito']).nullable().optional(),
+  origen:      z.enum(['cantera', 'deposito', 'obra']).nullable().optional(),
   cantera_id:  z.number().nullable().optional(),
   cliente_id:  z.number().nullable().optional(),
   precio_unit: z.number().min(0).nullable().optional(),
   importe:     z.number().min(0).nullable().optional(),
+  precio_especial:   z.boolean().optional(),
+  entrega_direccion: z.string().nullable().optional(),
+  municipio_id:      z.number().nullable().optional(),
   chofer_id:   z.number().nullable().optional(),
   camion_id:   z.number().nullable().optional(),
   flete_obs:   z.string().nullable().optional(),
@@ -98,6 +106,34 @@ export const ListMovimientosQuerySchema = z.object({
   material_id: z.coerce.number().optional(),
   fecha_desde: FECHA.optional(),
   fecha_hasta: FECHA.optional(),
+})
+
+// ── Municipios (zonas de entrega con recargo %) ───────────────
+export const CreateMunicipioSchema = z.object({
+  nombre:      z.string().min(1, 'El nombre es requerido'),
+  recargo_pct: z.number().min(0).default(0),
+  obs:         z.string().nullable().optional(),
+})
+
+export const UpdateMunicipioSchema = z.object({
+  nombre:      z.string().min(1).optional(),
+  recargo_pct: z.number().min(0).optional(),
+  obs:         z.string().nullable().optional(),
+})
+
+// ── Costos de compra por cantera × material ───────────────────
+export const CreateCostoCanteraSchema = z.object({
+  cantera_id:    z.number(),
+  material_id:   z.number(),
+  costo:         z.number().min(0),
+  vigente_desde: FECHA,
+  obs:           z.string().nullable().optional(),
+})
+
+export const UpdateCostoCanteraSchema = z.object({
+  costo:         z.number().min(0).optional(),
+  vigente_desde: FECHA.optional(),
+  obs:           z.string().nullable().optional(),
 })
 
 // ── Cobros ────────────────────────────────────────────────────
@@ -132,3 +168,7 @@ export type ListMovimientosQuery = z.infer<typeof ListMovimientosQuerySchema>
 export type CreateCobroDto       = z.infer<typeof CreateCobroSchema>
 export type UpdateCobroDto       = z.infer<typeof UpdateCobroSchema>
 export type CobrosQuery          = z.infer<typeof CobrosQuerySchema>
+export type CreateMunicipioDto    = z.infer<typeof CreateMunicipioSchema>
+export type UpdateMunicipioDto    = z.infer<typeof UpdateMunicipioSchema>
+export type CreateCostoCanteraDto = z.infer<typeof CreateCostoCanteraSchema>
+export type UpdateCostoCanteraDto = z.infer<typeof UpdateCostoCanteraSchema>

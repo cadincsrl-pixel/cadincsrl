@@ -5,11 +5,14 @@ import type {
   CreatePrecioDto, UpdatePrecioDto,
   CreateMovimientoDto, UpdateMovimientoDto, ListMovimientosQuery,
   CreateCobroDto, UpdateCobroDto, CobrosQuery,
+  CreateMunicipioDto, UpdateMunicipioDto,
+  CreateCostoCanteraDto, UpdateCostoCanteraDto,
 } from './aridos.schema.js'
 
 const MOV_SELECT = `*,
   aridos_materiales(nombre, unidad),
   aridos_clientes(nombre),
+  aridos_municipios(nombre, recargo_pct),
   canteras(nombre),
   choferes(nombre),
   camiones(patente)`
@@ -244,6 +247,90 @@ export const aridosService = {
         stock:       acc.entradas + acc.ajustes - acc.salidas,
       }
     })
+  },
+
+  // ── Municipios (zonas de entrega con recargo %) ─────────────
+  async getMunicipios(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase.from('aridos_municipios').select('*').order('nombre')
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async createMunicipio(dto: CreateMunicipioDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_municipios')
+      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateMunicipio(id: number, dto: UpdateMunicipioDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_municipios')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteMunicipio(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('aridos_municipios').delete().eq('id', id)
+    if (error) {
+      if (error.code === '23503') throw new Error('No se puede eliminar: hay ventas registradas en este municipio.')
+      throw new Error(error.message)
+    }
+    return { success: true }
+  },
+
+  // ── Costos de compra por cantera × material ─────────────────
+  async getCostosCantera(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_costos_cantera')
+      .select('*, canteras(nombre), aridos_materiales(nombre, unidad)')
+      .order('cantera_id')
+      .order('material_id')
+      .order('vigente_desde', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async createCostoCantera(dto: CreateCostoCanteraDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_costos_cantera')
+      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateCostoCantera(id: number, dto: UpdateCostoCanteraDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_costos_cantera')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteCostoCantera(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('aridos_costos_cantera').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
   },
 
   // ── Cobros ──────────────────────────────────────────────────

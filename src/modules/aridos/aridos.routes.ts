@@ -9,6 +9,8 @@ import {
   CreatePrecioSchema, UpdatePrecioSchema,
   CreateMovimientoSchema, UpdateMovimientoSchema, ListMovimientosQuerySchema,
   CreateCobroSchema, UpdateCobroSchema, CobrosQuerySchema,
+  CreateMunicipioSchema, UpdateMunicipioSchema,
+  CreateCostoCanteraSchema, UpdateCostoCanteraSchema,
 } from './aridos.schema.js'
 
 const aridos = new Hono()
@@ -87,6 +89,40 @@ aridos.patch('/movimientos/:id', zValidator('json', UpdateMovimientoSchema), asy
 
 aridos.delete('/movimientos/:id', async (c) => {
   return c.json(await aridosService.deleteMovimiento(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+// ── Municipios (zonas de entrega con recargo %) ───────────────
+aridos.get('/municipios', async (c) => {
+  return c.json(await aridosService.getMunicipios(c.get('accessToken')))
+})
+
+aridos.post('/municipios', zValidator('json', CreateMunicipioSchema), async (c) => {
+  return c.json(await aridosService.createMunicipio(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+aridos.patch('/municipios/:id', zValidator('json', UpdateMunicipioSchema), async (c) => {
+  return c.json(await aridosService.updateMunicipio(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+aridos.delete('/municipios/:id', async (c) => {
+  return c.json(await aridosService.deleteMunicipio(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+// ── Costos de compra por cantera × material ───────────────────
+aridos.get('/costos-cantera', async (c) => {
+  return c.json(await aridosService.getCostosCantera(c.get('accessToken')))
+})
+
+aridos.post('/costos-cantera', zValidator('json', CreateCostoCanteraSchema), async (c) => {
+  return c.json(await aridosService.createCostoCantera(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+aridos.patch('/costos-cantera/:id', zValidator('json', UpdateCostoCanteraSchema), async (c) => {
+  return c.json(await aridosService.updateCostoCantera(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+aridos.delete('/costos-cantera/:id', async (c) => {
+  return c.json(await aridosService.deleteCostoCantera(Number(c.req.param('id')), c.get('accessToken')))
 })
 
 // ── Stock del depósito ────────────────────────────────────────
