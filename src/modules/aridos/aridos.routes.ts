@@ -14,6 +14,7 @@ import {
   CreateCanteraSchema, UpdateCanteraSchema,
   CreateUnidadSchema, UpdateUnidadSchema, EtaQuerySchema,
   CreatePagoCanteraSchema, PagosCanteraQuerySchema,
+  CreatePrecioGlobalSchema, UpdatePrecioGlobalSchema,
 } from './aridos.schema.js'
 
 const aridos = new Hono()
@@ -75,6 +76,23 @@ aridos.patch('/precios/:id', zValidator('json', UpdatePrecioSchema), async (c) =
 
 aridos.delete('/precios/:id', async (c) => {
   return c.json(await aridosService.deletePrecio(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+// ── Lista de precios global ───────────────────────────────────
+aridos.get('/precios-global', async (c) => {
+  return c.json(await aridosService.getPreciosGlobal(c.get('accessToken')))
+})
+
+aridos.post('/precios-global', zValidator('json', CreatePrecioGlobalSchema), async (c) => {
+  return c.json(await aridosService.createPrecioGlobal(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+aridos.patch('/precios-global/:id', zValidator('json', UpdatePrecioGlobalSchema), async (c) => {
+  return c.json(await aridosService.updatePrecioGlobal(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+aridos.delete('/precios-global/:id', async (c) => {
+  return c.json(await aridosService.deletePrecioGlobal(Number(c.req.param('id')), c.get('accessToken')))
 })
 
 // ── Movimientos (ventas / acopios / ajustes) ──────────────────

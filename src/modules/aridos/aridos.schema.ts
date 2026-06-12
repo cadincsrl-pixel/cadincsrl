@@ -49,6 +49,20 @@ export const UpdatePrecioSchema = z.object({
   obs:           z.string().nullable().optional(),
 })
 
+// ── Lista de precios global por material ──────────────────────
+export const CreatePrecioGlobalSchema = z.object({
+  material_id:   z.number(),
+  precio:        z.number().min(0),
+  vigente_desde: FECHA,
+  obs:           z.string().nullable().optional(),
+})
+
+export const UpdatePrecioGlobalSchema = z.object({
+  precio:        z.number().min(0).optional(),
+  vigente_desde: FECHA.optional(),
+  obs:           z.string().nullable().optional(),
+})
+
 // ── Movimientos (venta / acopio / ajuste) ─────────────────────
 // origen 'obra' = retiro de escombro: sale de la obra del cliente
 // hacia el depósito (no toca stock).
@@ -205,12 +219,15 @@ export const PagosCanteraQuerySchema = z.object({
 })
 
 // ── Cobros ────────────────────────────────────────────────────
+// venta_ids: ventas/remitos que este cobro cancela (opcional — sin
+// selección es un pago a cuenta clásico).
 export const CreateCobroSchema = z.object({
   cliente_id: z.number(),
   fecha:      FECHA,
   monto:      z.number().positive('El monto debe ser mayor a 0'),
   medio:      z.enum(['efectivo', 'transferencia', 'cheque', 'otro']).default('transferencia'),
   obs:        z.string().nullable().optional(),
+  venta_ids:  z.array(z.number()).optional().default([]),
 })
 
 export const UpdateCobroSchema = z.object({
@@ -244,5 +261,7 @@ export type CreateCanteraDto      = z.infer<typeof CreateCanteraSchema>
 export type UpdateCanteraDto      = z.infer<typeof UpdateCanteraSchema>
 export type CreateUnidadDto       = z.infer<typeof CreateUnidadSchema>
 export type UpdateUnidadDto       = z.infer<typeof UpdateUnidadSchema>
+export type CreatePrecioGlobalDto = z.infer<typeof CreatePrecioGlobalSchema>
+export type UpdatePrecioGlobalDto = z.infer<typeof UpdatePrecioGlobalSchema>
 export type CreatePagoCanteraDto  = z.infer<typeof CreatePagoCanteraSchema>
 export type PagosCanteraQuery     = z.infer<typeof PagosCanteraQuerySchema>

@@ -12,6 +12,7 @@ import type {
   CreateCanteraDto, UpdateCanteraDto,
   CreateUnidadDto, UpdateUnidadDto,
   CreatePagoCanteraDto, PagosCanteraQuery,
+  CreatePrecioGlobalDto, UpdatePrecioGlobalDto,
 } from './aridos.schema.js'
 
 const MOV_SELECT = `*,
@@ -167,6 +168,48 @@ export const aridosService = {
     return { success: true }
   },
 
+  // ── Lista de precios global por material ────────────────────
+  async getPreciosGlobal(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_precios_global')
+      .select('*, aridos_materiales(nombre, unidad)')
+      .order('material_id')
+      .order('vigente_desde', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async createPrecioGlobal(dto: CreatePrecioGlobalDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_precios_global')
+      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updatePrecioGlobal(id: number, dto: UpdatePrecioGlobalDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_precios_global')
+      .update({ ...dto, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deletePrecioGlobal(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('aridos_precios_global').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
+  },
+
   // ── Movimientos ─────────────────────────────────────────────
   async getMovimientos(query: ListMovimientosQuery, token: string) {
     const supabase = createSupabaseClient(token)
@@ -194,6 +237,24 @@ export const aridosService = {
       .select(MOV_SELECT)
       .single()
     if (error) throw new Error(error.message)
+
+    // Las ventas emiten su remito RV-NNNN automáticamente. Best-effort:
+    // si la RPC falla, la venta queda creada y el remito se puede emitir
+    // a mano desde el listado (botón 🧾).
+    if (dto.tipo === 'venta') {
+      const { error: errRemito } = await supabaseAdmin.rpc('emitir_remito_arido', {
+        p_movimiento_id: data.id,
+        p_user_id:       userId,
+      })
+      if (!errRemito) {
+        const { data: conRemito } = await supabase
+          .from('aridos_movimientos')
+          .select(MOV_SELECT)
+          .eq('id', data.id)
+          .single()
+        if (conRemito) return conRemito
+      }
+    }
     return data
   },
 
@@ -555,12 +616,26 @@ export const aridosService = {
 
   async createCobro(dto: CreateCobroDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    const { venta_ids, ...cobro } = dto
     const { data, error } = await supabase
       .from('aridos_cobros')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .insert({ ...cobro, created_by: userId, updated_by: userId })
       .select('*, aridos_clientes(nombre)')
       .single()
     if (error) throw new Error(error.message)
+
+    // Imputar las ventas seleccionadas (solo ventas del mismo cliente que
+    // sigan adeudadas — el filtro protege contra ids ajenos o ya cobrados).
+    if (venta_ids.length > 0) {
+      const { error: errImp } = await supabase
+        .from('aridos_movimientos')
+        .update({ cobro_id: data.id, updated_by: userId })
+        .in('id', venta_ids)
+        .eq('cliente_id', dto.cliente_id)
+        .eq('tipo', 'venta')
+        .is('cobro_id', null)
+      if (errImp) throw new Error(`El cobro se registró pero falló la imputación de remitos: ${errImp.message}`)
+    }
     return data
   },
 
