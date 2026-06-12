@@ -173,6 +173,7 @@ export const CreateCostoCanteraSchema = z.object({
   zona:          z.string().nullable().optional(),
   material_id:   z.number().nullable().optional(),
   costo:         z.number().min(0),
+  unidad:        z.enum(['m3', 'viaje', 'hora']).default('m3'),
   vigente_desde: FECHA,
   obs:           z.string().nullable().optional(),
 })
@@ -181,6 +182,7 @@ export const UpdateCostoCanteraSchema = z.object({
   concepto:      z.string().min(1).optional(),
   zona:          z.string().nullable().optional(),
   costo:         z.number().min(0).optional(),
+  unidad:        z.enum(['m3', 'viaje', 'hora']).optional(),
   vigente_desde: FECHA.optional(),
   obs:           z.string().nullable().optional(),
 })
