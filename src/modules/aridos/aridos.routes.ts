@@ -11,6 +11,8 @@ import {
   CreateCobroSchema, UpdateCobroSchema, CobrosQuerySchema,
   CreateMunicipioSchema, UpdateMunicipioSchema,
   CreateCostoCanteraSchema, UpdateCostoCanteraSchema,
+  CreateCanteraSchema, UpdateCanteraSchema,
+  CreateUnidadSchema, UpdateUnidadSchema, EtaQuerySchema,
 } from './aridos.schema.js'
 
 const aridos = new Hono()
@@ -89,6 +91,46 @@ aridos.patch('/movimientos/:id', zValidator('json', UpdateMovimientoSchema), asy
 
 aridos.delete('/movimientos/:id', async (c) => {
   return c.json(await aridosService.deleteMovimiento(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+// ── Canteras propias ──────────────────────────────────────────
+aridos.get('/canteras', async (c) => {
+  return c.json(await aridosService.getCanteras(c.get('accessToken')))
+})
+
+aridos.post('/canteras', zValidator('json', CreateCanteraSchema), async (c) => {
+  return c.json(await aridosService.createCantera(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+aridos.patch('/canteras/:id', zValidator('json', UpdateCanteraSchema), async (c) => {
+  return c.json(await aridosService.updateCantera(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+aridos.delete('/canteras/:id', async (c) => {
+  return c.json(await aridosService.deleteCantera(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+// ── Unidades (camión + chofer, con GPS) ───────────────────────
+// IMPORTANTE: /unidades/:id/eta antes que /unidades/:id genéricas no
+// hace falta acá (no hay GET /unidades/:id), pero se deja primero igual.
+aridos.get('/unidades/:id/eta', zValidator('query', EtaQuerySchema), async (c) => {
+  return c.json(await aridosService.getUnidadEta(Number(c.req.param('id')), c.req.valid('query').direccion, c.get('accessToken')))
+})
+
+aridos.get('/unidades', async (c) => {
+  return c.json(await aridosService.getUnidades(c.get('accessToken')))
+})
+
+aridos.post('/unidades', zValidator('json', CreateUnidadSchema), async (c) => {
+  return c.json(await aridosService.createUnidad(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+aridos.patch('/unidades/:id', zValidator('json', UpdateUnidadSchema), async (c) => {
+  return c.json(await aridosService.updateUnidad(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+aridos.delete('/unidades/:id', async (c) => {
+  return c.json(await aridosService.deleteUnidad(Number(c.req.param('id')), c.get('accessToken')))
 })
 
 // ── Municipios (zonas de entrega con recargo %) ───────────────

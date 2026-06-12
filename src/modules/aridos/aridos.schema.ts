@@ -65,8 +65,7 @@ export const CreateMovimientoSchema = z.object({
   precio_especial:   z.boolean().optional().default(false),
   entrega_direccion: z.string().nullable().optional(),
   municipio_id:      z.number().nullable().optional(),
-  chofer_id:   z.number().nullable().optional(),
-  camion_id:   z.number().nullable().optional(),
+  unidad_id:   z.number().nullable().optional(),
   flete_obs:   z.string().nullable().optional(),
   remito:      z.string().nullable().optional(),
   obs:         z.string().nullable().optional(),
@@ -93,8 +92,7 @@ export const UpdateMovimientoSchema = z.object({
   precio_especial:   z.boolean().optional(),
   entrega_direccion: z.string().nullable().optional(),
   municipio_id:      z.number().nullable().optional(),
-  chofer_id:   z.number().nullable().optional(),
-  camion_id:   z.number().nullable().optional(),
+  unidad_id:   z.number().nullable().optional(),
   flete_obs:   z.string().nullable().optional(),
   remito:      z.string().nullable().optional(),
   obs:         z.string().nullable().optional(),
@@ -106,6 +104,42 @@ export const ListMovimientosQuerySchema = z.object({
   material_id: z.coerce.number().optional(),
   fecha_desde: FECHA.optional(),
   fecha_hasta: FECHA.optional(),
+})
+
+// ── Canteras propias del negocio de áridos ────────────────────
+export const CreateCanteraSchema = z.object({
+  nombre:    z.string().min(1, 'El nombre es requerido'),
+  direccion: z.string().nullable().optional(),
+  localidad: z.string().nullable().optional(),
+  obs:       z.string().nullable().optional(),
+})
+
+export const UpdateCanteraSchema = z.object({
+  nombre:    z.string().min(1).optional(),
+  direccion: z.string().nullable().optional(),
+  localidad: z.string().nullable().optional(),
+  obs:       z.string().nullable().optional(),
+  activo:    z.boolean().optional(),
+})
+
+// ── Unidades (camión + chofer del negocio de áridos, con GPS) ──
+export const CreateUnidadSchema = z.object({
+  nombre:  z.string().min(1, 'El nombre es requerido'),
+  patente: z.string().min(1, 'La patente es requerida'),
+  chofer:  z.string().nullable().optional(),
+  obs:     z.string().nullable().optional(),
+})
+
+export const UpdateUnidadSchema = z.object({
+  nombre:  z.string().min(1).optional(),
+  patente: z.string().min(1).optional(),
+  chofer:  z.string().nullable().optional(),
+  obs:     z.string().nullable().optional(),
+  activo:  z.boolean().optional(),
+})
+
+export const EtaQuerySchema = z.object({
+  direccion: z.string().min(3, 'Falta la dirección de destino'),
 })
 
 // ── Municipios (zonas de entrega con recargo %) ───────────────
@@ -172,3 +206,7 @@ export type CreateMunicipioDto    = z.infer<typeof CreateMunicipioSchema>
 export type UpdateMunicipioDto    = z.infer<typeof UpdateMunicipioSchema>
 export type CreateCostoCanteraDto = z.infer<typeof CreateCostoCanteraSchema>
 export type UpdateCostoCanteraDto = z.infer<typeof UpdateCostoCanteraSchema>
+export type CreateCanteraDto      = z.infer<typeof CreateCanteraSchema>
+export type UpdateCanteraDto      = z.infer<typeof UpdateCanteraSchema>
+export type CreateUnidadDto       = z.infer<typeof CreateUnidadSchema>
+export type UpdateUnidadDto       = z.infer<typeof UpdateUnidadSchema>

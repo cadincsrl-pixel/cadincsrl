@@ -1,4 +1,6 @@
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { mobileQuestClient } from '../logistica/gps-sync/mobile-quest.client.js'
+import { geocode, distancia } from '../logistica/maps/google-maps.client.js'
 import type {
   CreateMaterialDto, UpdateMaterialDto,
   CreateClienteDto, UpdateClienteDto,
@@ -7,15 +9,22 @@ import type {
   CreateCobroDto, UpdateCobroDto, CobrosQuery,
   CreateMunicipioDto, UpdateMunicipioDto,
   CreateCostoCanteraDto, UpdateCostoCanteraDto,
+  CreateCanteraDto, UpdateCanteraDto,
+  CreateUnidadDto, UpdateUnidadDto,
 } from './aridos.schema.js'
 
 const MOV_SELECT = `*,
   aridos_materiales(nombre, unidad),
   aridos_clientes(nombre),
   aridos_municipios(nombre, recargo_pct),
-  canteras(nombre),
-  choferes(nombre),
-  camiones(patente)`
+  aridos_canteras(nombre),
+  aridos_unidades(nombre, patente, chofer)`
+
+// Normaliza patente para matchear contra Mobile Quest (mismo criterio
+// que el gps-sync de logística): uppercase, solo alfanuméricos.
+function normPatente(p: string): string {
+  return p.toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
 
 // Lee TODAS las filas de una query paginando de a 1000 (hard cap de
 // PostgREST que no se bypassea con .range grande — CLAUDE.md §5.7).
@@ -247,6 +256,165 @@ export const aridosService = {
         stock:       acc.entradas + acc.ajustes - acc.salidas,
       }
     })
+  },
+
+  // ── Canteras propias del negocio de áridos ──────────────────
+  async getCanteras(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase.from('aridos_canteras').select('*').order('nombre')
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  // Si viene dirección, se geocodifica best-effort para tener lat/lng
+  // (sirve para rutas/tiempos futuros). Si Google falla, se guarda igual.
+  async createCantera(dto: CreateCanteraDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    let lat: number | null = null
+    let lng: number | null = null
+    if (dto.direccion) {
+      try {
+        const g = await geocode(`${dto.direccion}${dto.localidad ? `, ${dto.localidad}` : ''}`)
+        lat = g.lat; lng = g.lng
+      } catch { /* sin geocode no es bloqueante */ }
+    }
+    const { data, error } = await supabase
+      .from('aridos_canteras')
+      .insert({ ...dto, lat, lng, created_by: userId, updated_by: userId })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateCantera(id: number, dto: UpdateCanteraDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    let extra: Record<string, unknown> = {}
+    if (dto.direccion) {
+      try {
+        const g = await geocode(`${dto.direccion}${dto.localidad ? `, ${dto.localidad}` : ''}`)
+        extra = { lat: g.lat, lng: g.lng }
+      } catch { /* mantiene lat/lng previos */ }
+    }
+    const { data, error } = await supabase
+      .from('aridos_canteras')
+      .update({ ...dto, ...extra, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteCantera(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('aridos_canteras').delete().eq('id', id)
+    if (error) {
+      if (error.code === '23503') throw new Error('No se puede eliminar: la cantera tiene movimientos. Desactivala en su lugar.')
+      throw new Error(error.message)
+    }
+    return { success: true }
+  },
+
+  // ── Unidades (camión + chofer, con GPS Mobile Quest) ─────────
+  async getUnidades(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase.from('aridos_unidades').select('*').order('nombre')
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async createUnidad(dto: CreateUnidadDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_unidades')
+      .insert({ ...dto, patente: dto.patente.toUpperCase().trim(), created_by: userId, updated_by: userId })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateUnidad(id: number, dto: UpdateUnidadDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const patch: Record<string, unknown> = { ...dto, updated_by: userId }
+    if (dto.patente) {
+      patch.patente = dto.patente.toUpperCase().trim()
+      // Si cambió la patente, el mapping GPS viejo deja de valer.
+      patch.id_vehiculo_gps = null
+    }
+    const { data, error } = await supabase
+      .from('aridos_unidades')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteUnidad(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('aridos_unidades').delete().eq('id', id)
+    if (error) {
+      if (error.code === '23503') throw new Error('No se puede eliminar: la unidad tiene movimientos. Desactivala en su lugar.')
+      throw new Error(error.message)
+    }
+    return { success: true }
+  },
+
+  // ── Posición GPS + tiempo de llegada a destino ───────────────
+  // 1. Resuelve el vehículo en Mobile Quest (por mapping previo o por
+  //    patente; si matchea, persiste el id para la próxima).
+  // 2. Toma la última posición y la cachea en la unidad.
+  // 3. Geocodifica la dirección destino y pide tiempo de viaje con
+  //    tráfico a Google Distance Matrix.
+  async getUnidadEta(id: number, direccion: string, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data: unidad, error } = await supabase
+      .from('aridos_unidades')
+      .select('*')
+      .eq('id', id)
+      .single()
+    if (error) throw new Error(error.message)
+
+    // Resolver id_vehiculo_gps por patente si no está mapeado
+    let idVehiculo: string | null = unidad.id_vehiculo_gps
+    if (!idVehiculo) {
+      const catalogo = await mobileQuestClient.listarVehiculos()
+      const match = catalogo.find(v => normPatente(v.patente) === normPatente(unidad.patente))
+      if (!match) {
+        throw new Error(`La patente ${unidad.patente} no aparece en el GPS (Mobile Quest). Verificá que la unidad tenga equipo instalado.`)
+      }
+      idVehiculo = match.id_vehiculo
+      await supabase.from('aridos_unidades').update({ id_vehiculo_gps: idVehiculo }).eq('id', id)
+    }
+
+    const datos = await mobileQuestClient.datosUltimos()
+    const pos = datos.find(d => d.id_vehiculo === idVehiculo)
+    if (!pos || pos.latitud == null || pos.longitud == null) {
+      throw new Error('El GPS de la unidad no reporta posición ahora mismo.')
+    }
+
+    // Cachear última lectura en la unidad (best-effort)
+    await supabase.from('aridos_unidades').update({
+      gps_ultima_lat:        pos.latitud,
+      gps_ultima_lng:        pos.longitud,
+      gps_ultima_velocidad:  pos.velocidad,
+      gps_ultima_lectura_en: pos.fecha,
+    }).eq('id', id)
+
+    const destino = await geocode(direccion)
+    const ruta = await distancia(pos.latitud, pos.longitud, destino.lat, destino.lng)
+
+    return {
+      unidad:      { id: unidad.id, nombre: unidad.nombre, patente: unidad.patente, chofer: unidad.chofer },
+      posicion:    { lat: pos.latitud, lng: pos.longitud, velocidad: pos.velocidad, lectura_en: pos.fecha },
+      destino:     { direccion: destino.formatted_address, lat: destino.lat, lng: destino.lng },
+      distancia_km: Math.round(ruta.distancia_m / 100) / 10,
+      eta_min:      Math.round(ruta.duracion_s / 60),
+      eta_traffic_min: ruta.duracion_traffic_s != null ? Math.round(ruta.duracion_traffic_s / 60) : null,
+    }
   },
 
   // ── Municipios (zonas de entrega con recargo %) ─────────────
