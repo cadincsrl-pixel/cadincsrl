@@ -11,6 +11,7 @@ import type {
   CreateCostoCanteraDto, UpdateCostoCanteraDto,
   CreateCanteraDto, UpdateCanteraDto,
   CreateUnidadDto, UpdateUnidadDto,
+  CreatePagoCanteraDto, PagosCanteraQuery,
 } from './aridos.schema.js'
 
 const MOV_SELECT = `*,
@@ -463,9 +464,9 @@ export const aridosService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('aridos_costos_cantera')
-      .select('*, canteras(nombre), aridos_materiales(nombre, unidad)')
+      .select('*, aridos_canteras(nombre), aridos_materiales(nombre, unidad)')
       .order('cantera_id')
-      .order('material_id')
+      .order('concepto')
       .order('vigente_desde', { ascending: false })
     if (error) throw new Error(error.message)
     return data
@@ -544,6 +545,96 @@ export const aridosService = {
     const { error } = await supabase.from('aridos_cobros').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return { success: true }
+  },
+
+  // ── Pagos a canteras y cuenta corriente del proveedor ────────
+  async getPagosCantera(query: PagosCanteraQuery, token: string) {
+    const supabase = createSupabaseClient(token)
+    return fetchAll((from, to) => {
+      let q = supabase
+        .from('aridos_pagos_cantera')
+        .select('*, aridos_canteras(nombre)')
+        .order('fecha', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)
+      if (query.cantera_id) q = q.eq('cantera_id', query.cantera_id)
+      return q
+    })
+  },
+
+  async createPagoCantera(dto: CreatePagoCanteraDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('aridos_pagos_cantera')
+      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select('*, aridos_canteras(nombre)')
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deletePagoCantera(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { error } = await supabase.from('aridos_pagos_cantera').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
+  },
+
+  // Cta cte con la cantera (proveedor): retirado = Σ costo_total de los
+  // movimientos con cantera_id; saldo = retirado − pagos. Los retiros
+  // sin costo cargado se cuentan aparte para avisar en la UI.
+  async getCuentaCorrienteCanteras(token: string) {
+    const supabase = createSupabaseClient(token)
+
+    const movs = await fetchAll<{ cantera_id: number | null; costo_total: number | null }>(
+      (from, to) => supabase
+        .from('aridos_movimientos')
+        .select('cantera_id, costo_total')
+        .not('cantera_id', 'is', null)
+        .order('id')
+        .range(from, to)
+    )
+    const pagos = await fetchAll<{ cantera_id: number; monto: number }>(
+      (from, to) => supabase
+        .from('aridos_pagos_cantera')
+        .select('cantera_id, monto')
+        .order('id')
+        .range(from, to)
+    )
+    const { data: canteras, error } = await supabase
+      .from('aridos_canteras')
+      .select('id, nombre, obs')
+      .order('nombre')
+    if (error) throw new Error(error.message)
+
+    const retiradoPor = new Map<number, { total: number; retiros: number; sinCosto: number }>()
+    for (const m of movs) {
+      if (m.cantera_id == null) continue
+      const acc = retiradoPor.get(m.cantera_id) ?? { total: 0, retiros: 0, sinCosto: 0 }
+      acc.retiros += 1
+      if (m.costo_total != null) acc.total += Number(m.costo_total)
+      else acc.sinCosto += 1
+      retiradoPor.set(m.cantera_id, acc)
+    }
+    const pagadoPor = new Map<number, number>()
+    for (const p of pagos) {
+      pagadoPor.set(p.cantera_id, (pagadoPor.get(p.cantera_id) ?? 0) + Number(p.monto))
+    }
+
+    return (canteras ?? []).map(c => {
+      const r = retiradoPor.get(c.id) ?? { total: 0, retiros: 0, sinCosto: 0 }
+      const pagado = pagadoPor.get(c.id) ?? 0
+      return {
+        id: c.id,
+        nombre: c.nombre,
+        obs: c.obs,
+        retiros: r.retiros,
+        retiros_sin_costo: r.sinCosto,
+        retirado: r.total,
+        pagado,
+        saldo: r.total - pagado,
+      }
+    })
   },
 
   // ── Cuenta corriente ────────────────────────────────────────

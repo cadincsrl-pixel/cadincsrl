@@ -13,6 +13,7 @@ import {
   CreateCostoCanteraSchema, UpdateCostoCanteraSchema,
   CreateCanteraSchema, UpdateCanteraSchema,
   CreateUnidadSchema, UpdateUnidadSchema, EtaQuerySchema,
+  CreatePagoCanteraSchema, PagosCanteraQuerySchema,
 } from './aridos.schema.js'
 
 const aridos = new Hono()
@@ -191,6 +192,23 @@ aridos.delete('/cobros/:id', async (c) => {
 
 aridos.get('/cuenta-corriente', async (c) => {
   return c.json(await aridosService.getCuentaCorriente(c.get('accessToken')))
+})
+
+// ── Pagos a canteras y cta cte del proveedor ──────────────────
+aridos.get('/pagos-cantera', zValidator('query', PagosCanteraQuerySchema), async (c) => {
+  return c.json(await aridosService.getPagosCantera(c.req.valid('query'), c.get('accessToken')))
+})
+
+aridos.post('/pagos-cantera', zValidator('json', CreatePagoCanteraSchema), async (c) => {
+  return c.json(await aridosService.createPagoCantera(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+aridos.delete('/pagos-cantera/:id', async (c) => {
+  return c.json(await aridosService.deletePagoCantera(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+aridos.get('/cuenta-corriente-canteras', async (c) => {
+  return c.json(await aridosService.getCuentaCorrienteCanteras(c.get('accessToken')))
 })
 
 export default aridos

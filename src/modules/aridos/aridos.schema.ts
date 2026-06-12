@@ -66,6 +66,9 @@ export const CreateMovimientoSchema = z.object({
   entrega_direccion: z.string().nullable().optional(),
   municipio_id:      z.number().nullable().optional(),
   unidad_id:   z.number().nullable().optional(),
+  // Lo que cobró la cantera por este retiro (deuda con el proveedor)
+  costo_unit:  z.number().min(0).nullable().optional(),
+  costo_total: z.number().min(0).nullable().optional(),
   flete_obs:   z.string().nullable().optional(),
   remito:      z.string().nullable().optional(),
   obs:         z.string().nullable().optional(),
@@ -93,6 +96,8 @@ export const UpdateMovimientoSchema = z.object({
   entrega_direccion: z.string().nullable().optional(),
   municipio_id:      z.number().nullable().optional(),
   unidad_id:   z.number().nullable().optional(),
+  costo_unit:  z.number().min(0).nullable().optional(),
+  costo_total: z.number().min(0).nullable().optional(),
   flete_obs:   z.string().nullable().optional(),
   remito:      z.string().nullable().optional(),
   obs:         z.string().nullable().optional(),
@@ -155,19 +160,38 @@ export const UpdateMunicipioSchema = z.object({
   obs:         z.string().nullable().optional(),
 })
 
-// ── Costos de compra por cantera × material ───────────────────
+// ── Lista de precios de la cantera (concepto × zona, por viaje) ──
+// Los conceptos son los del proveedor ("Viaje de Arena fina", "Viaje
+// Mixto…") y los precios pueden variar por zona de entrega.
 export const CreateCostoCanteraSchema = z.object({
   cantera_id:    z.number(),
-  material_id:   z.number(),
+  concepto:      z.string().min(1, 'El concepto es requerido'),
+  zona:          z.string().nullable().optional(),
+  material_id:   z.number().nullable().optional(),
   costo:         z.number().min(0),
   vigente_desde: FECHA,
   obs:           z.string().nullable().optional(),
 })
 
 export const UpdateCostoCanteraSchema = z.object({
+  concepto:      z.string().min(1).optional(),
+  zona:          z.string().nullable().optional(),
   costo:         z.number().min(0).optional(),
   vigente_desde: FECHA.optional(),
   obs:           z.string().nullable().optional(),
+})
+
+// ── Pagos a canteras (cta cte proveedor: retirado − pagado) ────
+export const CreatePagoCanteraSchema = z.object({
+  cantera_id: z.number(),
+  fecha:      FECHA,
+  monto:      z.number().positive('El monto debe ser mayor a 0'),
+  medio:      z.enum(['efectivo', 'transferencia', 'cheque', 'otro']).default('transferencia'),
+  obs:        z.string().nullable().optional(),
+})
+
+export const PagosCanteraQuerySchema = z.object({
+  cantera_id: z.coerce.number().optional(),
 })
 
 // ── Cobros ────────────────────────────────────────────────────
@@ -210,3 +234,5 @@ export type CreateCanteraDto      = z.infer<typeof CreateCanteraSchema>
 export type UpdateCanteraDto      = z.infer<typeof UpdateCanteraSchema>
 export type CreateUnidadDto       = z.infer<typeof CreateUnidadSchema>
 export type UpdateUnidadDto       = z.infer<typeof UpdateUnidadSchema>
+export type CreatePagoCanteraDto  = z.infer<typeof CreatePagoCanteraSchema>
+export type PagosCanteraQuery     = z.infer<typeof PagosCanteraQuerySchema>
