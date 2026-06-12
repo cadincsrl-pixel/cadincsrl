@@ -35,5 +35,19 @@ export const UpdateChoferSchema = z.object({
   obs:               z.string().optional(),
 })
 
-export type CreateChoferDto = z.infer<typeof CreateChoferSchema>
-export type UpdateChoferDto = z.infer<typeof UpdateChoferSchema>
+// Traspaso de unidades entre choferes: el origen entrega su camión y/o batea
+// al destino en una sola operación. Con `intercambio`, el origen recibe a su
+// vez las unidades que tenía el destino (swap); sin él, quedan sin asignar.
+export const TraspasoChoferSchema = z.object({
+  origen_id:   z.number(),
+  destino_id:  z.number(),
+  camion:      z.boolean().default(true),
+  batea:       z.boolean().default(true),
+  intercambio: z.boolean().default(false),
+})
+  .refine(d => d.origen_id !== d.destino_id, { message: 'El origen y el destino deben ser choferes distintos' })
+  .refine(d => d.camion || d.batea, { message: 'Hay que traspasar al menos camión o batea' })
+
+export type CreateChoferDto   = z.infer<typeof CreateChoferSchema>
+export type UpdateChoferDto   = z.infer<typeof UpdateChoferSchema>
+export type TraspasoChoferDto = z.infer<typeof TraspasoChoferSchema>
