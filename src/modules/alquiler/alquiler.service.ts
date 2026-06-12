@@ -758,12 +758,67 @@ export const alquilerService = {
   async createCobro(dto: CreateCobroDto, token: string, userId: string) {
     await requireAdmin(userId)
     const supabase = createSupabaseClient(token)
+    const { remito_ids, ...cobro } = dto
     const { data, error } = await supabase
       .from('alquiler_cobros')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .insert({ ...cobro, created_by: userId, updated_by: userId })
       .select().single()
     if (error) throw new Error(error.message)
+
+    // Imputación: marcar los remitos tildados como cancelados por este cobro.
+    // Solo remitos de obras del cliente y todavía adeudados — un id ajeno o
+    // ya cobrado simplemente no matchea (mismo criterio que áridos).
+    if (remito_ids.length > 0) {
+      const { data: obras } = await supabase
+        .from('alquiler_obras').select('id').eq('cliente_id', dto.cliente_id)
+      const obraIds = (obras ?? []).map(o => o.id as number)
+      if (obraIds.length > 0) {
+        const { error: errImp } = await supabase
+          .from('alquiler_remitos')
+          .update({ cobro_id: data.id })
+          .in('id', remito_ids)
+          .in('obra_id', obraIds)
+          .is('cobro_id', null)
+        if (errImp) throw new Error(errImp.message)
+      }
+    }
     return data
+  },
+
+  // Remitos de un cliente con su importe (del parte 1:1) y estado de cobro.
+  // Alimenta el desglose de cuenta corriente, la imputación del modal de
+  // cobro y el PDF de detalle.
+  async getRemitosCliente(clienteId: number, token: string, userId: string) {
+    const scope = await getScope(userId)
+    const supabase = createSupabaseClient(token)
+
+    const { data: obras, error: errObras } = await supabase
+      .from('alquiler_obras').select('id').eq('cliente_id', clienteId)
+    if (errObras) throw new Error(errObras.message)
+    let obraIds = (obras ?? []).map(o => o.id as number)
+
+    // No-admin: solo obras accesibles según identidad (mismo criterio que
+    // getCobros / cuenta corriente).
+    if (!scope.isAdmin) {
+      const accesibles = new Set(accessibleObraIds(scope))
+      obraIds = obraIds.filter(id => accesibles.has(id))
+    }
+    if (obraIds.length === 0) return []
+
+    const { data, error } = await supabase
+      .from('alquiler_remitos')
+      .select('*, parte:alquiler_partes(importe)')
+      .in('obra_id', obraIds)
+      .order('fecha_trabajo', { ascending: false })
+      .order('id', { ascending: false })
+    if (error) throw new Error(error.message)
+
+    return (data ?? [])
+      .filter(r => canView(scope, r.obra_id as number, r.maquina_id as number))
+      .map(({ parte, ...r }) => ({
+        ...r,
+        importe: (parte as { importe: number | null } | null)?.importe ?? null,
+      }))
   },
 
   async updateCobro(id: number, dto: UpdateCobroDto, token: string, userId: string) {

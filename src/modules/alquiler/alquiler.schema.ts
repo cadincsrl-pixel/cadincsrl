@@ -198,6 +198,9 @@ export const CreateCobroSchema = z.object({
   monto:      z.number().positive('El monto debe ser mayor a 0'),
   medio:      MedioCobroEnum.default('efectivo'),
   obs:        z.string().nullable().optional(),
+  // Imputación opcional: remitos del cliente que este cobro cancela.
+  // Vacío = pago a cuenta clásico (mismo modelo que áridos).
+  remito_ids: z.array(z.number().int().positive()).optional().default([]),
 })
 export const UpdateCobroSchema = z.object({
   fecha:  FechaISO.optional(),

@@ -176,6 +176,12 @@ alquiler.get('/cuenta-corriente', zValidator('query', CuentaCorrienteQuerySchema
   return c.json(await alquilerService.getCuentaCorriente(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
 })
 
+// Remitos de un cliente con importe + estado de cobro (desglose de cta cte,
+// imputación en el modal de cobro y PDF de detalle).
+alquiler.get('/cuenta-corriente/:clienteId/remitos', async (c) => {
+  return c.json(await alquilerService.getRemitosCliente(Number(c.req.param('clienteId')), c.get('accessToken'), c.get('user').id))
+})
+
 // ── Cobros del cliente (Fase C; writes admin-only en el service) ──
 alquiler.get('/cobros', zValidator('query', CobrosQuerySchema), async (c) => {
   return c.json(await alquilerService.getCobros(c.req.valid('query'), c.get('accessToken'), c.get('user').id))
