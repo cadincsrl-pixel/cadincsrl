@@ -2,6 +2,17 @@ import { z } from 'zod'
 
 const FECHA = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 
+// Email opcional: el front puede mandar null o '' (campo vacío). Solo se
+// valida el formato si hay texto. Acepta null/'' tal cual y los deja pasar.
+const EMAIL_OPCIONAL = z
+  .string()
+  .nullable()
+  .optional()
+  .refine(
+    (v) => v == null || v === '' || z.string().email().safeParse(v).success,
+    { message: 'Email inválido' },
+  )
+
 // ── Materiales ────────────────────────────────────────────────
 export const CreateMaterialSchema = z.object({
   nombre: z.string().min(1, 'El nombre es requerido'),
@@ -19,7 +30,7 @@ export const CreateClienteSchema = z.object({
   nombre:    z.string().min(1, 'El nombre es requerido'),
   cuit:      z.string().nullable().optional(),
   tel:       z.string().nullable().optional(),
-  email:     z.string().nullable().optional(),
+  email:     EMAIL_OPCIONAL,
   direccion: z.string().nullable().optional(),
   obs:       z.string().nullable().optional(),
 })
@@ -28,7 +39,7 @@ export const UpdateClienteSchema = z.object({
   nombre:    z.string().min(1).optional(),
   cuit:      z.string().nullable().optional(),
   tel:       z.string().nullable().optional(),
-  email:     z.string().nullable().optional(),
+  email:     EMAIL_OPCIONAL,
   direccion: z.string().nullable().optional(),
   obs:       z.string().nullable().optional(),
 })
@@ -98,6 +109,17 @@ export const CreateMovimientoSchema = z.object({
   if (v.tipo === 'acopio' && v.cantidad <= 0) {
     ctx.addIssue({ code: 'custom', message: 'El acopio debe tener cantidad mayor a 0' })
   }
+  // cantera_id solo tiene sentido cuando el material sale de una cantera.
+  // Si el origen NO es 'cantera' (depósito u obra), cantera_id DEBE ser null:
+  // de lo contrario el costo_total cargaría la cta cte de una cantera con un
+  // retiro que en realidad salió del depósito → deuda inflada al proveedor.
+  if (v.origen != null && v.origen !== 'cantera' && v.cantera_id != null) {
+    ctx.addIssue({ code: 'custom', path: ['cantera_id'], message: 'cantera_id solo aplica cuando el origen es cantera' })
+  }
+  // Si origen === 'cantera' en una venta, lo esperable es que venga cantera_id
+  // (para imputar el retiro a la cta cte del proveedor). NO se hace obligatorio
+  // a propósito: a veces se carga la venta antes de saber la cantera exacta y
+  // el costo se completa después. Queda como expectativa documentada, no hard.
 })
 
 export const UpdateMovimientoSchema = z.object({
@@ -119,6 +141,20 @@ export const UpdateMovimientoSchema = z.object({
   flete_obs:   z.string().nullable().optional(),
   remito:      z.string().nullable().optional(),
   obs:         z.string().nullable().optional(),
+}).superRefine((v, ctx) => {
+  // El create valida con superRefine; el update no validaba nada. Replicamos
+  // lo que es chequeable sin el `tipo` (el update no permite cambiar el tipo,
+  // así que no viene en el body). La validación de cantidad por tipo
+  // (venta/acopio > 0, ajuste libre) se hace en el service, que sí conoce el
+  // tipo de la fila actual.
+  //
+  // Consistencia origen/cantera_id: si el body fija origen != 'cantera' y a la
+  // vez manda cantera_id no-null, se rechaza (no inflar la cta cte de una
+  // cantera con un retiro que no salió de ella). Solo aplica cuando ambos
+  // vienen en el patch — un update parcial que toca solo uno no se valida acá.
+  if (v.origen != null && v.origen !== 'cantera' && v.cantera_id != null) {
+    ctx.addIssue({ code: 'custom', path: ['cantera_id'], message: 'cantera_id solo aplica cuando el origen es cantera' })
+  }
 })
 
 export const ListMovimientosQuerySchema = z.object({
@@ -172,13 +208,16 @@ export const EtaQuerySchema = z.object({
 // ── Municipios (zonas de entrega con recargo %) ───────────────
 export const CreateMunicipioSchema = z.object({
   nombre:      z.string().min(1, 'El nombre es requerido'),
-  recargo_pct: z.number().min(0).default(0),
+  // .max(100): un recargo > 100% es casi seguro un error de tipeo
+  // (ej. escribir 1500 en vez de 15). Si alguna vez hay un caso real,
+  // se sube el techo, pero hoy protege contra inflar precios por error.
+  recargo_pct: z.number().min(0).max(100).default(0),
   obs:         z.string().nullable().optional(),
 })
 
 export const UpdateMunicipioSchema = z.object({
   nombre:      z.string().min(1).optional(),
-  recargo_pct: z.number().min(0).optional(),
+  recargo_pct: z.number().min(0).max(100).optional(),
   obs:         z.string().nullable().optional(),
 })
 

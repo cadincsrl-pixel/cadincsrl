@@ -231,9 +231,27 @@ export const aridosService = {
 
   async createMovimiento(dto: CreateMovimientoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // El importe SIEMPRE se recalcula en backend (cantidad × precio_unit),
+    // ignorando el que mande el front: no confiamos en el cálculo del
+    // cliente para la cta cte. OJO: el recargo de municipio YA viene
+    // aplicado dentro de precio_unit (el front guarda el precio recargado),
+    // así que NO se vuelve a aplicar — solo cantidad × precio_unit.
+    const importe = dto.precio_unit != null
+      ? Number(dto.cantidad) * Number(dto.precio_unit)
+      : null
+
+    // costo_total (deuda con la cantera) NO se recalcula a la fuerza: el
+    // front lo carga a mano porque la realidad es por-viaje/por-zona y no
+    // siempre es cantidad × costo_unit. Solo lo derivamos si falta y hay
+    // datos para calcularlo (conveniencia, no fuente de verdad).
+    const costoTotal = dto.costo_total != null
+      ? dto.costo_total
+      : (dto.costo_unit != null ? Number(dto.cantidad) * Number(dto.costo_unit) : null)
+
     const { data, error } = await supabase
       .from('aridos_movimientos')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .insert({ ...dto, importe, costo_total: costoTotal, created_by: userId, updated_by: userId })
       .select(MOV_SELECT)
       .single()
     if (error) throw new Error(error.message)
@@ -260,9 +278,57 @@ export const aridosService = {
 
   async updateMovimiento(id: number, dto: UpdateMovimientoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    const patch: Record<string, unknown> = { ...dto, updated_by: userId }
+
+    // Si el update toca cantidad o precio_unit, recalculamos el importe en
+    // backend con los valores FINALES (los nuevos si vienen, o los actuales
+    // de la fila). No confiamos en el importe que mande el front. Leemos la
+    // fila actual solo cuando hace falta (uno de los dos campos no viene).
+    const tocaCantidad   = dto.cantidad   !== undefined
+    const tocaPrecioUnit = dto.precio_unit !== undefined
+    const tocaCostoUnit  = dto.costo_unit  !== undefined
+    if (tocaCantidad || tocaPrecioUnit || tocaCostoUnit) {
+      const { data: actual, error: errGet } = await supabase
+        .from('aridos_movimientos')
+        .select('tipo, cantidad, precio_unit, costo_unit')
+        .eq('id', id)
+        .single()
+      if (errGet) throw new Error(errGet.message)
+
+      const cantidadFinal   = tocaCantidad   ? dto.cantidad   : actual.cantidad
+      const precioUnitFinal = tocaPrecioUnit ? dto.precio_unit : actual.precio_unit
+
+      // Validación de cantidad por tipo (el update no trae `tipo`, lo sacamos
+      // de la fila): venta y acopio exigen cantidad > 0; ajuste admite
+      // cualquier valor (puede ser negativo para corregir inventario).
+      if (tocaCantidad && (actual.tipo === 'venta' || actual.tipo === 'acopio') && Number(cantidadFinal) <= 0) {
+        throw new Error('La cantidad debe ser mayor a 0')
+      }
+
+      if (tocaCantidad || tocaPrecioUnit) {
+        // importe = cantidad × precio_unit (recargo de municipio ya incluido
+        // en precio_unit, no se vuelve a aplicar). Si precio_unit final es
+        // null → importe null.
+        patch.importe = precioUnitFinal != null
+          ? Number(cantidadFinal) * Number(precioUnitFinal)
+          : null
+      }
+
+      // costo_total (deuda con la cantera): NO se recalcula a la fuerza. Solo
+      // se deriva si el front NO mandó costo_total explícito pero sí hay
+      // costo_unit y cantidad finales para calcularlo (conveniencia).
+      if (dto.costo_total === undefined && (tocaCostoUnit || tocaCantidad)) {
+        const costoUnitFinal = tocaCostoUnit ? dto.costo_unit : actual.costo_unit
+        if (costoUnitFinal != null) {
+          patch.costo_total = Number(cantidadFinal) * Number(costoUnitFinal)
+        }
+      }
+    }
+
     const { data, error } = await supabase
       .from('aridos_movimientos')
-      .update({ ...dto, updated_by: userId })
+      .update(patch)
       .eq('id', id)
       .select(MOV_SELECT)
       .single()
@@ -615,28 +681,40 @@ export const aridosService = {
   },
 
   async createCobro(dto: CreateCobroDto, token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
     const { venta_ids, ...cobro } = dto
-    const { data, error } = await supabase
-      .from('aridos_cobros')
-      .insert({ ...cobro, created_by: userId, updated_by: userId })
-      .select('*, aridos_clientes(nombre)')
-      .single()
-    if (error) throw new Error(error.message)
 
-    // Imputar las ventas seleccionadas (solo ventas del mismo cliente que
-    // sigan adeudadas — el filtro protege contra ids ajenos o ya cobrados).
-    if (venta_ids.length > 0) {
-      const { error: errImp } = await supabase
-        .from('aridos_movimientos')
-        .update({ cobro_id: data.id, updated_by: userId })
-        .in('id', venta_ids)
-        .eq('cliente_id', dto.cliente_id)
-        .eq('tipo', 'venta')
-        .is('cobro_id', null)
-      if (errImp) throw new Error(`El cobro se registró pero falló la imputación de remitos: ${errImp.message}`)
+    // Cobro + imputación en UNA transacción vía RPC: antes se insertaba el
+    // cobro y se imputaba en un UPDATE aparte; si el UPDATE fallaba, el cobro
+    // quedaba y un reintento lo duplicaba. La RPC inserta + imputa atómico y
+    // valida que el monto cubra los remitos seleccionados (MONTO_INSUFICIENTE).
+    // SECURITY DEFINER → se llama con el cliente admin (CLAUDE.md §9). Los
+    // permisos del módulo ya se validaron en el middleware de la ruta.
+    const { data, error } = await supabaseAdmin.rpc('registrar_cobro_arido', {
+      p_cliente_id: dto.cliente_id,
+      p_fecha:      cobro.fecha,
+      p_monto:      cobro.monto,
+      p_medio:      cobro.medio,
+      p_obs:        cobro.obs ?? null,
+      p_venta_ids:  venta_ids,
+      p_user_id:    userId,
+    })
+    if (error) {
+      if (error.message.includes('MONTO_INSUFICIENTE')) {
+        throw new Error('El monto del cobro no cubre los remitos seleccionados. Ajustá el monto o destildá remitos.')
+      }
+      throw new Error(error.message)
     }
-    return data
+
+    // La RPC devuelve la fila del cobro; re-fetch con el join del cliente
+    // para que el front muestre el nombre sin otra request.
+    const supabase = createSupabaseClient(token)
+    const { data: cobroCompleto, error: errGet } = await supabase
+      .from('aridos_cobros')
+      .select('*, aridos_clientes(nombre)')
+      .eq('id', data.id)
+      .single()
+    if (errGet) throw new Error(errGet.message)
+    return cobroCompleto
   },
 
   async updateCobro(id: number, dto: UpdateCobroDto, token: string, userId: string) {
