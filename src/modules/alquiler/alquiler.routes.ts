@@ -93,11 +93,11 @@ alquiler.delete('/obra-maquinas/:id', async (c) => {
 
 // ── Clientes (ficha; ABM admin-only en el service) ────────────
 alquiler.get('/clientes', async (c) => {
-  return c.json(await alquilerService.getClientes(c.get('accessToken')))
+  return c.json(await alquilerService.getClientes(c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.get('/clientes/:id', async (c) => {
-  return c.json(await alquilerService.getClienteById(Number(c.req.param('id')), c.get('accessToken')))
+  return c.json(await alquilerService.getClienteById(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
 alquiler.post('/clientes', zValidator('json', CreateClienteSchema), async (c) => {

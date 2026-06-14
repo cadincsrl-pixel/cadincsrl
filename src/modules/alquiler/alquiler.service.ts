@@ -41,6 +41,22 @@ async function sha256OfBlob(blob: Blob): Promise<string> {
   return createHash('sha256').update(buf).digest('hex')
 }
 
+// Lee TODAS las filas de una query paginando de a 1000 (hard cap de
+// PostgREST que no se bypassea con .range grande — CLAUDE.md §5.7). Se usa
+// en las lecturas que agregan en memoria sobre tablas que pueden crecer
+// >1000 filas (partes): cuenta corriente y reporte de horas.
+async function fetchAll<T>(buildQuery: (from: number, to: number) => any): Promise<T[]> {
+  const PAGE = 1000
+  const all: T[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await buildQuery(from, from + PAGE - 1)
+    if (error) throw new Error(error.message)
+    all.push(...(data ?? []))
+    if (!data || data.length < PAGE) break
+  }
+  return all
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  SCOPE POR IDENTIDAD
 // ───────────────────────────────────────────────────────────────────
@@ -116,6 +132,20 @@ function canLoad(scope: AlquilerScope, obraId: number, maquinaId: number): boole
 
 function forbidden(msg = 'No tenés acceso a este recurso de alquiler'): never {
   throw new HTTPException(403, { message: msg })
+}
+
+// cliente_ids que un no-admin puede ver = los clientes de sus obras accesibles.
+// Mismo criterio que getCobros: la cartera de clientes NO se filtra por permiso
+// simple (lectura), sino por identidad — un jefe de obra solo ve los clientes
+// de sus obras, no toda la cartera. Devuelve [] si no tiene obras accesibles.
+async function accessibleClienteIds(scope: AlquilerScope): Promise<number[]> {
+  const ids = accessibleObraIds(scope)
+  if (ids.length === 0) return []
+  const { data: obras } = await supabaseAdmin
+    .from('alquiler_obras').select('cliente_id').in('id', ids)
+  return [...new Set((obras ?? [])
+    .map(o => o.cliente_id)
+    .filter((x): x is number => x != null))]
 }
 
 // La GESTIÓN de la flota, obras y asignaciones es admin-only. Motivo: el gate
@@ -194,21 +224,58 @@ export const alquilerService = {
   async deleteMaquina(id: number, token: string, userId: string) {
     await requireAdmin(userId)
     const supabase = createSupabaseClient(token)
+
+    // Leemos el path de la póliza ANTES de borrar para limpiar el archivo del
+    // bucket después (la fila se va, pero el objeto en storage no se borra solo).
+    const { data: maq } = await supabase
+      .from('alquiler_maquinas').select('seguro_poliza_path').eq('id', id).single()
+
     const { error } = await supabase.from('alquiler_maquinas').delete().eq('id', id)
-    if (error) throw new Error(error.message)
+    if (error) {
+      // 23503 = FK violation: la máquina está asignada a obras / tiene partes /
+      // remitos. Antes tiraba el error crudo de Postgres.
+      if ((error as { code?: string }).code === '23503') {
+        throw new Error('No se puede borrar: la máquina está asignada a obras o tiene partes/remitos. Quitá esas asignaciones primero.')
+      }
+      throw new Error(error.message)
+    }
+
+    // Best-effort: borrar el archivo de póliza del bucket (no bloquea el delete,
+    // que ya se concretó). Mismo bucket que seguroDelete/seguroRegistrar.
+    const prevPath = (maq as { seguro_poliza_path?: string | null } | null)?.seguro_poliza_path
+    if (prevPath) {
+      await supabaseAdmin.storage.from(SEGURO_BUCKET).remove([prevPath]).catch(() => undefined)
+    }
     return { success: true }
   },
 
   // ── Clientes (ficha; admin-only para ABM) ─────────────────────
-  async getClientes(token: string) {
+  // SCOPEADO en lectura: antes devolvía TODA la cartera a cualquiera con
+  // `lectura`, filtrando la cartera de clientes a los jefes de obra (leak de
+  // datos comerciales). Ahora el no-admin solo ve los clientes de sus obras
+  // accesibles (mismo criterio que getCobros). admin/operador → ven todo.
+  async getClientes(token: string, userId: string) {
+    const scope = await getScope(userId)
     const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
-      .from('alquiler_clientes').select('*').order('nombre')
+    let q = supabase.from('alquiler_clientes').select('*').order('nombre')
+    if (!scope.isAdmin) {
+      const clienteIds = await accessibleClienteIds(scope)
+      if (clienteIds.length === 0) return []
+      q = q.in('id', clienteIds)
+    }
+    const { data, error } = await q
     if (error) throw new Error(error.message)
     return data
   },
 
-  async getClienteById(id: number, token: string) {
+  async getClienteById(id: number, token: string, userId: string) {
+    const scope = await getScope(userId)
+    // No-admin: solo si el cliente cuelga de una obra accesible (si no, 403 —
+    // no filtramos la ficha de un cliente fuera del scope del jefe de obra).
+    if (!scope.isAdmin) {
+      const clienteIds = await accessibleClienteIds(scope)
+      if (!clienteIds.includes(id)) forbidden('No tenés acceso a este cliente de alquiler')
+    }
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_clientes').select('*').eq('id', id).single()
@@ -310,7 +377,14 @@ export const alquilerService = {
     await requireAdmin(userId)
     const supabase = createSupabaseClient(token)
     const { error } = await supabase.from('alquiler_obras').delete().eq('id', id)
-    if (error) throw new Error(error.message)
+    if (error) {
+      // 23503 = FK violation: la obra tiene partes / asignaciones / remitos.
+      // Antes tiraba el error crudo de Postgres (poco claro para el front).
+      if ((error as { code?: string }).code === '23503') {
+        throw new Error('No se puede borrar: la obra tiene partes, máquinas asignadas o remitos. Borrá primero esos registros.')
+      }
+      throw new Error(error.message)
+    }
     return { success: true }
   },
 
@@ -375,19 +449,20 @@ export const alquilerService = {
 
     // Si cambió el precio/hora, recalcular el importe de los partes de esta
     // (obra, máquina) — así cargar partes antes de fijar la tarifa queda bien.
+    // Antes era un loop de UPDATEs (N+1, no atómico) sobre una lectura que
+    // topeaba en 1000 filas (partes viejos quedaban con el precio anterior).
+    // Ahora: un solo UPDATE server-side vía RPC (atómico, sin cap). La RPC es
+    // SECURITY DEFINER → SIEMPRE con el cliente admin (CLAUDE.md §9).
     if (dto.precio_hora !== undefined && data) {
       const nuevoPrecio = dto.precio_hora ?? null
       const obraId = (data as { obra_id: number }).obra_id
       const maquinaId = (data as { maquina_id: number }).maquina_id
-      const { data: partes } = await supabase
-        .from('alquiler_partes').select('id, horas')
-        .eq('obra_id', obraId).eq('maquina_id', maquinaId)
-      for (const p of partes ?? []) {
-        await supabase
-          .from('alquiler_partes')
-          .update({ precio_hora: nuevoPrecio, importe: calcImporte(p.horas as number | null, nuevoPrecio) })
-          .eq('id', p.id)
-      }
+      const { error: errRecalc } = await supabaseAdmin.rpc('recalcular_importe_partes', {
+        p_obra_id:     obraId,
+        p_maquina_id:  maquinaId,
+        p_precio_hora: nuevoPrecio,
+      })
+      if (errRecalc) throw new Error(errRecalc.message)
     }
     return data
   },
@@ -575,22 +650,36 @@ export const alquilerService = {
     const scope = await getScope(userId)
     const supabase = createSupabaseClient(token)
 
-    let q = supabase.from('alquiler_partes').select('obra_id, maquina_id, fecha, horas')
+    // Pre-resolvemos el scope ANTES de paginar (lo mismo para todas las páginas):
+    // si filtra por obra hay que poder verla; si no, el no-admin se limita a sus
+    // obras. Si no tiene obras accesibles, corto temprano.
+    let obraScopeIds: number[] | null = null
     if (query.obra_id != null) {
       if (!canView(scope, query.obra_id)) forbidden('No tenés acceso a esta obra de alquiler')
-      q = q.eq('obra_id', query.obra_id)
     } else if (!scope.isAdmin) {
       const ids = accessibleObraIds(scope)
       if (ids.length === 0) return []
-      q = q.in('obra_id', ids)
+      obraScopeIds = ids
     }
-    if (query.desde) q = q.gte('fecha', query.desde)
-    if (query.hasta) q = q.lte('fecha', query.hasta)
 
-    const { data, error } = await q
-    if (error) throw new Error(error.message)
+    // Paginamos la lectura de partes: la tabla puede crecer >1000 filas y el
+    // .select() topeaba en el hard cap de PostgREST (CLAUDE.md §5.7), recortando
+    // partes del reporte sin avisar.
+    interface PRow { obra_id: number; maquina_id: number; fecha: string; horas: number | null }
+    const data = await fetchAll<PRow>((from, to) => {
+      let q = supabase
+        .from('alquiler_partes')
+        .select('obra_id, maquina_id, fecha, horas')
+        .order('id')
+        .range(from, to)
+      if (query.obra_id != null) q = q.eq('obra_id', query.obra_id)
+      else if (obraScopeIds)     q = q.in('obra_id', obraScopeIds)
+      if (query.desde) q = q.gte('fecha', query.desde)
+      if (query.hasta) q = q.lte('fecha', query.hasta)
+      return q
+    })
 
-    const rows = (data ?? []).filter(p => canView(scope, p.obra_id as number, p.maquina_id as number))
+    const rows = data.filter(p => canView(scope, p.obra_id, p.maquina_id))
     if (rows.length === 0) return []
 
     // Agregar por máquina.
@@ -631,24 +720,35 @@ export const alquilerService = {
     const scope = await getScope(userId)
     const supabase = createSupabaseClient(token)
 
-    let pq = supabase
-      .from('alquiler_partes')
-      .select('obra_id, maquina_id, importe, obra:alquiler_obras(id, nombre, cliente_id)')
+    // Pre-resolvemos el scope de obras del no-admin antes de paginar (igual para
+    // todas las páginas). Sin obras accesibles → corto temprano.
+    let obraScopeIds: number[] | null = null
     if (!scope.isAdmin) {
       const ids = accessibleObraIds(scope)
       if (ids.length === 0) return []
-      pq = pq.in('obra_id', ids)
+      obraScopeIds = ids
     }
-    if (query.desde) pq = pq.gte('fecha', query.desde)
-    if (query.hasta) pq = pq.lte('fecha', query.hasta)
-    const { data, error } = await pq
-    if (error) throw new Error(error.message)
 
     interface ParteRow {
       obra_id: number; maquina_id: number; importe: number | null
       obra: { id: number; nombre: string; cliente_id: number | null } | null
     }
-    const rows = ((data ?? []) as unknown as ParteRow[])
+    // Paginamos la lectura de partes: la subcuenta puede tener >1000 partes y el
+    // .select() topeaba en el hard cap de PostgREST (CLAUDE.md §5.7), dejando
+    // devengado de menos en clientes con mucha carga.
+    const data = await fetchAll<ParteRow>((from, to) => {
+      let pq = supabase
+        .from('alquiler_partes')
+        .select('obra_id, maquina_id, importe, obra:alquiler_obras(id, nombre, cliente_id)')
+        .order('id')
+        .range(from, to)
+      if (obraScopeIds) pq = pq.in('obra_id', obraScopeIds)
+      if (query.desde) pq = pq.gte('fecha', query.desde)
+      if (query.hasta) pq = pq.lte('fecha', query.hasta)
+      return pq
+    })
+
+    const rows = (data as unknown as ParteRow[])
       .filter(p => canView(scope, p.obra_id, p.maquina_id))
 
     // Agregar por cliente → obra.
@@ -757,31 +857,32 @@ export const alquilerService = {
 
   async createCobro(dto: CreateCobroDto, token: string, userId: string) {
     await requireAdmin(userId)
-    const supabase = createSupabaseClient(token)
     const { remito_ids, ...cobro } = dto
-    const { data, error } = await supabase
-      .from('alquiler_cobros')
-      .insert({ ...cobro, created_by: userId, updated_by: userId })
-      .select().single()
-    if (error) throw new Error(error.message)
 
-    // Imputación: marcar los remitos tildados como cancelados por este cobro.
-    // Solo remitos de obras del cliente y todavía adeudados — un id ajeno o
-    // ya cobrado simplemente no matchea (mismo criterio que áridos).
-    if (remito_ids.length > 0) {
-      const { data: obras } = await supabase
-        .from('alquiler_obras').select('id').eq('cliente_id', dto.cliente_id)
-      const obraIds = (obras ?? []).map(o => o.id as number)
-      if (obraIds.length > 0) {
-        const { error: errImp } = await supabase
-          .from('alquiler_remitos')
-          .update({ cobro_id: data.id })
-          .in('id', remito_ids)
-          .in('obra_id', obraIds)
-          .is('cobro_id', null)
-        if (errImp) throw new Error(errImp.message)
+    // Cobro + imputación en UNA transacción vía RPC: antes se insertaba el cobro
+    // y se imputaban los remitos en un UPDATE aparte; si el UPDATE fallaba, el
+    // cobro quedaba huérfano y un reintento lo duplicaba. La RPC inserta + imputa
+    // atómico y valida que el monto cubra los remitos seleccionados (importe del
+    // remito = importe del parte 1:1) → MONTO_INSUFICIENTE. El filtro de
+    // imputación es por OBRA del cliente (mismo criterio que el UPDATE viejo).
+    // SECURITY DEFINER → se llama con el cliente admin (CLAUDE.md §9); el permiso
+    // (requireAdmin) ya se validó arriba.
+    const { data, error } = await supabaseAdmin.rpc('crear_cobro_alquiler', {
+      p_cliente_id: dto.cliente_id,
+      p_fecha:      cobro.fecha,
+      p_monto:      cobro.monto,
+      p_medio:      cobro.medio,
+      p_obs:        cobro.obs ?? null,
+      p_remito_ids: remito_ids,
+      p_user_id:    userId,
+    })
+    if (error) {
+      if (error.message.includes('MONTO_INSUFICIENTE')) {
+        throw new Error('El monto del cobro no cubre los remitos seleccionados. Ajustá el monto o destildá remitos.')
       }
+      throw new Error(error.message)
     }
+    // La RPC devuelve la fila del cobro (alquiler_cobros%rowtype).
     return data
   },
 

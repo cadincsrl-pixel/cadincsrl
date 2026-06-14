@@ -5,6 +5,23 @@ const FechaISO = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato requerido: YYY
 // Hora en formato HH:MM o HH:MM:SS (la columna es `time`).
 const HoraSQL = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Formato requerido: HH:MM')
 
+// Email opcional (calca el EMAIL_OPCIONAL de áridos): el front manda null o ''
+// cuando el campo está vacío. Solo valida el formato si hay texto; null/'' pasan.
+const EMAIL_OPCIONAL = z
+  .string()
+  .nullable()
+  .optional()
+  .refine(
+    (v) => v == null || v === '' || z.string().email().safeParse(v).success,
+    { message: 'Email inválido' },
+  )
+
+// Techos de cordura (anti-typo). No son límites de negocio reales, sino una
+// red contra cargar un número absurdo por error de tipeo que infle la cta cte.
+const HORAS_MAX       = 24          // un parte es de un día
+const PRECIO_HORA_MAX = 10_000_000  // $/hora de la máquina
+const MONTO_MAX       = 1_000_000_000 // monto de un cobro
+
 // ── Enums (espejan los CHECK constraints del schema en Supabase) ──
 export const TipoMaquinaEnum = z.enum([
   'cargadora_frontal',
@@ -72,7 +89,7 @@ export const CreateClienteSchema = z.object({
   cuit:     z.string().nullable().optional(),
   contacto: z.string().nullable().optional(),
   tel:      z.string().nullable().optional(),
-  email:    z.string().nullable().optional(),
+  email:    EMAIL_OPCIONAL,
   obs:      z.string().nullable().optional(),
 })
 export const UpdateClienteSchema = z.object({
@@ -80,7 +97,7 @@ export const UpdateClienteSchema = z.object({
   cuit:     z.string().nullable().optional(),
   contacto: z.string().nullable().optional(),
   tel:      z.string().nullable().optional(),
-  email:    z.string().nullable().optional(),
+  email:    EMAIL_OPCIONAL,
   obs:      z.string().nullable().optional(),
 })
 
@@ -117,7 +134,7 @@ export const CreateObraMaquinaSchema = z.object({
   // legacy: maquinista como usuario del sistema (Fase 3). Se mantiene opcional.
   maquinista_user_id: z.string().uuid().nullable().optional(),
   // precio por hora de esta máquina EN esta obra (cuenta corriente).
-  precio_hora:        z.number().nonnegative().nullable().optional(),
+  precio_hora:        z.number().nonnegative().max(PRECIO_HORA_MAX).nullable().optional(),
 })
 
 // Se puede cambiar el maquinista y/o el precio/hora. El par (obra, máquina) es
@@ -126,7 +143,7 @@ export const CreateObraMaquinaSchema = z.object({
 export const UpdateObraMaquinaSchema = z.object({
   maquinista_leg:     z.string().nullable().optional(),
   maquinista_user_id: z.string().uuid().nullable().optional(),
-  precio_hora:        z.number().nonnegative().nullable().optional(),
+  precio_hora:        z.number().nonnegative().max(PRECIO_HORA_MAX).nullable().optional(),
 })
 
 // ── Partes ────────────────────────────────────────────────────
@@ -138,7 +155,7 @@ export const CreateParteSchema = z.object({
   manana_salida:  HoraSQL.nullable().optional(),
   tarde_entrada:  HoraSQL.nullable().optional(),
   tarde_salida:   HoraSQL.nullable().optional(),
-  horas:          z.number().nonnegative().nullable().optional(),
+  horas:          z.number().nonnegative().max(HORAS_MAX).nullable().optional(),
   detalle:        z.string().nullable().optional(),
   obs:            z.string().nullable().optional(),
 })
@@ -150,7 +167,7 @@ export const UpdateParteSchema = z.object({
   manana_salida:  HoraSQL.nullable().optional(),
   tarde_entrada:  HoraSQL.nullable().optional(),
   tarde_salida:   HoraSQL.nullable().optional(),
-  horas:          z.number().nonnegative().nullable().optional(),
+  horas:          z.number().nonnegative().max(HORAS_MAX).nullable().optional(),
   detalle:        z.string().nullable().optional(),
   obs:            z.string().nullable().optional(),
 })
@@ -195,7 +212,7 @@ export const MedioCobroEnum = z.enum(['efectivo', 'transferencia', 'cheque', 'ot
 export const CreateCobroSchema = z.object({
   cliente_id: z.number().int().positive(),
   fecha:      FechaISO,
-  monto:      z.number().positive('El monto debe ser mayor a 0'),
+  monto:      z.number().positive('El monto debe ser mayor a 0').max(MONTO_MAX),
   medio:      MedioCobroEnum.default('efectivo'),
   obs:        z.string().nullable().optional(),
   // Imputación opcional: remitos del cliente que este cobro cancela.
@@ -204,7 +221,7 @@ export const CreateCobroSchema = z.object({
 })
 export const UpdateCobroSchema = z.object({
   fecha:  FechaISO.optional(),
-  monto:  z.number().positive().optional(),
+  monto:  z.number().positive().max(MONTO_MAX).optional(),
   medio:  MedioCobroEnum.optional(),
   obs:    z.string().nullable().optional(),
 })
