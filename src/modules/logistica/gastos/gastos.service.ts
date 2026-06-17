@@ -675,12 +675,17 @@ export const gastosService = {
 
     const rows = data ?? []
     const num  = (v: any) => Number(v ?? 0)
-    const total = rows.reduce((s, g) => s + num(g.monto), 0)
-    const count = rows.length
+    // "Gastos del período" = erogación real: solo aprobado + pagado. Rechazado
+    // nunca cuenta; pendiente se reporta aparte (pendientes_aprobacion) para no
+    // inflar la erogación con montos no confirmados. Las tablas por categoría/
+    // camión/chofer usan el mismo criterio para que todo cuadre.
+    const reales = rows.filter(g => g.estado === 'aprobado' || g.estado === 'pagado')
+    const total = reales.reduce((s, g) => s + num(g.monto), 0)
+    const count = reales.length
 
     const groupBy = (key: string) => {
       const out: Record<string, { total: number; count: number }> = {}
-      for (const g of rows) {
+      for (const g of reales) {
         const k = String((g as any)[key])
         if (!out[k]) out[k] = { total: 0, count: 0 }
         out[k].total += num(g.monto)
@@ -717,6 +722,7 @@ export const gastosService = {
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .is('deleted_at', null)
+      .in('estado', ['aprobado', 'pagado'])
       .not('camion_id', 'is', null)
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
@@ -744,6 +750,7 @@ export const gastosService = {
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .is('deleted_at', null)
+      .in('estado', ['aprobado', 'pagado'])
       .not('chofer_id', 'is', null)
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
@@ -774,6 +781,7 @@ export const gastosService = {
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .is('deleted_at', null)
+      .in('estado', ['aprobado', 'pagado'])
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
     const rows = (data ?? []) as any[]
