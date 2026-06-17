@@ -21,6 +21,8 @@ export const CreateLiquidacionSchema = z.object({
   tramo_ids:            z.array(z.number()).optional().default([]),
   adelanto_ids:         z.array(z.number()).optional().default([]),
   gasto_ids:            z.array(z.number()).optional().default([]),
+  // Filas de tramo_choferes (relevos) a liquidar para este chofer. Fase 2 de relevos.
+  tramo_chofer_ids:     z.array(z.number()).optional().default([]),
 })
 
 export const UpdateLiquidacionSchema = z.object({

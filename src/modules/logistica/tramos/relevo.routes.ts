@@ -42,6 +42,25 @@ function handle<T>(fn: (c: any) => Promise<T>) {
   }
 }
 
+// Filas de relevo pendientes de liquidar (para la pantalla de liquidaciones).
+// Ruta estática de 1 segmento → no colisiona con /:id/relevo (2 segmentos).
+relevo.get(
+  '/relevos-pendientes',
+  requirePermiso('logistica', 'lectura'),
+  handle(c => {
+    const raw = c.req.query('chofer_id')
+    const choferId = raw ? Number(raw) : undefined
+    return tramoRelevoService.relevosPendientes(choferId, c.get('accessToken'))
+  }),
+)
+
+// Patas de relevo ya liquidadas (para el reporte de gastos: MO al camión real).
+relevo.get(
+  '/relevos-liquidados',
+  requirePermiso('logistica', 'lectura'),
+  handle(c => tramoRelevoService.relevosLiquidados(c.get('accessToken'))),
+)
+
 relevo.get(
   '/:id/relevo',
   requirePermiso('logistica', 'lectura'),

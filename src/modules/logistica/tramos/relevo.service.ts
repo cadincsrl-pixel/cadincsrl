@@ -151,11 +151,39 @@ export const tramoRelevoService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('tramo_choferes')
-      .select('id, tramo_id, chofer_id, orden, km_cargado, km_vacio, jornales, lugar_relevo, obs, created_at, updated_at')
+      .select('id, tramo_id, chofer_id, orden, km_cargado, km_vacio, jornales, lugar_relevo, obs, liquidacion_id, created_at, updated_at')
       .eq('tramo_id', tramoId)
       .order('orden', { ascending: true })
     if (error) throw new Error(error.message)
     return data
+  },
+
+  // Filas de relevo pendientes de liquidar (liquidacion_id IS NULL) cuyo tramo
+  // está completado. Bounded por chofer → sin riesgo de cap PostgREST. El front
+  // filtra por rango de fechas (igual que con los tramos). Fase 2 de relevos.
+  async relevosPendientes(choferId: number | undefined, token: string) {
+    const sb = createSupabaseClient(token)
+    let q = sb
+      .from('tramo_choferes')
+      .select('id, tramo_id, chofer_id, orden, km_cargado, km_vacio, jornales, lugar_relevo, liquidacion_id, tramo:tramos(id, tipo, estado, camion_id, cantera_id, deposito_id, fecha_carga, fecha_descarga, fecha_vacio)')
+      .is('liquidacion_id', null)
+    if (choferId) q = q.eq('chofer_id', choferId)
+    const { data, error } = await q
+    if (error) throw new Error(error.message)
+    return (data ?? []).filter((r: any) => r.tramo && r.tramo.estado === 'completado')
+  },
+
+  // Patas de relevo YA liquidadas (con camión/tipo del tramo) para que el
+  // reporte de gastos impute la MO del relevista al camión real. Volumen chico
+  // (solo tramos relevados); si crece, paginar/filtrar por rango.
+  async relevosLiquidados(token: string) {
+    const sb = createSupabaseClient(token)
+    const { data, error } = await sb
+      .from('tramo_choferes')
+      .select('id, liquidacion_id, chofer_id, km_cargado, km_vacio, tramo:tramos(camion_id, tipo)')
+      .not('liquidacion_id', 'is', null)
+    if (error) throw new Error(error.message)
+    return data ?? []
   },
 
   // Sólo sugerencia, sin escribir. Se llama desde la UI antes de abrir el modal
@@ -173,11 +201,14 @@ export const tramoRelevoService = {
   async crear(tramoId: number, dto: CrearRelevoDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
     const { data: tramo, error } = await sb
-      .from('tramos').select('id, tipo, chofer_id, cantera_id, deposito_id')
+      .from('tramos').select('id, tipo, chofer_id, cantera_id, deposito_id, liquidacion_id')
       .eq('id', tramoId).maybeSingle()
     if (error) throw new Error(error.message)
     if (!tramo) throw new RelevoError(404, 'TRAMO_NO_EXISTE')
     if (!tramo.chofer_id) throw new RelevoError(400, 'TRAMO_SIN_CHOFER')
+    if (tramo.liquidacion_id != null) {
+      throw new RelevoError(409, 'TRAMO_YA_LIQUIDADO', { message: 'El tramo ya está liquidado; no se puede agregar un relevo (reabrí la liquidación primero).' })
+    }
     if (tramo.chofer_id === dto.chofer_relevo_id) {
       throw new RelevoError(400, 'CHOFER_IGUAL', { message: 'El chofer de relevo no puede ser el mismo que el chofer del tramo.' })
     }
@@ -246,11 +277,14 @@ export const tramoRelevoService = {
   async update(tramoId: number, dto: UpdateRelevoDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
     const { data: rows, error } = await sb
-      .from('tramo_choferes').select('id, tramo_id, orden, km_cargado, km_vacio')
+      .from('tramo_choferes').select('id, tramo_id, orden, km_cargado, km_vacio, liquidacion_id')
       .eq('tramo_id', tramoId)
       .order('orden', { ascending: true })
     if (error) throw new Error(error.message)
     if (!rows || rows.length !== 2) throw new RelevoError(404, 'RELEVO_NO_EXISTE')
+    if (rows.some((r: any) => r.liquidacion_id != null)) {
+      throw new RelevoError(409, 'RELEVO_LIQUIDADO', { message: 'El relevo ya está liquidado; reabrí la liquidación para editarlo.' })
+    }
 
     const { data: tramo, error: errT } = await sb
       .from('tramos').select('tipo').eq('id', tramoId).maybeSingle()
@@ -281,6 +315,12 @@ export const tramoRelevoService = {
 
   async delete(tramoId: number, token: string) {
     const sb = createSupabaseClient(token)
+    const { data: rows, error: errSel } = await sb
+      .from('tramo_choferes').select('id, liquidacion_id').eq('tramo_id', tramoId)
+    if (errSel) throw new Error(errSel.message)
+    if (rows && rows.some((r: any) => r.liquidacion_id != null)) {
+      throw new RelevoError(409, 'RELEVO_LIQUIDADO', { message: 'El relevo ya está liquidado; reabrí la liquidación para eliminarlo.' })
+    }
     const { error } = await sb
       .from('tramo_choferes').delete().eq('tramo_id', tramoId)
     if (error) throw new Error(error.message)

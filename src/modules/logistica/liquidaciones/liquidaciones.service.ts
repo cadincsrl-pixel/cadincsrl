@@ -132,6 +132,7 @@ export const liquidacionesService = {
       p_user_id:              userId,
       p_subtotal_km_cargado:  dto.subtotal_km_cargado ?? null,
       p_subtotal_km_vacio:    dto.subtotal_km_vacio ?? null,
+      p_tramo_chofer_ids:     dto.tramo_chofer_ids ?? [],
     })
     if (error) {
       const err = new Error(error.message) as Error & { code?: string; detail?: string | null }

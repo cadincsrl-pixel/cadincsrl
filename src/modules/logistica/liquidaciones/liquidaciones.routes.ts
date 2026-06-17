@@ -29,6 +29,7 @@ liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) =
     // los IDs no pertenecen al chofer o ya están liquidados. Mapeo a 400.
     const msg = err?.message ?? ''
     if (msg.includes('TRAMO_INVALIDO'))    return c.json({ error: 'TRAMO_INVALIDO',    detail: err.detail }, 400)
+    if (msg.includes('RELEVO_INVALIDO'))   return c.json({ error: 'RELEVO_INVALIDO',   detail: err.detail }, 400)
     if (msg.includes('ADELANTO_INVALIDO')) return c.json({ error: 'ADELANTO_INVALIDO', detail: err.detail }, 400)
     if (msg.includes('GASTO_INVALIDO'))    return c.json({ error: 'GASTO_INVALIDO',    detail: err.detail }, 400)
     return c.json({ error: msg || 'UNKNOWN' }, 500)
