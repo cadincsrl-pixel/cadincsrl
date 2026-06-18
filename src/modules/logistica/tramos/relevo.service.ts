@@ -180,7 +180,7 @@ export const tramoRelevoService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('tramo_choferes')
-      .select('id, liquidacion_id, chofer_id, km_cargado, km_vacio, tramo:tramos(camion_id, tipo)')
+      .select('id, tramo_id, liquidacion_id, chofer_id, km_cargado, km_vacio, tramo:tramos(camion_id, tipo)')
       .not('liquidacion_id', 'is', null)
     if (error) throw new Error(error.message)
     return data ?? []
