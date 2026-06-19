@@ -12,7 +12,7 @@ export const UpsertHsExtraSchema = z.object({
   obra_cod: z.string().min(1),
   leg: z.string().min(1),
   sem_key: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'sem_key debe ser YYYY-MM-DD (viernes)'),
-  hs: z.number().min(0).max(200),
+  hs: z.number().min(0),  // sin tope duro; el front avisa al cargar valores altos
 })
 
 export const UpsertHsExtrasLoteSchema = z.object({
@@ -20,7 +20,7 @@ export const UpsertHsExtrasLoteSchema = z.object({
   items: z.array(z.object({
     leg: z.string().min(1),
     sem_key: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'sem_key debe ser YYYY-MM-DD (viernes)'),
-    hs: z.number().min(0).max(200),
+    hs: z.number().min(0),  // sin tope duro; el front avisa al cargar valores altos
   })),
 })
 
