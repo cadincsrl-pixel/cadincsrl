@@ -22,7 +22,10 @@ export const ParametrosSchema = z.object({
   gomeria_mensual:             z.number().min(0),
   lavadero_mensual:            z.number().min(0),
   overhead_pct:                z.number().min(0).max(1),
-})
+}).refine(
+  p => p.valor_residual_tractor_usd <= p.valor_tractor_usd,
+  { message: 'El valor residual no puede superar el valor del tractor', path: ['valor_residual_tractor_usd'] },
+)
 
 const baseViaje = z.object({
   nombre:               z.string().min(1).max(120),
