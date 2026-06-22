@@ -9,6 +9,30 @@ function codedError(code: string, message: string): Error {
   return e
 }
 
+// Un tramo `cargado` representa un viaje facturable (cantera origen → depósito
+// destino). Los lugares operativos (CHIVILCOY: mantenimiento/relevos/parking) no
+// son facturables y no deben ser origen ni destino de un cargado (saldría en $0
+// sin tarifa). Los vacíos sí pueden tocarlos (ruteo). Defensa en profundidad: el
+// front ya los oculta del selector. Lanza CANTERA_OPERATIVO/DEPOSITO_OPERATIVO.
+async function assertLugaresFacturables(
+  supabase: ReturnType<typeof createSupabaseClient>,
+  tipo: string | null | undefined,
+  canteraId: number | null | undefined,
+  depositoId: number | null | undefined,
+): Promise<void> {
+  if (tipo !== 'cargado') return
+  if (canteraId != null) {
+    const { data: c, error } = await supabase.from('canteras').select('operativo').eq('id', canteraId).maybeSingle()
+    if (error) throw new Error(error.message)
+    if (c?.operativo) throw codedError('CANTERA_OPERATIVO', 'La cantera es un lugar operativo (no facturable): no puede ser origen de un tramo cargado')
+  }
+  if (depositoId != null) {
+    const { data: d, error } = await supabase.from('depositos').select('operativo').eq('id', depositoId).maybeSingle()
+    if (error) throw new Error(error.message)
+    if (d?.operativo) throw codedError('DEPOSITO_OPERATIVO', 'El depósito es un lugar operativo (no facturable): no puede ser destino de un tramo cargado')
+  }
+}
+
 export const tramosService = {
 
   async getAll(token: string) {
@@ -48,6 +72,10 @@ export const tramosService = {
 
   async create(dto: CreateTramoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // Un cargado no puede originarse/entregar en un lugar operativo (no facturable).
+    await assertLugaresFacturables(supabase, dto.tipo, dto.cantera_id, dto.deposito_id)
+
     // Default: cargado→en_curso, vacio→completado. El cliente puede
     // overridear con `dto.estado` (caso típico: vacío que arranca tras
     // una descarga y queda en seguimiento GPS hasta cargar de nuevo).
@@ -96,6 +124,22 @@ export const tramosService = {
       if (!tramo)               throw codedError('TRAMO_NO_EXISTE', 'Tramo no encontrado')
       if (tramo.liquidacion_id) throw codedError('TRAMO_LIQUIDADO', 'No se puede editar: el tramo está liquidado')
       if (tramo.cobro_id)       throw codedError('TRAMO_COBRADO',   'No se puede editar: el tramo está cobrado')
+    }
+
+    // Guard de lugar operativo (mismo criterio que create) sobre el estado
+    // EFECTIVO post-patch: si el patch toca tipo/cantera/depósito, no permitir
+    // que el tramo quede cargado con un lugar operativo (no facturable).
+    if (['tipo', 'cantera_id', 'deposito_id'].some(k => k in patch)) {
+      const { data: actual, error: e1 } = await supabase
+        .from('tramos').select('tipo, cantera_id, deposito_id').eq('id', id).maybeSingle()
+      if (e1) throw new Error(e1.message)
+      if (!actual) throw codedError('TRAMO_NO_EXISTE', 'Tramo no encontrado')
+      await assertLugaresFacturables(
+        supabase,
+        (patch.tipo as string | undefined) ?? actual.tipo,
+        ('cantera_id'  in patch ? patch.cantera_id  : actual.cantera_id)  as number | null,
+        ('deposito_id' in patch ? patch.deposito_id : actual.deposito_id) as number | null,
+      )
     }
 
     const { data, error } = await supabase

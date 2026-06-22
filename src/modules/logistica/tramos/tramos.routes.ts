@@ -25,8 +25,14 @@ tramos.get('/', async (c) => {
 })
 
 tramos.post('/', zValidator('json', CreateTramoSchema), async (c) => {
-  const data = await tramosService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
-  return c.json(data, 201)
+  try {
+    const data = await tramosService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+    return c.json(data, 201)
+  } catch (err: any) {
+    if (err.code === 'CANTERA_OPERATIVO')  return c.json({ error: err.code, message: err.message }, 400)
+    if (err.code === 'DEPOSITO_OPERATIVO') return c.json({ error: err.code, message: err.message }, 400)
+    return c.json({ error: err.message }, 500)
+  }
 })
 
 tramos.patch('/:id', zValidator('json', UpdateTramoSchema), async (c) => {
@@ -34,9 +40,11 @@ tramos.patch('/:id', zValidator('json', UpdateTramoSchema), async (c) => {
     const data = await tramosService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
     return c.json(data)
   } catch (err: any) {
-    if (err.code === 'TRAMO_NO_EXISTE') return c.json({ error: err.code, message: err.message }, 404)
-    if (err.code === 'TRAMO_LIQUIDADO') return c.json({ error: err.code, message: err.message }, 409)
-    if (err.code === 'TRAMO_COBRADO')   return c.json({ error: err.code, message: err.message }, 409)
+    if (err.code === 'TRAMO_NO_EXISTE')    return c.json({ error: err.code, message: err.message }, 404)
+    if (err.code === 'TRAMO_LIQUIDADO')    return c.json({ error: err.code, message: err.message }, 409)
+    if (err.code === 'TRAMO_COBRADO')      return c.json({ error: err.code, message: err.message }, 409)
+    if (err.code === 'CANTERA_OPERATIVO')  return c.json({ error: err.code, message: err.message }, 400)
+    if (err.code === 'DEPOSITO_OPERATIVO') return c.json({ error: err.code, message: err.message }, 400)
     return c.json({ error: err.message }, 500)
   }
 })

@@ -8,6 +8,9 @@ export const CreateLugarSchema = z.object({
   // Coordenadas opcionales — usadas para Distance Matrix de Google Maps.
   lat:       z.number().min(-90).max(90).nullable().optional(),
   lng:       z.number().min(-180).max(180).nullable().optional(),
+  // Lugar operativo (mantenimiento/relevos/parking): no facturable, no puede
+  // ser origen/destino de un tramo cargado.
+  operativo: z.boolean().optional().default(false),
 })
 
 // No usar .partial() sobre el create: arrastra los .default() y zod
@@ -19,6 +22,7 @@ export const UpdateLugarSchema = z.object({
   obs:       z.string().optional(),
   lat:       z.number().min(-90).max(90).nullable().optional(),
   lng:       z.number().min(-180).max(180).nullable().optional(),
+  operativo: z.boolean().optional(),
 })
 
 export const CreateRutaSchema = z.object({
