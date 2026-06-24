@@ -115,17 +115,36 @@ export const lugaresService = {
 
   async getLugaresOperativos(token: string) {
     const supabase = createSupabaseClient(token)
+    // La geo (localidad/maps_url/lat/lng) vive en el par; la traemos de la
+    // cantera (cantera y depósito están sincronizados) y la aplanamos.
     const { data, error } = await supabase
-      .from('lugares_operativos').select('*').order('nombre')
+      .from('lugares_operativos')
+      .select('id, nombre, cantera_id, deposito_id, obs, cantera:canteras(localidad, maps_url, lat, lng)')
+      .order('nombre')
     if (error) throw new Error(error.message)
-    return data
+    return (data ?? []).map((l: any) => {
+      const c = Array.isArray(l.cantera) ? l.cantera[0] : l.cantera
+      return {
+        id: l.id, nombre: l.nombre, cantera_id: l.cantera_id, deposito_id: l.deposito_id, obs: l.obs,
+        localidad: c?.localidad ?? null,
+        maps_url:  c?.maps_url  ?? null,
+        lat: c?.lat ?? null,
+        lng: c?.lng ?? null,
+      }
+    })
   },
 
   /** Crea el lugar operativo = cantera (operativo) + depósito (operativo) +
-   *  fila que los vincula. Si algún paso falla, limpia los anteriores. */
+   *  fila que los vincula. La geo va al par (la usan tramos/en-ruta). Si algún
+   *  paso falla, limpia los anteriores. */
   async crearLugarOperativo(dto: CrearLugarOperativoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const base = { nombre: dto.nombre, operativo: true, created_by: userId, updated_by: userId }
+    const base = {
+      nombre: dto.nombre, operativo: true,
+      localidad: dto.localidad ?? '', maps_url: dto.maps_url ?? '',
+      lat: dto.lat ?? null, lng: dto.lng ?? null,
+      created_by: userId, updated_by: userId,
+    }
 
     const { data: cantera, error: e1 } = await supabase
       .from('canteras').insert(base).select('id').single()
@@ -157,14 +176,21 @@ export const lugaresService = {
     if (e0) throw new Error(e0.message)
     if (!lugar) throw codedError('NO_EXISTE', 'Lugar operativo no encontrado')
 
-    // Renombrar mantiene en sync el par cantera+depósito.
-    if (dto.nombre) {
-      const r1 = await supabase.from('canteras').update({ nombre: dto.nombre, updated_by: userId }).eq('id', lugar.cantera_id)
+    // Nombre + geo viven en el par (cantera+depósito) — los mantenemos en sync.
+    const parPatch: Record<string, unknown> = { updated_by: userId }
+    if (dto.nombre    !== undefined) parPatch.nombre    = dto.nombre
+    if (dto.localidad !== undefined) parPatch.localidad = dto.localidad
+    if (dto.maps_url  !== undefined) parPatch.maps_url  = dto.maps_url
+    if (dto.lat       !== undefined) parPatch.lat       = dto.lat
+    if (dto.lng       !== undefined) parPatch.lng       = dto.lng
+    if (Object.keys(parPatch).length > 1) { // algo más que updated_by
+      const r1 = await supabase.from('canteras').update(parPatch).eq('id', lugar.cantera_id)
       if (r1.error) throw new Error(r1.error.message)
-      const r2 = await supabase.from('depositos').update({ nombre: dto.nombre, updated_by: userId }).eq('id', lugar.deposito_id)
+      const r2 = await supabase.from('depositos').update(parPatch).eq('id', lugar.deposito_id)
       if (r2.error) throw new Error(r2.error.message)
     }
 
+    // En lugares_operativos solo persistimos nombre + obs (la geo se lee del par).
     const patch: Record<string, unknown> = { updated_by: userId, updated_at: new Date().toISOString() }
     if (dto.nombre !== undefined) patch.nombre = dto.nombre
     if (dto.obs !== undefined)    patch.obs = dto.obs

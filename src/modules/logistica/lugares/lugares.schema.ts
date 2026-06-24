@@ -44,12 +44,20 @@ export const UpdateRutaSchema = z.object({
 // crea/mantiene el par cantera+depósito (ambos operativo). Ver migración
 // 20260624c_lugares_operativos.sql.
 export const CrearLugarOperativoSchema = z.object({
-  nombre: z.string().min(1),
-  obs:    z.string().optional().nullable(),
+  nombre:    z.string().min(1),
+  localidad: z.string().optional().default(''),
+  maps_url:  z.string().optional().default(''),
+  lat:       z.number().min(-90).max(90).nullable().optional(),
+  lng:       z.number().min(-180).max(180).nullable().optional(),
+  obs:       z.string().optional().nullable(),
 })
 export const UpdateLugarOperativoSchema = z.object({
-  nombre: z.string().min(1).optional(),
-  obs:    z.string().optional().nullable(),
+  nombre:    z.string().min(1).optional(),
+  localidad: z.string().optional(),
+  maps_url:  z.string().optional(),
+  lat:       z.number().min(-90).max(90).nullable().optional(),
+  lng:       z.number().min(-180).max(180).nullable().optional(),
+  obs:       z.string().optional().nullable(),
 })
 
 export type CreateLugarDto = z.infer<typeof CreateLugarSchema>
