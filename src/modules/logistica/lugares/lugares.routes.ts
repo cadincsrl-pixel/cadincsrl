@@ -3,7 +3,10 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { lugaresService } from './lugares.service.js'
-import { CreateLugarSchema, UpdateLugarSchema, CreateRutaSchema, UpdateRutaSchema } from './lugares.schema.js'
+import {
+  CreateLugarSchema, UpdateLugarSchema, CreateRutaSchema, UpdateRutaSchema,
+  CrearLugarOperativoSchema, UpdateLugarOperativoSchema,
+} from './lugares.schema.js'
 
 const lugares = new Hono()
 lugares.use('*', authMiddleware)
@@ -37,6 +40,32 @@ lugares.patch('/rutas/:id', zValidator('json', UpdateRutaSchema), async (c) => {
 })
 lugares.delete('/rutas/:id', async (c) => {
   return c.json(await lugaresService.deleteRuta(Number(c.req.param('id')), c.get('accessToken')))
+})
+
+// ── Lugares operativos ────────────────────────────────────────────────
+lugares.get('/operativos', async (c) => c.json(await lugaresService.getLugaresOperativos(c.get('accessToken'))))
+
+lugares.post('/operativos', zValidator('json', CrearLugarOperativoSchema), async (c) => {
+  return c.json(await lugaresService.crearLugarOperativo(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+})
+
+lugares.patch('/operativos/:id', zValidator('json', UpdateLugarOperativoSchema), async (c) => {
+  try {
+    return c.json(await lugaresService.actualizarLugarOperativo(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+  } catch (err: any) {
+    if (err.code === 'NO_EXISTE') return c.json({ error: err.code, message: err.message }, 404)
+    return c.json({ error: err.message }, 500)
+  }
+})
+
+lugares.delete('/operativos/:id', async (c) => {
+  try {
+    return c.json(await lugaresService.eliminarLugarOperativo(Number(c.req.param('id')), c.get('accessToken')))
+  } catch (err: any) {
+    if (err.code === 'NO_EXISTE') return c.json({ error: err.code, message: err.message }, 404)
+    if (err.code === 'EN_USO')    return c.json({ error: err.code, message: err.message }, 409)
+    return c.json({ error: err.message }, 500)
+  }
 })
 
 export default lugares

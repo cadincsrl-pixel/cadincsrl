@@ -40,7 +40,21 @@ export const UpdateRutaSchema = z.object({
   obs:           z.string().optional(),
 })
 
+// Lugar operativo (no facturable): se gestiona como UN concepto y por detrás
+// crea/mantiene el par cantera+depósito (ambos operativo). Ver migración
+// 20260624c_lugares_operativos.sql.
+export const CrearLugarOperativoSchema = z.object({
+  nombre: z.string().min(1),
+  obs:    z.string().optional().nullable(),
+})
+export const UpdateLugarOperativoSchema = z.object({
+  nombre: z.string().min(1).optional(),
+  obs:    z.string().optional().nullable(),
+})
+
 export type CreateLugarDto = z.infer<typeof CreateLugarSchema>
 export type UpdateLugarDto = z.infer<typeof UpdateLugarSchema>
 export type CreateRutaDto  = z.infer<typeof CreateRutaSchema>
 export type UpdateRutaDto  = z.infer<typeof UpdateRutaSchema>
+export type CrearLugarOperativoDto  = z.infer<typeof CrearLugarOperativoSchema>
+export type UpdateLugarOperativoDto = z.infer<typeof UpdateLugarOperativoSchema>
