@@ -44,6 +44,15 @@ cuentaCliente.get('/', requirePermiso('certificaciones', 'lectura'), async (c) =
   return c.json(data)
 })
 
+// GET /api/cuenta-cliente/pendientes-precio
+// Conteo de materiales sin precio (a tasar) por obra, en las obras del usuario.
+cuentaCliente.get('/pendientes-precio', requirePermiso('certificaciones', 'lectura'), async (c) => {
+  const allowed = await getObrasDelUsuarioCached(c.get('user').id, 'certificaciones')
+  // allowed === null → scope global (admin): todas las obras.
+  const data = await cuentaClienteService.pendientesDePrecio(allowed, c.get('accessToken'))
+  return c.json(data)
+})
+
 // ── Cobros (pagos del cliente a cuenta de la obra) ─────────────────────
 // El saldo lo calcula el frontend (adeudado del MCC − Σ cobros). Acá solo
 // CRUD de los cobros, siempre validando scope de obra.

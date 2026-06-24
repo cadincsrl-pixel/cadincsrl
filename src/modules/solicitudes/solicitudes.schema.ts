@@ -48,7 +48,10 @@ export const UpdateSolicitudSchema = z.object({
 // - 'cliente': el cliente pagó directo. Solo registro de rendición, no genera deuda.
 export const ComprarItemSchema = z.object({
   proveedor_id:        z.number().int().positive(),
-  precio_unit:         z.number().min(0),
+  // Compra externa: el precio se conoce al momento (factura). Obligatorio > 0
+  // para no generar materiales a cuenta del cliente en $0. El despacho de
+  // depósito SÍ admite 0 (lo tasan Alina/Nicolás después; ver DespacharItemSchema).
+  precio_unit:         z.number().positive(),
   factura_id:          z.number().int().positive().nullable().optional(),
   queda_en_proveedor:  z.boolean().optional().default(false),
   pagado_por:          z.enum(['cadinc', 'cliente']).optional().default('cadinc'),
@@ -59,6 +62,8 @@ export const ComprarItemSchema = z.object({
 
 // Resolver ítem: despachar de depósito
 export const DespacharItemSchema = z.object({
+  // Admite 0 a propósito: el encargado de depósito despacha sin saber el precio
+  // de venta; queda "a tasar" y Alina/Nicolás le ponen precio después.
   precio_unit:        z.number().min(0),
   // Flag para forzar el despacho cuando no hay stock suficiente.
   // Requiere permiso extra `certificaciones.forzar_despacho` — lo valida

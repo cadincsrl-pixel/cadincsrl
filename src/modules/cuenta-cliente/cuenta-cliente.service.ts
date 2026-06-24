@@ -54,6 +54,23 @@ export const cuentaClienteService = {
     return data ?? []
   },
 
+  /**
+   * Conteo de materiales "sin precio" (precio_unit=0, a tasar) por obra, en
+   * las obras dadas (null = todas, para admin). Sirve para que Alina/Nicolás
+   * vean los pendientes de tasar sin recorrer obra por obra. Devuelve
+   * [{ obra_cod, sin_precio }] ordenado de mayor a menor.
+   */
+  async pendientesDePrecio(obraCods: string[] | null, token: string) {
+    const supabase = createSupabaseClient(token)
+    // Vista agregada (una fila por obra) para no chocar con el cap de 1000 de
+    // PostgREST si crece el backlog de ítems sin tasar (CLAUDE.md §5.7).
+    const base = supabase.from('v_cuenta_cliente_pendientes').select('obra_cod, sin_precio')
+    const { data, error } = obraCods != null ? await base.in('obra_cod', obraCods) : await base
+    if (error) throw new Error(error.message)
+    return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number }>)
+      .sort((a, b) => b.sin_precio - a.sin_precio)
+  },
+
   // ── Cobros (pagos del cliente a cuenta de la obra) ───────────────────
 
   /** Cobros de una obra, más recientes primero. */
