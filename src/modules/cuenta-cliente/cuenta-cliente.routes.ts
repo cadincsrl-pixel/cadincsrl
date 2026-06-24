@@ -5,9 +5,11 @@
 // obra, agregado en KPIs y desglosado en una tabla.
 
 import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { cuentaClienteService } from './cuenta-cliente.service.js'
+import { CrearCobroSchema, EditarCobroSchema } from './cuenta-cliente.schema.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
 const cuentaCliente = new Hono()
@@ -40,6 +42,47 @@ cuentaCliente.get('/', requirePermiso('certificaciones', 'lectura'), async (c) =
 
   const data = await cuentaClienteService.getByObras(allowed, token)
   return c.json(data)
+})
+
+// ── Cobros (pagos del cliente a cuenta de la obra) ─────────────────────
+// El saldo lo calcula el frontend (adeudado del MCC − Σ cobros). Acá solo
+// CRUD de los cobros, siempre validando scope de obra.
+
+// GET /api/cuenta-cliente/cobros?obra_cod=X
+cuentaCliente.get('/cobros', requirePermiso('certificaciones', 'lectura'), async (c) => {
+  const obraCod = c.req.query('obra_cod')
+  if (!obraCod) return c.json({ error: 'obra_cod es requerido' }, 400)
+  await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
+  const data = await cuentaClienteService.getCobros(obraCod, c.get('accessToken'))
+  return c.json(data)
+})
+
+// POST /api/cuenta-cliente/cobros
+cuentaCliente.post('/cobros', requirePermiso('certificaciones', 'creacion'), zValidator('json', CrearCobroSchema), async (c) => {
+  const dto = c.req.valid('json')
+  await validarObraDelUsuario(c.get('user').id, dto.obra_cod, 'certificaciones')
+  const data = await cuentaClienteService.crearCobro(dto, c.get('accessToken'), c.get('user').id)
+  return c.json(data, 201)
+})
+
+// PATCH /api/cuenta-cliente/cobros/:id
+cuentaCliente.patch('/cobros/:id', requirePermiso('certificaciones', 'actualizacion'), zValidator('json', EditarCobroSchema), async (c) => {
+  const id = Number(c.req.param('id'))
+  const obraCod = await cuentaClienteService.getCobroObra(id, c.get('accessToken'))
+  if (!obraCod) return c.json({ error: 'Cobro no encontrado' }, 404)
+  await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
+  const data = await cuentaClienteService.editarCobro(id, c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+  return c.json(data)
+})
+
+// DELETE /api/cuenta-cliente/cobros/:id
+cuentaCliente.delete('/cobros/:id', requirePermiso('certificaciones', 'eliminacion'), async (c) => {
+  const id = Number(c.req.param('id'))
+  const obraCod = await cuentaClienteService.getCobroObra(id, c.get('accessToken'))
+  if (!obraCod) return c.json({ error: 'Cobro no encontrado' }, 404)
+  await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
+  await cuentaClienteService.eliminarCobro(id, c.get('accessToken'))
+  return c.json({ success: true })
 })
 
 export default cuentaCliente
