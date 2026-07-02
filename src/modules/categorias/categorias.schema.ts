@@ -14,6 +14,9 @@ export const CreateCategoriaSchema = z.object({
 export const UpdateCategoriaSchema = z.object({
   nom: z.string().min(1).optional(),
   vh: z.number().min(0).optional(),
+  // Vigencia de la nueva versión de precio (YYYY-MM-DD, viernes de semana).
+  // Solo aplica si viene `vh`; sin `desde`, el service usa hoy.
+  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 })
 
 export type Categoria = z.infer<typeof CategoriaSchema>
