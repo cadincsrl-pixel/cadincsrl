@@ -743,9 +743,24 @@ export const solicitudesService = {
     if (!item || item.estado !== 'enviado') {
       throw new Error('Ítem no encontrado o no está enviado')
     }
-    // Si tiene proveedor → fue compra externa (comprado). Si no → despacho
-    // de depósito (de_deposito). Cubre los dos caminos de resolución.
-    const estadoPrevio = item.proveedor_id != null ? 'comprado' : 'de_deposito'
+    // Estado al que vuelve el ítem al deshacer el envío. Se deriva del último
+    // evento de resolución en el timeline (fuente de verdad de la máquina de
+    // estados), no de proveedor_id: inferir por proveedor rompía dos casos —
+    //   (a) un ítem retirado-de-proveedor (§5.8) tiene proveedor_id y volvía a
+    //       'comprado' en vez de 'retirado', huerfanando su MCC/stock proveedor;
+    //   (b) un ítem despachado al que el comprador le agregó proveedor_id como
+    //       corrección volvía a 'comprado' en vez de 'de_deposito'.
+    // Fallback a la inferencia vieja para ítems previos a los eventos (<2026-05-30).
+    const RESUELTOS = ['comprado', 'de_deposito', 'retirado']
+    const { data: ev } = await supabase
+      .from('solicitud_item_eventos')
+      .select('estado_nuevo')
+      .eq('item_id', itemId)
+      .in('estado_nuevo', RESUELTOS)
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const estadoPrevio = ev?.estado_nuevo ?? (item.proveedor_id != null ? 'comprado' : 'de_deposito')
 
     // 2) Desvincular del remito y borrar el remito si queda vacío.
     const { data: reItems } = await supabase
