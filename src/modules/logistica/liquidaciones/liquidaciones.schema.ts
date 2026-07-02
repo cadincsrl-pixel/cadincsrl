@@ -41,6 +41,7 @@ export const CreateAdelantoSchema = z.object({
   fecha:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   monto:             z.number().min(0),
   descripcion:       z.string().optional().default(''),
+  forma_pago:        z.enum(['transferencia', 'efectivo']).optional().default('efectivo'),
   comprobante_path:  z.string().optional().nullable(),
 })
 
@@ -48,6 +49,7 @@ export const UpdateAdelantoSchema = z.object({
   fecha:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   monto:             z.number().min(0).optional(),
   descripcion:       z.string().optional(),
+  forma_pago:        z.enum(['transferencia', 'efectivo']).optional(),
   comprobante_path:  z.string().optional().nullable(),
 })
 
