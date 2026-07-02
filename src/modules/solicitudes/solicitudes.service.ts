@@ -342,31 +342,37 @@ export const solicitudesService = {
   // Si dto.queda_en_proveedor=true, en cambio dispara la RPC de
   // 'en_proveedor' (no hay camino legacy: feature nuevo).
   async comprarItem(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
-    const item = dto.queda_en_proveedor
-      ? await this.comprarItemEnProveedor(itemId, dto, token, userId)
-      : useRpcResolver()
-        ? await this.comprarItemViaRPC(itemId, dto, token, userId)
-        : await this.comprarItemLegacy(itemId, dto, token, userId)
+    // en_proveedor: la RPC hace el cambio de estado; el evento se escribe
+    // acá best-effort (pendiente de mover adentro de la RPC — plan #2 B2).
+    if (dto.queda_en_proveedor) {
+      const item = await this.comprarItemEnProveedor(itemId, dto, token, userId)
+      await registrarItemEvento(createSupabaseClient(token), {
+        itemId,
+        solicitudId:    (item as any)?.solicitud_id ?? null,
+        accion:         'en_proveedor',
+        estadoAnterior: 'pendiente',
+        estadoNuevo:    'en_proveedor',
+        cantidad:       dto.cantidad_comprada ?? null,
+        meta: {
+          proveedor_id:       dto.proveedor_id,
+          precio_unit:        dto.precio_unit,
+          factura_id:         dto.factura_id ?? null,
+          pagado_por:         dto.pagado_por ?? 'cadinc',
+          queda_en_proveedor: true,
+        },
+        userId,
+      })
+      return item
+    }
 
-    // Evento de transición (cubre los 3 caminos: legacy, RPC, en_proveedor).
-    const estadoNuevo = (item as any)?.estado ?? (dto.queda_en_proveedor ? 'en_proveedor' : 'comprado')
-    await registrarItemEvento(createSupabaseClient(token), {
-      itemId,
-      solicitudId:    (item as any)?.solicitud_id ?? null,
-      accion:         estadoNuevo === 'en_proveedor' ? 'en_proveedor' : 'comprado',
-      estadoAnterior: 'pendiente',
-      estadoNuevo,
-      cantidad:       dto.cantidad_comprada ?? null,
-      meta: {
-        proveedor_id:       dto.proveedor_id,
-        precio_unit:        dto.precio_unit,
-        factura_id:         dto.factura_id ?? null,
-        pagado_por:         dto.pagado_por ?? 'cadinc',
-        queda_en_proveedor: !!dto.queda_en_proveedor,
-      },
-      userId,
-    })
-    return item
+    // Camino RPC: el evento 'comprado' lo escribe la RPC DENTRO de la TX
+    // (atómico). No escribir acá para no duplicar.
+    if (useRpcResolver()) {
+      return await this.comprarItemViaRPC(itemId, dto, token, userId)
+    }
+
+    // Camino legacy: escribe su propio evento al final del método.
+    return await this.comprarItemLegacy(itemId, dto, token, userId)
   },
 
   // RPC `resolver_item_en_proveedor`: marca item='en_proveedor' + suma
@@ -416,22 +422,11 @@ export const solicitudesService = {
     userId: string,
     forzarSinStock: boolean = false,
   ) {
-    const item = useRpcResolver()
+    // Camino RPC: el evento 'despachado' lo escribe la RPC DENTRO de la TX.
+    // Camino legacy: lo escribe al final del método. Sin doble escritura.
+    return useRpcResolver()
       ? await this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
       : await this.despacharItemLegacy(itemId, dto, token, userId, forzarSinStock)
-
-    // Evento de transición (cubre legacy + RPC).
-    await registrarItemEvento(createSupabaseClient(token), {
-      itemId,
-      solicitudId:    (item as any)?.solicitud_id ?? null,
-      accion:         'despachado',
-      estadoAnterior: 'pendiente',
-      estadoNuevo:    (item as any)?.estado ?? 'de_deposito',
-      cantidad:       (item as any)?.cantidad ?? null,
-      meta:           { precio_unit: dto.precio_unit, forzar_sin_stock: forzarSinStock },
-      userId,
-    })
-    return item
   },
 
   // Camino RPC — transaccional en Postgres (resolver_item_compra).
@@ -448,40 +443,18 @@ export const solicitudesService = {
     const supabase = createSupabaseClient(token)
     // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
     const { error } = await supabaseAdmin.rpc('resolver_item_compra', {
-      p_item_id:      itemId,
-      p_proveedor_id: dto.proveedor_id,
-      p_precio_unit:  dto.precio_unit,
-      p_factura_id:   dto.factura_id ?? null,
-      p_user_id:      userId,
+      p_item_id:           itemId,
+      p_proveedor_id:      dto.proveedor_id,
+      p_precio_unit:       dto.precio_unit,
+      p_factura_id:        dto.factura_id ?? null,
+      p_user_id:           userId,
+      p_pagado_por:        dto.pagado_por ?? 'cadinc',
+      p_cantidad_comprada: dto.cantidad_comprada ?? null,
     })
     if (error) throw mapRpcError(error)
-    // La RPC ya registra en materiales_a_cuenta_cliente (y en stock,
-    // si corresponde) dentro de la transacción. NO llamar a
-    // _registrarMaterialCliente acá — sería doble registro.
-
-    // Post-RPC: la RPC no acepta `p_pagado_por` ni `p_cantidad_comprada`
-    // (default 'cadinc' / NULL en DB). Si el caller los especificó, hacemos
-    // UPDATE adicional en el item y recalculamos el MCC recién insertado.
-    // TODO: cuando se actualice la RPC para aceptar estos params, eliminar
-    // este post-update y pasarlos atómicamente.
-    const itemPatch: Record<string, unknown> = {}
-    if (dto.pagado_por === 'cliente') itemPatch.pagado_por = 'cliente'
-    if (dto.cantidad_comprada != null) itemPatch.cantidad_comprada = dto.cantidad_comprada
-    if (Object.keys(itemPatch).length > 0) {
-      await supabase.from('solicitud_compra_item').update(itemPatch).eq('id', itemId)
-
-      // Recalcular el row de MCC con los valores corregidos (la RPC lo
-      // insertó con la cantidad solicitada y pagado_por='cadinc').
-      const mccPatch: Record<string, unknown> = { updated_by: userId }
-      if (dto.pagado_por === 'cliente') mccPatch.pagado_por = 'cliente'
-      if (dto.cantidad_comprada != null) {
-        mccPatch.cantidad = dto.cantidad_comprada
-        mccPatch.precio_total = dto.cantidad_comprada * dto.precio_unit
-      }
-      await supabase.from('materiales_a_cuenta_cliente')
-        .update(mccPatch)
-        .eq('item_id', itemId)
-    }
+    // La RPC registra item + materiales_a_cuenta_cliente (con pagado_por y
+    // cantidad efectiva) + el evento del timeline, todo DENTRO de la
+    // transacción. No hay parches post-RPC ni doble registro.
 
     const { data: item, error: selErr } = await supabase
       .from('solicitud_compra_item')
@@ -550,18 +523,37 @@ export const solicitudesService = {
     // (cuando se marca enviado vía remito, ver remitos-envio.service).
     // Acá solo se registra la compra.
     await this._registrarMaterialCliente(itemId, data.solicitud_id, token, userId)
+
+    // Evento del timeline (el camino RPC lo escribe adentro de la TX; acá,
+    // en legacy, es best-effort). cantidad = la comprada si difiere.
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    data.solicitud_id ?? null,
+      accion:         'comprado',
+      estadoAnterior: 'pendiente',
+      estadoNuevo:    'comprado',
+      cantidad:       data.cantidad_comprada ?? data.cantidad ?? null,
+      meta: {
+        proveedor_id:       dto.proveedor_id,
+        precio_unit:        dto.precio_unit,
+        factura_id:         dto.factura_id ?? null,
+        pagado_por:         dto.pagado_por ?? 'cadinc',
+        queda_en_proveedor: false,
+      },
+      userId,
+    })
     return data
   },
 
   // El legacy nunca validó saldo — siempre permitía quedar en negativo.
-  // El parámetro `forzarSinStock` se acepta por consistencia de firma
-  // con el dispatcher, pero no cambia el comportamiento.
+  // El parámetro `forzarSinStock` no cambia el comportamiento del despacho
+  // (el legacy no valida saldo), pero se registra en el evento del timeline.
   async despacharItemLegacy(
     itemId: number,
     dto: DespacharItemDto,
     token: string,
     userId: string,
-    _forzarSinStock: boolean = false,
+    forzarSinStock: boolean = false,
   ) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
@@ -604,6 +596,19 @@ export const solicitudesService = {
     }
 
     await this._registrarMaterialCliente(itemId, data.solicitud_id, token, userId)
+
+    // Evento del timeline (el camino RPC lo escribe adentro de la TX; acá,
+    // en legacy, es best-effort).
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    data.solicitud_id ?? null,
+      accion:         'despachado',
+      estadoAnterior: 'pendiente',
+      estadoNuevo:    'de_deposito',
+      cantidad:       data.cantidad ?? null,
+      meta:           { precio_unit: dto.precio_unit, forzar_sin_stock: forzarSinStock },
+      userId,
+    })
     return data
   },
 
