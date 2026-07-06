@@ -222,6 +222,7 @@ export const aridosService = {
         .range(from, to)
       if (query.tipo)        q = q.eq('tipo', query.tipo)
       if (query.cliente_id)  q = q.eq('cliente_id', query.cliente_id)
+      if (query.cantera_id)  q = q.eq('cantera_id', query.cantera_id)
       if (query.material_id) q = q.eq('material_id', query.material_id)
       if (query.fecha_desde) q = q.gte('fecha', query.fecha_desde)
       if (query.fecha_hasta) q = q.lte('fecha', query.fecha_hasta)

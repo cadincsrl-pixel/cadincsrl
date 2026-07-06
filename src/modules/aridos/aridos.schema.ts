@@ -160,6 +160,7 @@ export const UpdateMovimientoSchema = z.object({
 export const ListMovimientosQuerySchema = z.object({
   tipo:        z.enum(['venta', 'acopio', 'ajuste']).optional(),
   cliente_id:  z.coerce.number().optional(),
+  cantera_id:  z.coerce.number().optional(),
   material_id: z.coerce.number().optional(),
   fecha_desde: FECHA.optional(),
   fecha_hasta: FECHA.optional(),
