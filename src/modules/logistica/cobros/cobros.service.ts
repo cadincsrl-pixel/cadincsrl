@@ -108,7 +108,7 @@ export const cobrosService = {
     return cobro
   },
 
-  async marcarCobrado(id: number, token: string, userId: string) {
+  async marcarCobrado(id: number, token: string, userId: string, fechaCobro?: string) {
     const supabase = createSupabaseClient(token)
 
     // Validar que exista comprobante de pago antes de marcar como cobrado.
@@ -128,9 +128,25 @@ export const cobrosService = {
       throw e
     }
 
+    const update: Record<string, unknown> = {
+      estado: 'cobrado', updated_by: userId, updated_at: new Date().toISOString(),
+    }
+    // La fecha real del cobro no tiene columna propia: se anota en obs, igual
+    // que hace el flujo de líquido producto al crear el cobro.
+    if (fechaCobro) {
+      const { data: actual, error: errObs } = await supabase
+        .from('cobros').select('obs').eq('id', id).maybeSingle()
+      if (errObs) throw new Error(errObs.message)
+      const [y, m, d] = fechaCobro.split('-')
+      const nota = `Cobrado el ${d}/${m}/${y}`
+      const obsActual = (actual?.obs ?? '').trim()
+      // No duplicar la nota si ya la tiene (retry o doble click).
+      update.obs = obsActual.includes(nota) ? obsActual : [obsActual, nota].filter(Boolean).join(' · ')
+    }
+
     const { data, error } = await supabase
       .from('cobros')
-      .update({ estado: 'cobrado', updated_by: userId, updated_at: new Date().toISOString() })
+      .update(update)
       .eq('id', id)
       .select()
       .single()

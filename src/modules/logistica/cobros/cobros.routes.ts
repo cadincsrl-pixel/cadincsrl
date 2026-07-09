@@ -38,7 +38,15 @@ cobros.post('/', zValidator('json', CreateCobroSchema), async (c) => {
 
 cobros.patch('/:id/cobrar', async (c) => {
   try {
-    const data = await cobrosService.marcarCobrado(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
+    // Body opcional: { fecha_cobro: 'YYYY-MM-DD' } — se anota en obs.
+    let fechaCobro: string | undefined
+    try {
+      const body = await c.req.json()
+      if (typeof body?.fecha_cobro === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.fecha_cobro)) {
+        fechaCobro = body.fecha_cobro
+      }
+    } catch { /* sin body o no-JSON: se marca cobrado sin fecha */ }
+    const data = await cobrosService.marcarCobrado(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id, fechaCobro)
     return c.json(data)
   } catch (err: any) {
     if (err?.code === 'FALTA_COMPROBANTE_PAGO') {
