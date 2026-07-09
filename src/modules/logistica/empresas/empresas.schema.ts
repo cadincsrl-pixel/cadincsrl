@@ -7,6 +7,9 @@ export const CreateEmpresaSchema = z.object({
   email:  z.string().optional().default(''),
   obs:    z.string().optional().default(''),
   estado: z.enum(['activa', 'inactiva']).default('activa'),
+  // 'liquido_producto': la empresa emite la liquidación y marcamos qué remitos
+  // pagó. 'facturacion': CADINC emite una factura por cada viaje.
+  modalidad_cobro: z.enum(['liquido_producto', 'facturacion']).default('liquido_producto'),
 })
 
 // No usar .partial() sobre el create: arrastra los .default() y zod
@@ -18,6 +21,7 @@ export const UpdateEmpresaSchema = z.object({
   email:  z.string().optional(),
   obs:    z.string().optional(),
   estado: z.enum(['activa', 'inactiva']).optional(),
+  modalidad_cobro: z.enum(['liquido_producto', 'facturacion']).optional(),
 })
 
 export const CreateTarifaEmpresaSchema = z.object({

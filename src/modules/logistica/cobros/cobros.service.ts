@@ -7,7 +7,7 @@ export const cobrosService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('cobros')
-      .select('*, empresas_transportistas(nombre)')
+      .select('*, empresas_transportistas(nombre, modalidad_cobro)')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return data
@@ -15,6 +15,34 @@ export const cobrosService = {
 
   async create(dto: CreateCobroDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+
+    // 0. Si la empresa cobra con facturación, el cobro ES una factura emitida
+    // por CADINC: exige nº + fecha de factura y exactamente un viaje (una
+    // factura por viaje — regla del negocio, no técnica).
+    const { data: empresa, error: errEmp } = await supabase
+      .from('empresas_transportistas')
+      .select('modalidad_cobro')
+      .eq('id', dto.empresa_id)
+      .maybeSingle()
+    if (errEmp) throw new Error(errEmp.message)
+    if (!empresa) {
+      const e = new Error('EMPRESA_NO_EXISTE') as Error & { code?: string }
+      e.code = 'EMPRESA_NO_EXISTE'
+      throw e
+    }
+    const esFacturacion = empresa.modalidad_cobro === 'facturacion'
+    if (esFacturacion) {
+      if (!dto.factura_nro?.trim() || !dto.factura_fecha) {
+        const e = new Error('FALTA_FACTURA') as Error & { code?: string }
+        e.code = 'FALTA_FACTURA'
+        throw e
+      }
+      if (!dto.tramo_ids || dto.tramo_ids.length !== 1) {
+        const e = new Error('FACTURA_UN_VIAJE') as Error & { code?: string }
+        e.code = 'FACTURA_UN_VIAJE'
+        throw e
+      }
+    }
 
     // 1. Validar tramos ANTES de crear el cobro (evita huérfanos): que existan,
     // pertenezcan a la empresa del cobro y no estén ya cobrados.
@@ -55,6 +83,8 @@ export const cobrosService = {
         toneladas_totales: dto.toneladas_totales,
         total:             dto.total,
         obs:               dto.obs,
+        factura_nro:       esFacturacion ? dto.factura_nro!.trim() : null,
+        factura_fecha:     esFacturacion ? dto.factura_fecha : null,
         estado:            'pendiente',
         created_by:        userId,
       })

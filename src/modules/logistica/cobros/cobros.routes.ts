@@ -29,6 +29,9 @@ cobros.post('/', zValidator('json', CreateCobroSchema), async (c) => {
     if (err?.code === 'TRAMO_NO_EXISTE')    return c.json({ error: 'TRAMO_NO_EXISTE' }, 400)
     if (err?.code === 'TRAMO_OTRA_EMPRESA') return c.json({ error: 'TRAMO_OTRA_EMPRESA', detail: err.detail }, 400)
     if (err?.code === 'TRAMO_YA_COBRADO')   return c.json({ error: 'TRAMO_YA_COBRADO',   detail: err.detail }, 409)
+    if (err?.code === 'EMPRESA_NO_EXISTE')  return c.json({ error: 'EMPRESA_NO_EXISTE' }, 400)
+    if (err?.code === 'FALTA_FACTURA')      return c.json({ error: 'FALTA_FACTURA' }, 400)
+    if (err?.code === 'FACTURA_UN_VIAJE')   return c.json({ error: 'FACTURA_UN_VIAJE' }, 400)
     throw err
   }
 })

@@ -8,7 +8,7 @@ import { cobroAdjuntosService, CobroAdjError } from './adjuntos.service.js'
 const docs = new Hono()
 docs.use('*', authMiddleware)
 
-const TipoEnum = z.enum(['liquidacion', 'comprobante'])
+const TipoEnum = z.enum(['liquidacion', 'comprobante', 'factura'])
 
 const UploadUrlSchema = z.object({
   tipo:           TipoEnum,

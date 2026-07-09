@@ -7,6 +7,10 @@ export const CreateCobroSchema = z.object({
   toneladas_totales: z.number().nonnegative(),
   total:             z.number().nonnegative(),
   obs:               z.string().optional().default(''),
+  // Factura emitida por CADINC — obligatorios (validado en el service) cuando
+  // la empresa tiene modalidad_cobro='facturacion'; ignorados para el resto.
+  factura_nro:       z.string().max(50).optional(),
+  factura_fecha:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   tramo_ids:         z.array(z.number().int().positive()).optional().default([]),
 }).refine(d => d.fecha_desde <= d.fecha_hasta, {
   message: 'fecha_desde debe ser <= fecha_hasta',
