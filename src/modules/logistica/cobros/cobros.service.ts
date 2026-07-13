@@ -7,7 +7,10 @@ export const cobrosService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('cobros')
-      .select('*, empresas_transportistas(nombre, modalidad_cobro)')
+      // Los tipos de adjuntos embebidos permiten al frontend mostrar qué
+      // documentos tiene cada cobro (PDF factura / liquidación / comprobante)
+      // sin una query por fila.
+      .select('*, empresas_transportistas(nombre, modalidad_cobro), cobros_adjuntos(tipo, deleted_at)')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return data
