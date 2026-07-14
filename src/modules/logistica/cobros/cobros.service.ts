@@ -9,8 +9,9 @@ export const cobrosService = {
       .from('cobros')
       // Los tipos de adjuntos embebidos permiten al frontend mostrar qué
       // documentos tiene cada cobro (PDF factura / liquidación / comprobante)
-      // sin una query por fila.
-      .select('*, empresas_transportistas(nombre, modalidad_cobro), cobros_adjuntos(tipo, deleted_at)')
+      // sin una query por fila. El hash del comprobante deja agrupar en el
+      // historial las facturas pagadas juntas (mismo comprobante = mismo pago).
+      .select('*, empresas_transportistas(nombre, modalidad_cobro), cobros_adjuntos(tipo, deleted_at, hash_sha256)')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return data
