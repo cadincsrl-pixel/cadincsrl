@@ -5,6 +5,9 @@ export const CreateCamionSchema = z.object({
   modelo:      z.string().optional().default(''),
   anio:        z.number().optional(),
   estado:      z.enum(['activo', 'mantenimiento', 'inactivo']).default('activo'),
+  // tractor = arrastra batea/semirremolque; chasis = caja fija. Discrimina
+  // la tarifa por tipo de unidad en facturación.
+  categoria:   z.enum(['tractor', 'chasis']).default('tractor'),
   obs:         z.string().optional().default(''),
   km_actuales: z.number().min(0).optional(),
 })
@@ -16,6 +19,7 @@ export const UpdateCamionSchema = z.object({
   modelo:      z.string().optional(),
   anio:        z.number().optional(),
   estado:      z.enum(['activo', 'mantenimiento', 'inactivo']).optional(),
+  categoria:   z.enum(['tractor', 'chasis']).optional(),
   obs:         z.string().optional(),
   km_actuales: z.number().min(0).optional(),
 })

@@ -30,6 +30,9 @@ export const CreateTarifaEmpresaSchema = z.object({
   // null/ausente = tarifa general de la cantera; con valor = tarifa
   // específica para descargas en ese depósito (gana sobre la general).
   deposito_id:   z.number().nullable().optional(),
+  // null/ausente = vale para cualquier unidad; 'chasis'/'batea' = específica
+  // según el camión del viaje (chasis paga distinto en algunas empresas).
+  tipo_unidad:   z.enum(['batea', 'chasis']).nullable().optional(),
   valor_ton:     z.number().min(0),
   vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   obs:           z.string().optional().default(''),
