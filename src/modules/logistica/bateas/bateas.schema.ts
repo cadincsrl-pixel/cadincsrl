@@ -1,14 +1,12 @@
 import { z } from 'zod'
 
-const TipoEnum   = z.enum(['volcadora','plana','tanque','gondola','otro'])
+// Tipo de remolque (vocabulario real de la flota; unificado 2026-07-15).
+const TipoEnum   = z.enum(['batea','acoplado','semirremolque','sider','tanque_cisterna','otro'])
 const EstadoEnum = z.enum(['activo','mantenimiento','inactivo'])
-// Categoría de remolque (aparte de `tipo`, que describe la forma).
-const CategoriaEnum = z.enum(['batea','acoplado','semirremolque'])
 
 export const CreateBateaSchema = z.object({
   patente:      z.string().min(1),
   tipo:         TipoEnum.optional(),
-  categoria:    CategoriaEnum.default('batea'),
   marca:        z.string().optional().nullable(),
   modelo:       z.string().optional().nullable(),
   anio:         z.number().int().optional().nullable(),
@@ -24,7 +22,6 @@ export const CreateBateaSchema = z.object({
 export const UpdateBateaSchema = z.object({
   patente:      z.string().min(1).optional(),
   tipo:         TipoEnum.optional(),
-  categoria:    CategoriaEnum.optional(),
   marca:        z.string().optional().nullable(),
   modelo:       z.string().optional().nullable(),
   anio:         z.number().int().optional().nullable(),
