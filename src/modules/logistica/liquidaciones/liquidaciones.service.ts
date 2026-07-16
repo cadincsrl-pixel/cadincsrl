@@ -1,7 +1,7 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase, supabase as supabaseAdmin } from '../../../lib/supabase.js'
-import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto, UpdateAdelantoDto } from './liquidaciones.schema.js'
+import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto, UpdateAdelantoDto, CreateEstadiaDto, UpdateEstadiaDto } from './liquidaciones.schema.js'
 
 const BUCKET_ADELANTOS = 'adelantos-logistica'
 
@@ -107,6 +107,72 @@ export const liquidacionesService = {
     return data
   },
 
+  // ── Estadías: días de espera para cargar/descargar, pagados por día ──
+  async getEstadias(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('estadias')
+      .select('*')
+      .order('fecha_desde', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async createEstadia(dto: CreateEstadiaDto, token: string, userId: string) {
+    const sb = createSupabaseClient(token)
+    const { data, error } = await sb
+      .from('estadias')
+      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateEstadia(id: number, dto: UpdateEstadiaDto, token: string, userId: string) {
+    const sb = createSupabaseClient(token)
+    // Gate: una estadía ya liquidada tiene su total snapshoteado en la
+    // liquidación — editarla los desincronizaría.
+    const { data: est, error: e0 } = await sb
+      .from('estadias').select('liquidacion_id, fecha_desde, fecha_hasta, monto_dia').eq('id', id).maybeSingle()
+    if (e0) throw new LiqHttpError(500, 'DB_ERROR', e0.message)
+    if (!est) throw new LiqHttpError(404, 'ESTADIA_NO_EXISTE')
+    if (est.liquidacion_id != null) throw new LiqHttpError(409, 'ESTADIA_LIQUIDADA')
+
+    // dias/total se recalculan acá a partir del merge fila+patch — un patch
+    // parcial (solo monto_dia, solo una fecha) no puede dejar total ≠
+    // dias × monto_dia, y el rango invertido sale 400 en vez del CHECK de
+    // Postgres como 500 crudo.
+    const fechaDesde = dto.fecha_desde ?? est.fecha_desde
+    const fechaHasta = dto.fecha_hasta ?? est.fecha_hasta
+    if (fechaDesde > fechaHasta) throw new LiqHttpError(400, 'ESTADIA_RANGO_INVALIDO', 'fecha_desde debe ser <= fecha_hasta')
+    const montoDia = dto.monto_dia ?? Number(est.monto_dia)
+    const dias = Math.round((Date.parse(fechaHasta) - Date.parse(fechaDesde)) / 86_400_000) + 1
+
+    const patch = Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined))
+    const { data, error } = await sb
+      .from('estadias')
+      .update({ ...patch, dias, total: dias * montoDia, updated_by: userId })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async deleteEstadia(id: number, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data: est, error: e0 } = await sb
+      .from('estadias').select('liquidacion_id').eq('id', id).maybeSingle()
+    if (e0) throw new LiqHttpError(500, 'DB_ERROR', e0.message)
+    if (!est) throw new LiqHttpError(404, 'ESTADIA_NO_EXISTE')
+    if (est.liquidacion_id != null) throw new LiqHttpError(409, 'ESTADIA_LIQUIDADA')
+
+    const { error } = await sb.from('estadias').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+    return { success: true }
+  },
+
   async create(dto: CreateLiquidacionDto, _token: string, userId: string) {
     // Delegamos al RPC transaccional — garantiza que si algún vínculo
     // falla (tramo/adelanto/gasto no valido), nada se persiste y la
@@ -133,6 +199,8 @@ export const liquidacionesService = {
       p_subtotal_km_cargado:  dto.subtotal_km_cargado ?? null,
       p_subtotal_km_vacio:    dto.subtotal_km_vacio ?? null,
       p_tramo_chofer_ids:     dto.tramo_chofer_ids ?? [],
+      p_estadia_ids:          dto.estadia_ids ?? [],
+      p_total_estadias:       dto.total_estadias ?? 0,
     })
     if (error) {
       const err = new Error(error.message) as Error & { code?: string; detail?: string | null }

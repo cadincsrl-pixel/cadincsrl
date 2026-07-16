@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { liquidacionesService, LiqHttpError } from './liquidaciones.service.js'
-import { CreateLiquidacionSchema, UpdateLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
+import { CreateLiquidacionSchema, UpdateLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, CreateEstadiaSchema, UpdateEstadiaSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
 import { auditService } from '../../admin/audit.service.js'
 import adjuntosRoutes from './adjuntos.routes.js'
 
@@ -19,6 +19,7 @@ liquidaciones.route('/', adjuntosRoutes)
 
 liquidaciones.get('/',          async (c) => c.json(await liquidacionesService.getAll(c.get('accessToken'))))
 liquidaciones.get('/adelantos', async (c) => c.json(await liquidacionesService.getAdelantos(c.get('accessToken'))))
+liquidaciones.get('/estadias',  async (c) => c.json(await liquidacionesService.getEstadias(c.get('accessToken'))))
 
 liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) => {
   try {
@@ -32,6 +33,7 @@ liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) =
     if (msg.includes('RELEVO_INVALIDO'))   return c.json({ error: 'RELEVO_INVALIDO',   detail: err.detail }, 400)
     if (msg.includes('ADELANTO_INVALIDO')) return c.json({ error: 'ADELANTO_INVALIDO', detail: err.detail }, 400)
     if (msg.includes('GASTO_INVALIDO'))    return c.json({ error: 'GASTO_INVALIDO',    detail: err.detail }, 400)
+    if (msg.includes('ESTADIA_INVALIDA'))  return c.json({ error: 'ESTADIA_INVALIDA',  detail: err.detail }, 400)
     return c.json({ error: msg || 'UNKNOWN' }, 500)
   }
 })
@@ -125,6 +127,28 @@ liquidaciones.patch('/adelantos/:id', zValidator('json', UpdateAdelantoSchema), 
 liquidaciones.delete('/adelantos/:id', async (c) => {
   try {
     const data = await liquidacionesService.deleteAdelanto(Number(c.req.param('id')), c.get('accessToken'))
+    return c.json(data)
+  } catch (err) { return handleLiqError(err, c) }
+})
+
+// ── Estadías (días de espera pagados por día) ──
+liquidaciones.post('/estadias', zValidator('json', CreateEstadiaSchema), async (c) => {
+  try {
+    const data = await liquidacionesService.createEstadia(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+    return c.json(data, 201)
+  } catch (err) { return handleLiqError(err, c) }
+})
+
+liquidaciones.patch('/estadias/:id', zValidator('json', UpdateEstadiaSchema), async (c) => {
+  try {
+    const data = await liquidacionesService.updateEstadia(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  } catch (err) { return handleLiqError(err, c) }
+})
+
+liquidaciones.delete('/estadias/:id', async (c) => {
+  try {
+    const data = await liquidacionesService.deleteEstadia(Number(c.req.param('id')), c.get('accessToken'))
     return c.json(data)
   } catch (err) { return handleLiqError(err, c) }
 })
