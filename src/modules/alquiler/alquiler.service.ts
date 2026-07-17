@@ -162,6 +162,20 @@ async function requireAdmin(userId: string): Promise<void> {
   }
 }
 
+// Cobros: admin o flag `permisos.alquiler.gestionar_cobros` (2026-07-17).
+// Primer flag no-admin del módulo: permite a un operador cargar/editar cobros
+// sin abrir el resto del ABM (flota/obras/clientes siguen con requireAdmin).
+// OJO: el gate genérico de rutas (requirePermiso por método) corre antes, así
+// que el acceso efectivo es CRUD del módulo ∧ este flag.
+async function requireGestionCobros(userId: string): Promise<void> {
+  const { data } = await supabaseAdmin.from('profiles').select('rol, permisos').eq('id', userId).single()
+  if (data?.rol === 'admin') return
+  const flag = (data?.permisos as Record<string, Record<string, unknown>> | null)?.alquiler?.gestionar_cobros
+  if (flag !== true) {
+    forbidden('Necesitás el permiso "Gestionar cobros" de Alquiler para registrar o modificar cobros')
+  }
+}
+
 // Importe devengado de un parte = horas × precio_hora (de la asignación),
 // redondeado a 2 decimales. null si la máquina no tiene precio fijado.
 function calcImporte(horas: number | null | undefined, precio: number | null): number | null {
@@ -856,7 +870,15 @@ export const alquilerService = {
   },
 
   async createCobro(dto: CreateCobroDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionCobros(userId)
+    // Scope por identidad: si el flag lo tiene un JEFE de obra, solo puede
+    // cobrar a clientes de SUS obras (el operador no-jefe "ve todo" pasa
+    // directo — mismo criterio que getCobros).
+    const scope = await getScope(userId)
+    if (!scope.isAdmin) {
+      const permitidos = await accessibleClienteIds(scope)
+      if (!permitidos.includes(dto.cliente_id)) forbidden('No tenés acceso a este cliente')
+    }
     const { remito_ids, ...cobro } = dto
 
     // Cobro + imputación en UNA transacción vía RPC: antes se insertaba el cobro
@@ -923,7 +945,17 @@ export const alquilerService = {
   },
 
   async updateCobro(id: number, dto: UpdateCobroDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionCobros(userId)
+    // Mismo scope por identidad que createCobro, sobre el cliente del cobro.
+    const scope = await getScope(userId)
+    if (!scope.isAdmin) {
+      const { data: cobroRow } = await supabaseAdmin
+        .from('alquiler_cobros').select('cliente_id').eq('id', id).single()
+      const permitidos = await accessibleClienteIds(scope)
+      if (cobroRow?.cliente_id == null || !permitidos.includes(cobroRow.cliente_id)) {
+        forbidden('No tenés acceso a este cliente')
+      }
+    }
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_cobros')
