@@ -73,6 +73,15 @@ export const RechazarGastoSchema = z.object({
   motivo_rechazo: z.string().min(3).max(500),
 })
 
+// ── Aprobación múltiple ──────────────────────────────────────────
+// Aprueba varios gastos pendientes en una request. Cada id se valida con las
+// mismas reglas que la aprobación individual (pendiente + no auto-aprobar);
+// los que no pasan se devuelven como "saltados" con su código, sin abortar el
+// resto. Tope de 200 para acotar el loop.
+export const AprobarLoteSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(200),
+})
+
 // ── Marcar pagado ────────────────────────────────────────────────
 export const MarcarPagadoSchema = z.object({
   fecha_pago:  FechaISO.optional(),          // default: hoy

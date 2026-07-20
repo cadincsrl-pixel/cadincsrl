@@ -628,6 +628,26 @@ export const gastosService = {
   },
 
   // ── Rechazar ─────────────────────────────────────────────────
+  // Aprueba una lista de gastos reusando la validación de aprobar() por cada
+  // uno. No es atómico a propósito: si un id no pasa (propio / ya no pendiente
+  // / inexistente), se salta y se sigue con el resto. Devuelve el desglose para
+  // que la UI muestre cuántos entraron y por qué se saltaron los demás.
+  async aprobarLote(ids: number[], token: string, userId: string) {
+    const aprobados: number[] = []
+    const saltados: { id: number; code: string }[] = []
+    // dedup por si el cliente manda repetidos.
+    for (const id of [...new Set(ids)]) {
+      try {
+        await gastosService.aprobar(id, token, userId)
+        aprobados.push(id)
+      } catch (err) {
+        const code = err instanceof HttpError ? err.code : 'ERROR'
+        saltados.push({ id, code })
+      }
+    }
+    return { aprobados, saltados }
+  },
+
   async rechazar(id: number, dto: RechazarGastoDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
 

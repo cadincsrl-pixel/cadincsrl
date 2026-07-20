@@ -4,7 +4,7 @@ import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { gastosService, HttpError } from './gastos.service.js'
 import {
-  CreateGastoSchema, UpdateGastoSchema, RechazarGastoSchema,
+  CreateGastoSchema, UpdateGastoSchema, RechazarGastoSchema, AprobarLoteSchema,
   ListGastosQuerySchema, UploadComprobanteSchema, ReporteRangoQuerySchema,
 } from './gastos.schema.js'
 import { combustibleService } from './combustible.service.js'
@@ -157,6 +157,12 @@ gastos.patch('/:id', zValidator('json', UpdateGastoSchema), handler(async (c) =>
 
 gastos.delete('/:id', handler(async (c) => {
   return gastosService.softDelete(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
+}))
+
+// Aprobación múltiple. Va ANTES de '/:id/aprobar' por claridad; no colisiona
+// (path de un solo segmento vs. dos).
+gastos.post('/aprobar-lote', zValidator('json', AprobarLoteSchema), handler(async (c) => {
+  return gastosService.aprobarLote(c.req.valid('json').ids, c.get('accessToken'), c.get('user').id)
 }))
 
 gastos.post('/:id/aprobar', handler(async (c) => {
