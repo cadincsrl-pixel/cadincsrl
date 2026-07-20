@@ -104,7 +104,12 @@ export const solicitudesService = {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('solicitud_compra')
-      .select('*, items:solicitud_compra_item(*, proveedores(nombre))')
+      // Embebemos el nombre de la obra por la FK obra_cod→obras.cod. Así el
+      // nombre viaja con cada pedido y el frontend no depende de una lista de
+      // obras aparte (que puede venir scopeada/vacía para compras/depósito, o
+      // stale y sin la obra recién creada) — antes las notificaciones caían al
+      // código "CC-xxx" en esos casos.
+      .select('*, obra:obras(nom), items:solicitud_compra_item(*, proveedores(nombre))')
       .order('fecha', { ascending: false })
     if (obra_cod) q = q.eq('obra_cod', obra_cod)
 
@@ -118,8 +123,9 @@ export const solicitudesService = {
     const { data, error } = await q
     if (error) throw new Error(error.message)
 
-    return (data ?? []).map(s => ({
+    return (data ?? []).map(({ obra, ...s }) => ({
       ...s,
+      obra_nom: (obra as { nom: string } | null)?.nom ?? null,
       progreso: s.estado === 'aprobada' ? calcProgreso(s.items) : null,
       resumen:  s.estado === 'aprobada' ? countResumen(s.items) : null,
     }))
