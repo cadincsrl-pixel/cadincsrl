@@ -329,6 +329,21 @@ export const solicitudesService = {
       if (!allowed.includes(cab.obra_cod)) throw new HttpError(403, 'OBRA_SIN_ACCESO')
     }
 
+    // Guard de imputación (2026-07-21): el CASCADE del borrado arrastra las
+    // filas MCC — si alguna ya fue cobrada al cliente, el pago quedaría
+    // imputado a la nada y el saldo de la obra se correría en silencio.
+    // Primero hay que eliminar el cobro (libera los items) en Cuenta del cliente.
+    const { data: cobrados, error: errCob } = await supabaseAdmin
+      .from('materiales_a_cuenta_cliente')
+      .select('cobro_id')
+      .eq('solicitud_id', id)
+      .not('cobro_id', 'is', null)
+      .limit(1)
+    if (errCob) throw new Error(errCob.message)
+    if (cobrados && cobrados.length > 0) {
+      throw new HttpError(409, 'SOLICITUD_TIENE_COBROS', { cobro_id: cobrados[0]!.cobro_id })
+    }
+
     // RPC transaccional: revierte stock con FOR UPDATE, valida remitos_envio,
     // y borra solicitud_compra (CASCADE borra items + MCC).
     // Migración 20260424_rpc_eliminar_solicitud.
@@ -669,6 +684,15 @@ export const solicitudesService = {
 
   async revertirItem(itemId: number, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
+    // Un item cuyo MCC ya fue cobrado al cliente no se puede revertir: el
+    // revert BORRA la fila MCC y dejaría el pago imputado a la nada. Primero
+    // hay que eliminar el cobro (libera los items) desde Cuenta del cliente.
+    const { data: mccCobrado } = await supabase
+      .from('materiales_a_cuenta_cliente')
+      .select('cobro_id').eq('item_id', itemId).not('cobro_id', 'is', null).maybeSingle()
+    if (mccCobrado) {
+      throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: mccCobrado.cobro_id })
+    }
     // Estado previo (entre comprado/de_deposito/rechazado) para la traza.
     const { data: prev } = await supabase
       .from('solicitud_compra_item').select('estado').eq('id', itemId).maybeSingle()
@@ -719,8 +743,11 @@ export const solicitudesService = {
       await supabase.from('stock_movimientos').delete().eq('id', mov.id)
     }
 
-    // Borrar registro de materiales_a_cuenta_cliente si existía
-    await supabase.from('materiales_a_cuenta_cliente').delete().eq('item_id', itemId)
+    // Borrar registro de materiales_a_cuenta_cliente si existía. El
+    // .is('cobro_id', null) re-chequea la imputación EN la misma sentencia:
+    // si un cobro imputó la fila entre el guard de arriba y este delete
+    // (carrera), la fila cobrada sobrevive en vez de dejar el pago huérfano.
+    await supabase.from('materiales_a_cuenta_cliente').delete().eq('item_id', itemId).is('cobro_id', null)
 
     await registrarItemEvento(supabase, {
       itemId,
@@ -841,6 +868,17 @@ export const solicitudesService = {
 
   async editarItem(itemId: number, dto: EditarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    // El precio de un item ya cobrado al cliente está congelado (el cobro
+    // imputó monto_cobrado = precio_total al registrarse): retasarlo
+    // descuadraría la rendición. Eliminar el cobro primero si hace falta.
+    if (dto.precio_unit !== undefined) {
+      const { data: mccCobrado } = await supabase
+        .from('materiales_a_cuenta_cliente')
+        .select('cobro_id').eq('item_id', itemId).not('cobro_id', 'is', null).maybeSingle()
+      if (mccCobrado) {
+        throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: mccCobrado.cobro_id })
+      }
+    }
     const { data, error } = await supabase
       .from('solicitud_compra_item')
       .update(dto)
@@ -866,7 +904,9 @@ export const solicitudesService = {
     if (dto.factura_id !== undefined) updates.factura_id = dto.factura_id
     if (Object.keys(updates).length > 0) {
       updates.updated_by = userId
-      await supabase.from('materiales_a_cuenta_cliente').update(updates).eq('item_id', itemId)
+      // .is('cobro_id', null): si un cobro imputó la fila entre el guard y
+      // este update (carrera), el precio congelado no se pisa.
+      await supabase.from('materiales_a_cuenta_cliente').update(updates).eq('item_id', itemId).is('cobro_id', null)
     }
 
     return data
