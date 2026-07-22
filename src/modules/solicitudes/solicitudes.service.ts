@@ -648,6 +648,12 @@ export const solicitudesService = {
       .maybeSingle()
     if (error) throw new Error(error.message)
     if (!data) throw new Error('Ítem no encontrado o no está listo para enviar')
+    // Consistencia con envíos parciales: el envío directo (sin remito) manda
+    // todo → el acumulado queda igual a la cantidad efectiva.
+    await supabase
+      .from('solicitud_compra_item')
+      .update({ cantidad_enviada: Number(data.cantidad_comprada ?? data.cantidad) })
+      .eq('id', itemId)
     await registrarItemEvento(supabase, {
       itemId,
       solicitudId: data.solicitud_id ?? null,
@@ -819,10 +825,13 @@ export const solicitudesService = {
       }
     }
 
-    // 3) Volver el item a su estado previo, limpiar fecha_envio.
+    // 3) Volver el item a su estado previo, limpiar fecha_envio y resetear el
+    // acumulado de envíos parciales (los renglones de remito del item se
+    // borraron arriba → lo enviado vuelve a 0 y el item queda "por enviar"
+    // completo de nuevo).
     const { data, error } = await supabase
       .from('solicitud_compra_item')
-      .update({ estado: estadoPrevio, fecha_envio: null })
+      .update({ estado: estadoPrevio, fecha_envio: null, cantidad_enviada: 0 })
       .eq('id', itemId)
       .eq('estado', 'enviado')
       .select('*, solicitud_compra(id, obra_cod)')
