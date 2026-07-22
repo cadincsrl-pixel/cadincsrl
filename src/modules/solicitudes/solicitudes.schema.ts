@@ -2,7 +2,9 @@ import { z } from 'zod'
 
 const ItemSchema = z.object({
   descripcion: z.string().min(1),
-  cantidad:    z.number().min(0).default(1),
+  // positive(): dejar la cantidad vacía en el form guardaba 0 en silencio
+  // (73 items en 0 hasta 2026-07-22). Sin cantidad no hay pedido.
+  cantidad:    z.number().positive(),
   unidad:      z.string().default('unid'),
   obs:         z.string().nullable().optional().default(null),
   material_id: z.number().int().positive().nullable().optional().default(null),
@@ -21,7 +23,7 @@ export const CreateSolicitudSchema = z.object({
 const UpdateItemSchema = z.object({
   id:          z.number().int().positive().optional(), // si tiene id, es update; si no, es nuevo
   descripcion: z.string().min(1),
-  cantidad:    z.number().min(0).default(1),
+  cantidad:    z.number().positive(),
   unidad:      z.string().default('unid'),
   obs:         z.string().nullable().optional().default(null),
   material_id: z.number().int().positive().nullable().optional().default(null),
