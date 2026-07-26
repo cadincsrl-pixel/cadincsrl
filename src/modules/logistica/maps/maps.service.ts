@@ -56,6 +56,43 @@ export const mapsService = {
     }
   },
 
+  /**
+   * Km sugerido para una ruta: distancia por carretera cantera→depósito
+   * según Google Distance Matrix, usando las lat/lng de cada lugar.
+   * Es una SUGERENCIA — el usuario la verifica con el link del trayecto
+   * y puede editarla antes de guardar. 422 si falta alguna coordenada.
+   */
+  async sugerirKm(token: string, canteraId: number, depositoId: number) {
+    const sb = createSupabaseClient(token)
+    const [{ data: c }, { data: d }] = await Promise.all([
+      sb.from('canteras').select('id, nombre, lat, lng').eq('id', canteraId).single(),
+      sb.from('depositos').select('id, nombre, lat, lng').eq('id', depositoId).single(),
+    ])
+    if (!c || !d) throw new MapsError(404, 'LUGAR_NO_ENCONTRADO')
+    const sinCoords = [
+      c.lat == null || c.lng == null ? c.nombre : null,
+      d.lat == null || d.lng == null ? d.nombre : null,
+    ].filter(Boolean)
+    if (sinCoords.length) {
+      throw new MapsError(422, 'SIN_COORDENADAS', { lugares: sinCoords })
+    }
+    try {
+      const r = await distanciaCacheada(Number(c.lat), Number(c.lng), Number(d.lat), Number(d.lng))
+      return {
+        km:         Math.round(r.distancia_m / 1000),
+        duracion_s: r.duracion_s,
+      }
+    } catch (err) {
+      if (err instanceof GoogleMapsError) {
+        if (err.code === 'GOOGLE_MAPS_API_KEY_MISSING') {
+          throw new MapsError(503, 'GOOGLE_API_KEY_MISSING')
+        }
+        throw new MapsError(502, err.code, err.detail)
+      }
+      throw err
+    }
+  },
+
   // Saca lat/lng del pin de un link de Google Maps (resuelve shortlinks).
   // 400 si la URL no es de Maps; 422 si no se pudieron extraer coords.
   async resolverMapsUrl(url: string) {

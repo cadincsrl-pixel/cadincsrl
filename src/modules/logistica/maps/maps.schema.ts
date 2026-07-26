@@ -11,3 +11,10 @@ export const ResolverMapsUrlSchema = z.object({
 })
 
 export type ResolverMapsUrlDto = z.infer<typeof ResolverMapsUrlSchema>
+
+export const SugerirKmSchema = z.object({
+  cantera_id:  z.number().int().positive(),
+  deposito_id: z.number().int().positive(),
+})
+
+export type SugerirKmDto = z.infer<typeof SugerirKmSchema>
