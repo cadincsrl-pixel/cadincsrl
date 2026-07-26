@@ -5,3 +5,9 @@ export const GeocodeSchema = z.object({
 })
 
 export type GeocodeDto = z.infer<typeof GeocodeSchema>
+
+export const ResolverMapsUrlSchema = z.object({
+  url: z.string().min(10).max(2000),
+})
+
+export type ResolverMapsUrlDto = z.infer<typeof ResolverMapsUrlSchema>

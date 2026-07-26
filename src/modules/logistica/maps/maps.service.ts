@@ -1,5 +1,5 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
-import { distanciaCacheada, geocode, GoogleMapsError } from './google-maps.client.js'
+import { distanciaCacheada, geocode, resolverPinDeUrl, GoogleMapsError } from './google-maps.client.js'
 
 export class MapsError extends Error {
   constructor(public status: number, public code: string, public detail?: unknown) {
@@ -50,6 +50,21 @@ export const mapsService = {
         if (err.code === 'GOOGLE_MAPS_API_KEY_MISSING') {
           throw new MapsError(503, 'GOOGLE_API_KEY_MISSING')
         }
+        throw new MapsError(502, err.code, err.detail)
+      }
+      throw err
+    }
+  },
+
+  // Saca lat/lng del pin de un link de Google Maps (resuelve shortlinks).
+  // 400 si la URL no es de Maps; 422 si no se pudieron extraer coords.
+  async resolverMapsUrl(url: string) {
+    try {
+      return await resolverPinDeUrl(url)
+    } catch (err) {
+      if (err instanceof GoogleMapsError) {
+        if (err.code === 'MAPS_URL_INVALIDA') throw new MapsError(400, err.code)
+        if (err.code === 'MAPS_URL_SIN_COORDS') throw new MapsError(422, err.code, err.detail)
         throw new MapsError(502, err.code, err.detail)
       }
       throw err

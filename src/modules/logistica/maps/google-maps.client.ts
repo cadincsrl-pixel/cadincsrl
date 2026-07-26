@@ -46,6 +46,92 @@ export async function geocode(direccion: string): Promise<GeocodeResult> {
   }
 }
 
+// ── Resolver pin de un link de Google Maps ────────────────────────
+//
+// Los usuarios cargan `maps_url` (Compartir → Copiar link) que apunta al
+// punto EXACTO del lugar. Geocodificar por nombre+localidad muchas veces
+// cae en el centro del pueblo (caso MARCAMPO: ~19 km de la planta real).
+// Esta función saca lat/lng del propio link: resuelve el shortlink
+// (maps.app.goo.gl) siguiendo el redirect y extrae las coords de la URL
+// final. No usa la API de Google → no necesita key ni tiene costo.
+
+export interface PinResult {
+  lat:    number
+  lng:    number
+  // 'pin' = coordenadas exactas del marcador (!3d/!4d o ?q=).
+  // 'aprox' = solo se pudo leer el centro del mapa (@lat,lng) — cercano
+  // al pin en links de Compartir, pero no exacto.
+  fuente: 'pin' | 'aprox'
+}
+
+const HOSTS_MAPS_CORTOS = new Set(['maps.app.goo.gl', 'goo.gl'])
+
+function esHostGoogleMaps(hostname: string): boolean {
+  if (HOSTS_MAPS_CORTOS.has(hostname)) return true
+  // google.com, www.google.com, maps.google.com, google.com.ar, etc.
+  return /^(www\.|maps\.)?google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(hostname)
+}
+
+function extraerCoords(url: string): PinResult | null {
+  const valida = (lat: number, lng: number) =>
+    Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+
+  // Pin exacto: último par !3d<lat>!4d<lng> de la URL (el marcador del lugar).
+  const pin = [...url.matchAll(/!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/g)].at(-1)
+  if (pin) {
+    const lat = Number(pin[1]), lng = Number(pin[2])
+    if (valida(lat, lng)) return { lat, lng, fuente: 'pin' }
+  }
+  // Forma ?q=lat,lng (links armados a mano o viejos).
+  const q = url.match(/[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/)
+  if (q) {
+    const lat = Number(q[1]), lng = Number(q[2])
+    if (valida(lat, lng)) return { lat, lng, fuente: 'pin' }
+  }
+  // Centro del viewport @lat,lng — aproximado, último recurso.
+  const at = url.match(/\/@(-?\d+\.?\d*),(-?\d+\.?\d*)/)
+  if (at) {
+    const lat = Number(at[1]), lng = Number(at[2])
+    if (valida(lat, lng)) return { lat, lng, fuente: 'aprox' }
+  }
+  return null
+}
+
+export async function resolverPinDeUrl(mapsUrl: string): Promise<PinResult> {
+  let parsed: URL
+  try {
+    parsed = new URL(mapsUrl)
+  } catch {
+    throw new GoogleMapsError('MAPS_URL_INVALIDA')
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || !esHostGoogleMaps(parsed.hostname)) {
+    throw new GoogleMapsError('MAPS_URL_INVALIDA')
+  }
+
+  // Si el link largo ya trae coords, no hace falta pegarle a Google.
+  const directo = extraerCoords(mapsUrl)
+  if (directo) return directo
+
+  // Shortlink (o link largo sin coords): seguir redirects y leer la URL final.
+  let finalUrl: string
+  try {
+    const res = await fetch(mapsUrl, {
+      method:   'GET',
+      redirect: 'follow',
+      headers:  { 'User-Agent': 'Mozilla/5.0 (compatible; cadinc-erp/1.0)' },
+    })
+    finalUrl = res.url
+    // Cortamos el body: solo nos interesa la URL resuelta.
+    await res.body?.cancel()
+  } catch (err) {
+    throw new GoogleMapsError('MAPS_URL_FETCH_FAIL', { message: (err as Error)?.message })
+  }
+
+  const coords = extraerCoords(finalUrl)
+  if (!coords) throw new GoogleMapsError('MAPS_URL_SIN_COORDS', { finalUrl })
+  return coords
+}
+
 // ── Distance Matrix ───────────────────────────────────────────────
 
 export interface DistanceResult {

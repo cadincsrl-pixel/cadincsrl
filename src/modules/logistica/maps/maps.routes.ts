@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { mapsService, MapsError } from './maps.service.js'
-import { GeocodeSchema } from './maps.schema.js'
+import { GeocodeSchema, ResolverMapsUrlSchema } from './maps.schema.js'
 
 const maps = new Hono()
 
@@ -25,6 +25,16 @@ maps.post('/geocode', zValidator('json', GeocodeSchema), async (c) => {
   try {
     const { direccion } = c.req.valid('json')
     const data = await mapsService.geocodeDireccion(direccion)
+    return c.json(data)
+  } catch (err) { return handle(err, c) }
+})
+
+// POST /api/logistica/maps/resolver-url — extrae lat/lng del pin de un link
+// de Google Maps (resuelve shortlinks maps.app.goo.gl). Sin costo de API.
+maps.post('/resolver-url', zValidator('json', ResolverMapsUrlSchema), async (c) => {
+  try {
+    const { url } = c.req.valid('json')
+    const data = await mapsService.resolverMapsUrl(url)
     return c.json(data)
   } catch (err) { return handle(err, c) }
 })
