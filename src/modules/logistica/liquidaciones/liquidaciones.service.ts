@@ -5,6 +5,12 @@ import type { CreateLiquidacionDto, UpdateLiquidacionDto, CreateAdelantoDto, Upd
 
 const BUCKET_ADELANTOS = 'adelantos-logistica'
 
+// Campos de un adelanto de saldo (el que nace del cierre en negativo de una
+// liquidación) que la edición manual no puede tocar: no es plata entregada al
+// chofer, sino el espejo del neto negativo de esa liquidación. Descripción y
+// comprobante sí se editan.
+const CAMPOS_BLOQUEADOS_ADELANTO_SALDO = new Set(['forma_pago', 'monto', 'fecha'])
+
 function extFromMime(mime: string): string {
   if (mime === 'image/jpeg') return 'jpg'
   if (mime === 'image/png')  return 'png'
@@ -73,6 +79,8 @@ function mapLiqRpcError(error: PostgrestError): LiqHttpError {
     /SIN_PERMISO/.test(msg)               ? 'SIN_PERMISO' :
     /LIQUIDACION_NO_EXISTE/.test(msg)     ? 'LIQUIDACION_NO_EXISTE' :
     /LIQUIDACION_YA_EN_BORRADOR/.test(msg) ? 'LIQUIDACION_YA_EN_BORRADOR' :
+    /SALDO_NEGATIVO_YA_LIQUIDADO/.test(msg) ? 'SALDO_NEGATIVO_YA_LIQUIDADO' :
+    /SALDO_NEGATIVO_EN_BORRADOR/.test(msg)  ? 'SALDO_NEGATIVO_EN_BORRADOR' :
     error.code || 'UNKNOWN'
 
   switch (code) {
@@ -81,6 +89,14 @@ function mapLiqRpcError(error: PostgrestError): LiqHttpError {
     case 'SIN_PERMISO':                 return new LiqHttpError(403, code, error.details ?? undefined)
     case 'LIQUIDACION_NO_EXISTE':       return new LiqHttpError(404, code)
     case 'LIQUIDACION_YA_EN_BORRADOR':  return new LiqHttpError(409, code)
+    // El adelanto que nació del saldo negativo de esta liquidación ya fue
+    // descontado en otra posterior; el `detail` trae el id de esa otra para
+    // que el frontend diga cuál hay que reabrir primero.
+    case 'SALDO_NEGATIVO_YA_LIQUIDADO': return new LiqHttpError(409, code, error.details ?? undefined)
+    // Variante del anterior cuando la liquidación que consumió el saldo quedó
+    // en 'borrador': no se puede reabrir ni aparece en el Historial, así que el
+    // frontend tiene que mandar a eliminar ese borrador. `detail` = su id.
+    case 'SALDO_NEGATIVO_EN_BORRADOR':  return new LiqHttpError(409, code, error.details ?? undefined)
     default:                            return new LiqHttpError(500, 'DB_ERROR', { dbMessage: msg })
   }
 }
@@ -238,27 +254,40 @@ export const liquidacionesService = {
     return data
   },
 
-  async cerrar(id: number, token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
+  async cerrar(id: number, _token: string, userId: string) {
+    // RPC transaccional: pasa los gastos vinculados 'aprobado' → 'pagado'
+    // (el chofer cobra el reintegro con esta liquidación), cierra la
+    // liquidación y, si el total neto quedó negativo, genera el adelanto
+    // de saldo (forma_pago='saldo') que la próxima liquidación descuenta.
+    // Idempotente: cerrar dos veces no duplica el adelanto.
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { data, error } = await supabaseAdmin.rpc('cerrar_liquidacion', {
+      p_liquidacion_id: id,
+      p_user_id:        userId,
+    })
+    if (error) throw mapLiqRpcError(error)
 
-    // Al cerrar, los gastos vinculados (pagado_por='chofer') transicionan
-    // 'aprobado' → 'pagado'. Semánticamente el chofer acaba de recibir
-    // el reintegro como parte de esta liquidación.
-    const { error: eGas } = await supabase
-      .from('gastos_logistica')
-      .update({ estado: 'pagado', updated_by: userId })
-      .eq('liquidacion_id', id)
-      .eq('estado', 'aprobado')  // idempotente: si ya estaban pagados por otro camino, no se tocan
-    if (eGas) throw new Error(eGas.message)
+    const res = (data ?? {}) as {
+      liquidacion?: Record<string, unknown> | null
+      adelanto_saldo_id?: number | null
+      adelanto_saldo_monto?: number | string | null
+    }
+    if (!res.liquidacion) {
+      throw new LiqHttpError(500, 'DB_ERROR', { dbMessage: 'cerrar_liquidacion no devolvió la liquidación' })
+    }
 
-    const { data, error } = await supabase
-      .from('liquidaciones')
-      .update({ estado: 'cerrada', updated_by: userId })
-      .eq('id', id)
-      .select()
-      .single()
-    if (error) throw new Error(error.message)
-    return data
+    const adelantoSaldo = res.adelanto_saldo_id != null
+      ? { id: Number(res.adelanto_saldo_id), monto: Number(res.adelanto_saldo_monto ?? 0) }
+      : null
+
+    if (adelantoSaldo) {
+      console.log(`[liquidaciones] cierre con neto negativo: liq #${id} → adelanto #${adelantoSaldo.id} por ${adelantoSaldo.monto}`)
+    }
+
+    // El frontend usa esta respuesta para abrir el modal de detalle, así que
+    // los campos de la liquidación van en la raíz (como cuando era un update
+    // directo) y la info del adelanto generado se agrega aparte.
+    return { ...res.liquidacion, adelanto_saldo: adelantoSaldo }
   },
 
   async reabrir(id: number, token: string, userId: string) {
@@ -327,20 +356,31 @@ export const liquidacionesService = {
 
   async updateAdelanto(id: number, dto: UpdateAdelantoDto, token: string, userId: string) {
     const sb = createSupabaseClient(token)
+
+    const { data: prev, error: ePrev } = await sb
+      .from('adelantos')
+      .select('comprobante_url, liquidacion_origen_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (ePrev) throw new LiqHttpError(500, 'DB_ERROR', ePrev.message)
+
     const patch: Record<string, unknown> = { updated_by: userId }
     for (const [k, v] of Object.entries(dto)) {
       if (v === undefined) continue
       if (k === 'comprobante_path') continue  // se procesa abajo
+      // Adelanto de saldo: forma_pago/monto/fecha los fijó el cierre de la
+      // liquidación de origen y tienen que seguir espejándolo. Se saltean en
+      // silencio (la UI deshabilita esos inputs; acá sólo se llega por API).
+      if (prev?.liquidacion_origen_id != null && CAMPOS_BLOQUEADOS_ADELANTO_SALDO.has(k)) continue
       patch[k] = v
     }
-    if (dto.comprobante_path !== undefined) {
-      // Trae el comprobante anterior para borrarlo del bucket si va a ser
-      // reemplazado o quitado.
-      const { data: prev } = await sb
-        .from('adelantos')
-        .select('comprobante_url')
-        .eq('id', id)
-        .maybeSingle()
+    // Un adelanto de saldo no lleva comprobante: no hubo entrega de dinero, y
+    // reabrir la liquidación de origen lo borra por SQL desde la RPC, sin pasar
+    // por deleteAdelanto — el archivo quedaría huérfano en el bucket.
+    const admiteComprobante = prev?.liquidacion_origen_id == null
+    if (dto.comprobante_path !== undefined && admiteComprobante) {
+      // El comprobante anterior se borra del bucket si va a ser reemplazado
+      // o quitado.
       const prevPath = prev?.comprobante_url ?? null
 
       if (dto.comprobante_path === null) {
@@ -369,11 +409,23 @@ export const liquidacionesService = {
   async deleteAdelanto(id: number, token: string) {
     const sb = createSupabaseClient(token)
     // Recuperar el path del comprobante para limpiar el bucket post-delete.
-    const { data: prev } = await sb
+    const { data: prev, error: ePrev } = await sb
       .from('adelantos')
-      .select('comprobante_url')
+      .select('comprobante_url, liquidacion_origen_id')
       .eq('id', id)
       .maybeSingle()
+    // Si el SELECT falla no se puede saber si es un adelanto de saldo: cortar
+    // acá en vez de borrar a ciegas.
+    if (ePrev) throw new LiqHttpError(500, 'DB_ERROR', ePrev.message)
+
+    // Borrar el adelanto de saldo desde acá haría desaparecer la deuda del
+    // chofer sin rastro y dejaría inerte el guard de reabrir/eliminar (que
+    // busca justo esta fila). El camino legítimo es reabrir la liquidación de
+    // origen, que la borra en la misma transacción.
+    if (prev?.liquidacion_origen_id != null) {
+      throw new LiqHttpError(409, 'ADELANTO_DE_SALDO', String(prev.liquidacion_origen_id))
+    }
+
     const { error } = await sb.from('adelantos').delete().eq('id', id)
     if (error) throw new Error(error.message)
     if (prev?.comprobante_url) {
