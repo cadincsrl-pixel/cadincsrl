@@ -9,6 +9,38 @@ function codedError(code: string, message: string): Error {
   return e
 }
 
+// ── Qué campos de un tramo mueven plata, y cuál ────────────────────────────
+// Documentación pura: no entran en ningún cálculo, se corrigen siempre (el
+// caso típico es el remito cargado con un provisorio y corregido después,
+// cuando el tramo ya se liquidó).
+const CAMPOS_SIN_PLATA = new Set([
+  'obs',
+  'remito_carga', 'remito_carga_img_url',
+  'remito_descarga', 'remito_descarga_img_url',
+])
+
+// Sólo afectan la FACTURACIÓN al cliente (el cobro se arma por tonelada y por
+// tarifa de la empresa). La liquidación del chofer no los mira, así que un
+// tramo liquidado pero todavía sin facturar los puede corregir.
+const CAMPOS_SOLO_COBRO = new Set(['toneladas_carga', 'toneladas_descarga', 'empresa_id'])
+
+// El resto (chofer, camión, tipo, cantera, depósito, fechas, estado) cambia km
+// o días: pega en la liquidación Y en el cobro.
+
+// ¿El valor nuevo es realmente distinto del guardado? Los formularios mandan el
+// tramo COMPLETO aunque se haya tocado un solo campo, así que sin esta
+// comparación el guard bloquearía por campos que llegaron iguales.
+// Ojo: Postgres devuelve los numeric como string ("30.04") y remito_* es NOT
+// NULL con default '', así que null y '' son el mismo "sin dato".
+function valorCambio(nuevo: unknown, guardado: unknown): boolean {
+  if (nuevo === guardado) return false
+  if (nuevo == null && guardado == null) return false
+  const nNuevo = nuevo == null || nuevo === '' ? NaN : Number(nuevo)
+  const nGuard = guardado == null || guardado === '' ? NaN : Number(guardado)
+  if (!Number.isNaN(nNuevo) && !Number.isNaN(nGuard)) return nNuevo !== nGuard
+  return String(nuevo ?? '') !== String(guardado ?? '')
+}
+
 // Un tramo `cargado` representa un viaje facturable (cantera origen → depósito
 // destino). Los lugares operativos (CHIVILCOY: mantenimiento/relevos/parking) no
 // son facturables y no deben ser origen ni destino de un cargado (saldría en $0
@@ -110,20 +142,40 @@ export const tramosService = {
       Object.entries(dto).filter(([, v]) => v !== undefined)
     )
 
-    // Guard: un tramo ya liquidado/cobrado tiene su km/toneladas/empresa
-    // snapshoteados en la liquidación/cobro; editar cualquier campo (salvo obs)
-    // los desincronizaría. Bloqueamos. (El front ya mapea TRAMO_COBRADO/LIQUIDADO.)
-    const tocaFinancieros = Object.keys(patch).some(k => k !== 'obs')
-    if (tocaFinancieros) {
+    // Guard por CAMPO, no por tramo entero: un tramo liquidado/cobrado tiene
+    // km, toneladas y empresa snapshoteados, pero no todos los campos entran
+    // en esos números y bloquear el tramo completo obligaba a reabrir una
+    // liquidación sólo para corregir el número de un remito.
+    const conPlata = Object.keys(patch).filter(k => !CAMPOS_SIN_PLATA.has(k))
+    if (conPlata.length > 0) {
       const { data: tramo, error: e0 } = await supabase
         .from('tramos')
-        .select('id, liquidacion_id, cobro_id')
+        .select('*')
         .eq('id', id)
         .maybeSingle()
       if (e0) throw new Error(e0.message)
-      if (!tramo)               throw codedError('TRAMO_NO_EXISTE', 'Tramo no encontrado')
-      if (tramo.liquidacion_id) throw codedError('TRAMO_LIQUIDADO', 'No se puede editar: el tramo está liquidado')
-      if (tramo.cobro_id)       throw codedError('TRAMO_COBRADO',   'No se puede editar: el tramo está cobrado')
+      if (!tramo) throw codedError('TRAMO_NO_EXISTE', 'Tramo no encontrado')
+
+      // Sólo cuentan los campos que EFECTIVAMENTE cambian de valor.
+      const cambiados = conPlata.filter(k => valorCambio(patch[k], (tramo as Record<string, unknown>)[k]))
+
+      // La liquidación del chofer es días × básico + km × $/km: no mira
+      // toneladas ni empresa, así que esos dos sólo chocan con el cobro.
+      const tocaLiquidacion = cambiados.filter(k => !CAMPOS_SOLO_COBRO.has(k))
+      if (tramo.liquidacion_id && tocaLiquidacion.length > 0) {
+        throw codedError(
+          'TRAMO_LIQUIDADO',
+          `No se puede cambiar ${tocaLiquidacion.join(', ')}: el tramo está liquidado (liquidación N° ${tramo.liquidacion_id}). Los remitos y las observaciones sí se pueden corregir.`,
+        )
+      }
+      // El cobro se arma por tonelada y por tarifa de empresa/unidad: cualquiera
+      // de estos campos lo desincroniza.
+      if (tramo.cobro_id && cambiados.length > 0) {
+        throw codedError(
+          'TRAMO_COBRADO',
+          `No se puede cambiar ${cambiados.join(', ')}: el tramo ya está facturado (cobro N° ${tramo.cobro_id}). Los remitos y las observaciones sí se pueden corregir.`,
+        )
+      }
     }
 
     // Guard de lugar operativo (mismo criterio que create) sobre el estado
