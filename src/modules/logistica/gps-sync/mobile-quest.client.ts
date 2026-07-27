@@ -138,15 +138,62 @@ function pickNumber(obj: Record<string, unknown>, keys: string[]): number | null
   }
   return null
 }
+// Mobile Quest serializa la hora LOCAL de Argentina pero le pega el sufijo "Z"
+// (que significa UTC): manda "2026-07-26T20:59:16.000Z" cuando en realidad son
+// las 20:59 de acá, o sea 23:59 UTC. Tomarlo literal dejaba TODAS las lecturas
+// 3 horas en el pasado.
+// Verificado el 2026-07-26: camiones reportando a 80 km/h con lecturas de "hace
+// 181 minutos" (imposible: estarían 240 km más adelante sin reportar), y en 3
+// días de historial ninguna lectura por debajo de 180 minutos de atraso — el
+// piso clavado exactamente en el offset de Argentina. No son los relojes de los
+// equipos: `FechaHoraDeLlegadaDeTrama`, que estampa el servidor del proveedor al
+// recibir la trama, viene corrida igual.
+const OFFSET_ARG_MS = 3 * 60 * 60 * 1000   // UTC−3, sin horario de verano desde 2009
+
+// Componentes de "pared" de la fecha, con o sin sufijo de zona.
+const RE_FECHA_PARED = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:[.,](\d{1,3}))?/
+// Offset numérico explícito (+HH:MM / −HH:MM). El "Z" NO cuenta: es justamente
+// el que el proveedor pone mal.
+const RE_OFFSET_EXPLICITO = /[+-]\d{2}:?\d{2}$/
+
+// Convierte la fecha del proveedor al instante UTC real.
+// El corrimiento se aplica sólo si el resultado NO queda en el futuro: así, el
+// día que Mobile Quest arregle su API y mande UTC de verdad, esto se
+// autocorrige en vez de empezar a fechar las lecturas 3 horas adelante.
+function fechaProveedorAIso(v: string): string | null {
+  const s = v.trim()
+  // Un offset explícito no es ambiguo: se respeta tal cual.
+  if (RE_OFFSET_EXPLICITO.test(s)) {
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  const m = RE_FECHA_PARED.exec(s)
+  if (!m) {
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  const [, y, mes, dia, hh, mm, ss, ms] = m
+  const literalMs = Date.UTC(
+    Number(y), Number(mes) - 1, Number(dia),
+    Number(hh), Number(mm), Number(ss ?? 0), Number((ms ?? '0').padEnd(3, '0')),
+  )
+  if (Number.isNaN(literalMs)) return null
+
+  const corregidoMs = literalMs + OFFSET_ARG_MS
+  // 5 min de tolerancia para absorber desfasajes de reloj entre servidores.
+  const enElFuturo = corregidoMs > Date.now() + 5 * 60 * 1000
+  return new Date(enElFuturo ? literalMs : corregidoMs).toISOString()
+}
+
 function pickDate(obj: Record<string, unknown>, keys: string[]): string | null {
   for (const k of keys) {
     const v = obj[k]
     if (typeof v === 'string' && v.trim() !== '') {
-      const d = new Date(v)
-      if (!isNaN(d.getTime())) return d.toISOString()
+      const iso = fechaProveedorAIso(v)
+      if (iso) return iso
     }
     if (typeof v === 'number') {
-      // timestamps en segundos vs milisegundos
+      // Epoch: no lleva ambigüedad de zona, se toma tal cual.
       const ms = v < 1e12 ? v * 1000 : v
       const d = new Date(ms)
       if (!isNaN(d.getTime())) return d.toISOString()
