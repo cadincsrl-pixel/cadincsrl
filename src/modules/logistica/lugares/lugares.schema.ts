@@ -42,6 +42,10 @@ export const CreateRutaSchema = z.object({
 export const UpdateRutaSchema = z.object({
   km_ida_vuelta: z.number().min(1).optional(),
   obs:           z.string().optional(),
+  // Marcar una ruta sugerida por Google como revisada contra el mapa. El
+  // service además la sella sola cuando se edita el km a mano: si el usuario
+  // acaba de mirar el número y escribirlo, ya la verificó.
+  verificada:    z.boolean().optional(),
 })
 
 // Lugar operativo (no facturable): se gestiona como UN concepto y por detrás

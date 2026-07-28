@@ -18,3 +18,11 @@ export const SugerirKmSchema = z.object({
 })
 
 export type SugerirKmDto = z.infer<typeof SugerirKmSchema>
+
+// Completar los pares de la matriz que todavía no tienen ruta. Con
+// `preview: true` no toca Google ni escribe: sólo informa qué se haría.
+export const CompletarMatrizSchema = z.object({
+  preview: z.boolean().optional().default(false),
+})
+
+export type CompletarMatrizDto = z.infer<typeof CompletarMatrizSchema>

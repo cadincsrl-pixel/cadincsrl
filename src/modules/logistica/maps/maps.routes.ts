@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { mapsService, MapsError } from './maps.service.js'
-import { GeocodeSchema, ResolverMapsUrlSchema, SugerirKmSchema } from './maps.schema.js'
+import { GeocodeSchema, ResolverMapsUrlSchema, SugerirKmSchema, CompletarMatrizSchema } from './maps.schema.js'
 
 const maps = new Hono()
 
@@ -45,6 +45,17 @@ maps.post('/sugerir-km', zValidator('json', SugerirKmSchema), async (c) => {
   try {
     const { cantera_id, deposito_id } = c.req.valid('json')
     const data = await mapsService.sugerirKm(c.get('accessToken'), cantera_id, deposito_id)
+    return c.json(data)
+  } catch (err) { return handle(err, c) }
+})
+
+// POST /api/logistica/maps/completar-matriz — llena los pares sin ruta con el
+// km de Google, marcados como NO verificados. Con { preview: true } sólo
+// informa cuántos son, sin llamar a Google ni escribir.
+maps.post('/completar-matriz', zValidator('json', CompletarMatrizSchema), async (c) => {
+  try {
+    const { preview } = c.req.valid('json')
+    const data = await mapsService.completarMatriz(c.get('accessToken'), c.get('user').id, preview)
     return c.json(data)
   } catch (err) { return handle(err, c) }
 })

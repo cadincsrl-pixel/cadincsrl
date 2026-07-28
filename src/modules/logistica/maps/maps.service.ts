@@ -93,6 +93,104 @@ export const mapsService = {
     }
   },
 
+  /**
+   * Completa los pares cantera×depósito que todavía no tienen ruta, con el km
+   * de Google. Las crea `verificada: false` — el km se usa para pagarle al
+   * chofer, así que un número que nadie miró no puede nacer marcado como bueno.
+   *
+   * `preview` NO llama a Google ni escribe: sirve para decirle al usuario
+   * cuántas se van a calcular antes de gastar la cuota.
+   *
+   * Un fallo puntual de Google no aborta el resto: se reporta par por par.
+   */
+  async completarMatriz(token: string, userId: string, preview: boolean) {
+    const sb = createSupabaseClient(token)
+    const [{ data: canteras }, { data: depositos }, { data: rutas }] = await Promise.all([
+      sb.from('canteras').select('id, nombre, lat, lng'),
+      sb.from('depositos').select('id, nombre, lat, lng'),
+      sb.from('rutas').select('cantera_id, deposito_id'),
+    ])
+    if (!canteras || !depositos || !rutas) throw new MapsError(500, 'DB_ERROR')
+
+    const yaHay = new Set(rutas.map(r => `${r.cantera_id}-${r.deposito_id}`))
+    type Par = { cantera_id: number; deposito_id: number; nombre: string; c: typeof canteras[0]; d: typeof depositos[0] }
+    const faltantes: Par[] = []
+    const sinCoords: string[] = []
+
+    for (const c of canteras) {
+      for (const d of depositos) {
+        if (yaHay.has(`${c.id}-${d.id}`)) continue
+        const nombre = `${c.nombre} → ${d.nombre}`
+        if (c.lat == null || c.lng == null || d.lat == null || d.lng == null) {
+          sinCoords.push(nombre)
+          continue
+        }
+        faltantes.push({ cantera_id: c.id, deposito_id: d.id, nombre, c, d })
+      }
+    }
+
+    if (preview) {
+      return { preview: true, a_calcular: faltantes.length, sin_coordenadas: sinCoords, creadas: 0, fallidas: [] }
+    }
+
+    // De a 5 en paralelo: 263 requests simultáneos a Google es un buen modo de
+    // comerse un rate limit y quedarse sin ninguna. `distanciaCacheada` ya
+    // memoiza, así que reintentar sale gratis.
+    const LOTE = 5
+    const hoy = new Date().toISOString().slice(0, 10)
+    const nuevas: Array<Record<string, unknown>> = []
+    const fallidas: Array<{ par: string; motivo: string }> = []
+
+    for (let i = 0; i < faltantes.length; i += LOTE) {
+      const lote = faltantes.slice(i, i + LOTE)
+      const res = await Promise.allSettled(lote.map(p =>
+        distanciaCacheada(Number(p.c.lat), Number(p.c.lng), Number(p.d.lat), Number(p.d.lng)),
+      ))
+      res.forEach((r, j) => {
+        const p = lote[j]!
+        if (r.status === 'rejected') {
+          const e = r.reason
+          // Sin API key no tiene sentido seguir intentando los 260 restantes.
+          if (e instanceof GoogleMapsError && e.code === 'GOOGLE_MAPS_API_KEY_MISSING') {
+            throw new MapsError(503, 'GOOGLE_API_KEY_MISSING')
+          }
+          fallidas.push({ par: p.nombre, motivo: e instanceof GoogleMapsError ? e.code : 'ERROR_DESCONOCIDO' })
+          return
+        }
+        const km = Math.round(r.value.distancia_m / 1000)
+        // Google devolviendo 0 km para dos lugares distintos es basura, no un dato.
+        if (!Number.isFinite(km) || km <= 0) {
+          fallidas.push({ par: p.nombre, motivo: 'KM_INVALIDO' })
+          return
+        }
+        nuevas.push({
+          cantera_id:    p.cantera_id,
+          deposito_id:   p.deposito_id,
+          km_ida_vuelta: km,
+          obs:           `Sugerido por Google el ${hoy} — sin verificar`,
+          verificada:    false,
+          origen_km:     'google',
+          created_by:    userId,
+          updated_by:    userId,
+        })
+      })
+    }
+
+    let creadas = 0
+    if (nuevas.length > 0) {
+      // ignoreDuplicates: si alguien cargó el par a mano mientras corría esto,
+      // gana lo suyo. Nunca pisamos una ruta existente.
+      const { data, error } = await sb
+        .from('rutas')
+        .upsert(nuevas, { onConflict: 'cantera_id,deposito_id', ignoreDuplicates: true })
+        .select('id')
+      if (error) throw new MapsError(500, 'DB_ERROR', error.message)
+      creadas = data?.length ?? 0
+    }
+
+    return { preview: false, a_calcular: faltantes.length, creadas, fallidas, sin_coordenadas: sinCoords }
+  },
+
   // Saca lat/lng del pin de un link de Google Maps (resuelve shortlinks).
   // 400 si la URL no es de Maps; 422 si no se pudieron extraer coords.
   async resolverMapsUrl(url: string) {

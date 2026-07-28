@@ -230,9 +230,19 @@ export const lugaresService = {
 
   async updateRuta(id: number, dto: UpdateRutaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    // Editar el km a mano ES verificarlo: el usuario miró el trayecto y escribió
+    // el número. Pedirle un segundo click para confirmarlo sólo lograría que
+    // quede sin confirmar. Un `verificada` explícito en el dto manda igual.
+    const verificada = dto.verificada ?? (dto.km_ida_vuelta !== undefined ? true : undefined)
+    const sello = verificada === true
+      ? { verificada: true, verificada_en: new Date().toISOString(), verificada_por: userId }
+      : verificada === false
+        ? { verificada: false, verificada_en: null, verificada_por: null }
+        : {}
+
     const { data, error } = await supabase
       .from('rutas')
-      .update({ ...dto, updated_by: userId })
+      .update({ ...dto, ...sello, updated_by: userId })
       .eq('id', id)
       .select()
       .single()
