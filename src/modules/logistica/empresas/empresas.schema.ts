@@ -36,6 +36,9 @@ export const CreateTarifaEmpresaSchema = z.object({
   valor_ton:     z.number().min(0),
   vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   obs:           z.string().optional().default(''),
+  // Un alta con vigencia retroactiva repriecia lo ya cobrado: se frena con 409
+  // salvo que el usuario confirme. No se persiste.
+  confirmar_pisar_historico: z.boolean().optional(),
 })
 
 // Update solo permite cambiar valor/fecha/obs. La identidad
@@ -45,9 +48,21 @@ export const UpdateTarifaEmpresaSchema = z.object({
   valor_ton:     z.number().min(0).optional(),
   vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   obs:           z.string().optional(),
+  // Acuse de recibo del aviso "con esta tarifa ya se emitieron facturas". No es
+  // una columna: el service lo saca del patch antes de escribir. Ver
+  // TARIFA_YA_FACTURADA en empresas.service.ts.
+  confirmar_pisar_historico: z.boolean().optional(),
+})
+
+// Body (opcional) del DELETE de una tarifa. Sólo lleva la confirmación: borrar
+// una tarifa ya facturada deja esas facturas en $0/ton, así que el backend
+// frena con TARIFA_YA_FACTURADA salvo que venga el acuse de recibo.
+export const DeleteTarifaEmpresaSchema = z.object({
+  confirmar_pisar_historico: z.boolean().optional(),
 })
 
 export type CreateEmpresaDto       = z.infer<typeof CreateEmpresaSchema>
 export type UpdateEmpresaDto       = z.infer<typeof UpdateEmpresaSchema>
 export type CreateTarifaEmpresaDto = z.infer<typeof CreateTarifaEmpresaSchema>
 export type UpdateTarifaEmpresaDto = z.infer<typeof UpdateTarifaEmpresaSchema>
+export type DeleteTarifaEmpresaDto = z.infer<typeof DeleteTarifaEmpresaSchema>

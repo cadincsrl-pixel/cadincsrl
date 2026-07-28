@@ -84,7 +84,12 @@ export async function auditMiddleware(c: Context, next: Next) {
   // El parse JSON lo diferimos a después del next() — así no pagamos
   // JSON.parse en requests que terminan en 4xx (validación zod, etc.).
   let rawBodyClone: Request | null = null
-  if (method === 'POST' || method === 'PATCH' || method === 'PUT') {
+  // DELETE incluido: algunos borrados destructivos llevan body con el motivo o
+  // con un flag de override (ej. `confirmar_pisar_historico` al borrar una
+  // tarifa ya cobrada). Sin esto, forzar ese borrado quedaba en el log
+  // indistinguible de borrar una tarifa que no se usó nunca. Los DELETE sin
+  // body siguen logueando detalle vacío: el parse ya está en try/catch.
+  if (method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE') {
     try { rawBodyClone = c.req.raw.clone() } catch { /* noop */ }
   }
 

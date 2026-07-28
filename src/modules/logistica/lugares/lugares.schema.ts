@@ -23,6 +23,10 @@ export const UpdateLugarSchema = z.object({
   lat:       z.number().min(-90).max(90).nullable().optional(),
   lng:       z.number().min(-180).max(180).nullable().optional(),
   operativo: z.boolean().optional(),
+  // Acuse de recibo del aviso "este lugar ya tiene viajes cargados". No es una
+  // columna: el service lo saca del patch antes de escribir. Ver
+  // LUGAR_CON_HISTORIAL en lugares.service.ts.
+  confirmar_renombre: z.boolean().optional(),
 })
 
 export const CreateRutaSchema = z.object({
@@ -58,6 +62,10 @@ export const UpdateLugarOperativoSchema = z.object({
   lat:       z.number().min(-90).max(90).nullable().optional(),
   lng:       z.number().min(-180).max(180).nullable().optional(),
   obs:       z.string().optional().nullable(),
+  // Acuse de recibo del aviso "este lugar ya tiene viajes cargados". Acá pesa
+  // doble: el renombre toca la cantera Y el depósito del par. No es una
+  // columna. Ver LUGAR_CON_HISTORIAL en lugares.service.ts.
+  confirmar_renombre: z.boolean().optional(),
 })
 
 export type CreateLugarDto = z.infer<typeof CreateLugarSchema>

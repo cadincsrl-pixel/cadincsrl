@@ -1,4 +1,7 @@
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../../lib/supabase.js'
+// Criterio compartido de "¿este campo cambió de verdad?" — lo usan también los
+// guards de lugares y tarifas (ver src/lib/cambios.ts).
+import { valorCambio } from '../../../lib/cambios.js'
 import type { CreateTramoDto, UpdateTramoDto, RegistrarDescargaDto } from './tramos.schema.js'
 
 // Helper para errores con código que el handler HTTP mapea a status
@@ -26,20 +29,6 @@ const CAMPOS_SOLO_COBRO = new Set(['toneladas_carga', 'toneladas_descarga', 'emp
 
 // El resto (chofer, camión, tipo, cantera, depósito, fechas, estado) cambia km
 // o días: pega en la liquidación Y en el cobro.
-
-// ¿El valor nuevo es realmente distinto del guardado? Los formularios mandan el
-// tramo COMPLETO aunque se haya tocado un solo campo, así que sin esta
-// comparación el guard bloquearía por campos que llegaron iguales.
-// Ojo: Postgres devuelve los numeric como string ("30.04") y remito_* es NOT
-// NULL con default '', así que null y '' son el mismo "sin dato".
-function valorCambio(nuevo: unknown, guardado: unknown): boolean {
-  if (nuevo === guardado) return false
-  if (nuevo == null && guardado == null) return false
-  const nNuevo = nuevo == null || nuevo === '' ? NaN : Number(nuevo)
-  const nGuard = guardado == null || guardado === '' ? NaN : Number(guardado)
-  if (!Number.isNaN(nNuevo) && !Number.isNaN(nGuard)) return nNuevo !== nGuard
-  return String(nuevo ?? '') !== String(guardado ?? '')
-}
 
 // Un tramo `cargado` representa un viaje facturable (cantera origen → depósito
 // destino). Los lugares operativos (CHIVILCOY: mantenimiento/relevos/parking) no
