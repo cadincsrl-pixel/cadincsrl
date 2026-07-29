@@ -13,6 +13,9 @@ export const CreateChoferSchema = z.object({
   basico_dia:        z.number().optional().default(0),
   precio_km_cargado: z.number().optional().default(0),
   precio_km_vacio:   z.number().optional().default(0),
+  // false = fletero externo, no está en la nómina de CADINC. Excluido de
+  // Gastos > Reportes.
+  es_propio:         z.boolean().optional().default(true),
   obs:               z.string().optional().default(''),
 })
 
@@ -32,6 +35,7 @@ export const UpdateChoferSchema = z.object({
   basico_dia:        z.number().optional(),
   precio_km_cargado: z.number().optional(),
   precio_km_vacio:   z.number().optional(),
+  es_propio:         z.boolean().optional(),
   obs:               z.string().optional(),
 })
 

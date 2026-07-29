@@ -10,6 +10,9 @@ export const CreateCamionSchema = z.object({
   categoria:   z.enum(['tractor', 'chasis']).default('tractor'),
   obs:         z.string().optional().default(''),
   km_actuales: z.number().min(0).optional(),
+  // false = camión de un fletero: se le factura el viaje pero el equipo no es
+  // de CADINC y los gastos los pone él. Excluido de Gastos > Reportes.
+  es_propio:   z.boolean().optional().default(true),
 })
 
 // No usar .partial() sobre el create: arrastra los .default() y zod
@@ -22,6 +25,7 @@ export const UpdateCamionSchema = z.object({
   categoria:   z.enum(['tractor', 'chasis']).optional(),
   obs:         z.string().optional(),
   km_actuales: z.number().min(0).optional(),
+  es_propio:   z.boolean().optional(),
 })
 
 export type CreateCamionDto = z.infer<typeof CreateCamionSchema>

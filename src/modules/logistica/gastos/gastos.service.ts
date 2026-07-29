@@ -7,6 +7,35 @@ import type {
 
 const BUCKET = 'gastos-logistica'
 
+// ── Flota propia vs fleteros ────────────────────────────────────────────────
+// CADINC le lleva la facturación a fleteros que no son de la empresa: cobra el
+// flete al cliente y le paga al fletero, pero el camión no es suyo y el gasoil,
+// las cubiertas y el service los pone él. Mezclarlos en los reportes promedia
+// dos negocios distintos y da un margen que no describe ninguno de los dos.
+// Decisión del dueño el 2026-07-29: fuera. Marca en `camiones.es_propio` y
+// `choferes.es_propio` (migración 20260729f).
+type IdsTerceros = { camiones: Set<number>; choferes: Set<number> }
+
+async function idsDeTerceros(sb: ReturnType<typeof createSupabaseClient>): Promise<IdsTerceros> {
+  const [cam, cho] = await Promise.all([
+    sb.from('camiones').select('id').eq('es_propio', false),
+    sb.from('choferes').select('id').eq('es_propio', false),
+  ])
+  return {
+    camiones: new Set(((cam.data ?? []) as { id: number }[]).map(c => c.id)),
+    choferes: new Set(((cho.data ?? []) as { id: number }[]).map(c => c.id)),
+  }
+}
+
+// Un gasto es de tercero si CUALQUIERA de las dos partes lo es. Con las dos
+// marcas el filtro no depende de que la otra esté bien cargada: un fletero que
+// cambia de camión, o un chofer propio que cubre un viaje de un fletero, caen
+// bien igual.
+function esDeTerceros(g: { camion_id?: number | null; chofer_id?: number | null }, ids: IdsTerceros): boolean {
+  return (g.camion_id != null && ids.camiones.has(g.camion_id))
+      || (g.chofer_id != null && ids.choferes.has(g.chofer_id))
+}
+
 // ── HttpError con status + code estables para el mapping del route ──
 export class HttpError extends Error {
   constructor(public status: number, public code: string, public detail?: unknown) {
@@ -680,20 +709,22 @@ export const gastosService = {
   },
 
   // ── Reportes agregados ────────────────────────────────────────
-  // Todos operan sobre gastos no eliminados del rango [desde, hasta].
+  // Todos operan sobre gastos no eliminados del rango [desde, hasta],
+  // EXCLUYENDO los de fleteros (ver `idsDeTerceros`).
   // Volumen PYME: agregación en JS es viable. Si crece, migrar a RPC.
 
   async reporteResumen(desde: string, hasta: string, token: string) {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('gastos_logistica')
-      .select('monto, estado, pagado_por, metodo_pago, liquidacion_id')
+      .select('monto, estado, pagado_por, metodo_pago, liquidacion_id, camion_id, chofer_id')
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .is('deleted_at', null)
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
-    const rows = data ?? []
+    const terceros = await idsDeTerceros(sb)
+    const rows = (data ?? []).filter(g => !esDeTerceros(g, terceros))
     const num  = (v: any) => Number(v ?? 0)
     // "Gastos del período" = erogación real: solo aprobado + pagado. Rechazado
     // nunca cuenta; pendiente se reporta aparte (pendientes_aprobacion) para no
@@ -738,7 +769,7 @@ export const gastosService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('gastos_logistica')
-      .select('monto, camion_id, categoria:gastos_categorias(id,codigo,nombre), camion:camiones(id,patente)')
+      .select('monto, camion_id, chofer_id, categoria:gastos_categorias(id,codigo,nombre), camion:camiones(id,patente)')
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .is('deleted_at', null)
@@ -746,8 +777,9 @@ export const gastosService = {
       .not('camion_id', 'is', null)
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
+    const terceros = await idsDeTerceros(sb)
     const map = new Map<number, { camion_id: number; patente: string; total: number; count: number; por_categoria: Record<string, number> }>()
-    for (const g of (data ?? []) as any[]) {
+    for (const g of ((data ?? []) as any[]).filter(g => !esDeTerceros(g, terceros))) {
       const id = g.camion_id as number
       if (!map.has(id)) {
         map.set(id, { camion_id: id, patente: g.camion?.patente ?? `#${id}`, total: 0, count: 0, por_categoria: {} })
@@ -766,7 +798,7 @@ export const gastosService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('gastos_logistica')
-      .select('monto, chofer_id, pagado_por, liquidacion_id, estado, categoria:gastos_categorias(id,codigo,nombre), chofer:choferes(id,nombre)')
+      .select('monto, chofer_id, camion_id, pagado_por, liquidacion_id, estado, categoria:gastos_categorias(id,codigo,nombre), chofer:choferes(id,nombre)')
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .is('deleted_at', null)
@@ -774,8 +806,9 @@ export const gastosService = {
       .not('chofer_id', 'is', null)
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
+    const terceros = await idsDeTerceros(sb)
     const map = new Map<number, { chofer_id: number; nombre: string; total: number; count: number; reintegros_pendientes: number; por_categoria: Record<string, number> }>()
-    for (const g of (data ?? []) as any[]) {
+    for (const g of ((data ?? []) as any[]).filter(g => !esDeTerceros(g, terceros))) {
       const id = g.chofer_id as number
       if (!map.has(id)) {
         map.set(id, { chofer_id: id, nombre: g.chofer?.nombre ?? `#${id}`, total: 0, count: 0, reintegros_pendientes: 0, por_categoria: {} })
@@ -797,14 +830,15 @@ export const gastosService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('gastos_logistica')
-      .select('monto, categoria_id, categoria:gastos_categorias(id,codigo,nombre,orden)')
+      .select('monto, categoria_id, camion_id, chofer_id, categoria:gastos_categorias(id,codigo,nombre,orden)')
       .gte('fecha', desde)
       .lte('fecha', hasta)
       .is('deleted_at', null)
       .in('estado', ['aprobado', 'pagado'])
     if (error) throw new HttpError(500, 'DB_ERROR', error.message)
 
-    const rows = (data ?? []) as any[]
+    const terceros = await idsDeTerceros(sb)
+    const rows = ((data ?? []) as any[]).filter(g => !esDeTerceros(g, terceros))
     const totalGeneral = rows.reduce((s, g) => s + Number(g.monto ?? 0), 0)
 
     const map = new Map<number, { categoria_id: number; codigo: string; nombre: string; orden: number; total: number; count: number; pct: number }>()
