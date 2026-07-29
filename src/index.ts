@@ -31,6 +31,7 @@ import gastosLogRoutes     from './modules/logistica/gastos/gastos.routes.js'
 import rentabilidadRoutes  from './modules/logistica/rentabilidad/rentabilidad.routes.js'
 import logNotifRoutes      from './modules/logistica/notificaciones/notificaciones.routes.js'
 import camionServicesRoutes from './modules/logistica/camion-services/camion-services.routes.js'
+import camionCubiertasRoutes from './modules/logistica/camion-cubiertas/camion-cubiertas.routes.js'
 import gpsSyncRoutes        from './modules/logistica/gps-sync/gps-sync.routes.js'
 import gpsInternalRoutes    from './modules/logistica/gps-sync/gps-sync.internal.routes.js'
 import mapsRoutes           from './modules/logistica/maps/maps.routes.js'
@@ -104,6 +105,7 @@ app.route('/api/logistica/gastos',        gastosLogRoutes)
 app.route('/api/logistica/rentabilidad',  rentabilidadRoutes)
 app.route('/api/logistica/notificaciones', logNotifRoutes)
 app.route('/api/logistica/camion-services', camionServicesRoutes)
+app.route('/api/logistica/camion-cubiertas', camionCubiertasRoutes)
 app.route('/api/logistica/gps',             gpsSyncRoutes)
 app.route('/api/logistica/maps',            mapsRoutes)
 app.route('/api/internal',                  gpsInternalRoutes)
