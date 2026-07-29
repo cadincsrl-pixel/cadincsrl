@@ -87,7 +87,14 @@ export const UploadComprobanteAdelantoSchema = z.object({
 })
 
 export type CreateLiquidacionDto = z.infer<typeof CreateLiquidacionSchema>
+// Anular deja rastro en lugar de borrar, así que el motivo es obligatorio: sin
+// él el rastro no responde la única pregunta que importa dentro de un año.
+export const AnularLiquidacionSchema = z.object({
+  motivo: z.string().trim().min(5, 'Explicá por qué se anula'),
+})
+
 export type UpdateLiquidacionDto = z.infer<typeof UpdateLiquidacionSchema>
+export type AnularLiquidacionDto = z.infer<typeof AnularLiquidacionSchema>
 export type CreateAdelantoDto    = z.infer<typeof CreateAdelantoSchema>
 export type UpdateAdelantoDto    = z.infer<typeof UpdateAdelantoSchema>
 export type CreateEstadiaDto     = z.infer<typeof CreateEstadiaSchema>

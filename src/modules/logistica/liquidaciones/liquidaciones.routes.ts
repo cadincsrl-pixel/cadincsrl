@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { liquidacionesService, LiqHttpError } from './liquidaciones.service.js'
-import { CreateLiquidacionSchema, UpdateLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, CreateEstadiaSchema, UpdateEstadiaSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
+import { CreateLiquidacionSchema, UpdateLiquidacionSchema, AnularLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, CreateEstadiaSchema, UpdateEstadiaSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
 import { auditService } from '../../admin/audit.service.js'
 import adjuntosRoutes from './adjuntos.routes.js'
 
@@ -65,6 +65,34 @@ liquidaciones.patch('/:id/reabrir', async (c) => {
     throw err
   }
 })
+
+// Anular = sacar de circulación una liquidación cerrada y vacía dejando rastro.
+// Va detrás del permiso de ELIMINACIÓN y no del de actualización: el efecto es
+// equivalente a borrarla del sistema, y no es algo que deba poder hacer quien
+// sólo carga datos.
+liquidaciones.patch(
+  '/:id/anular',
+  requirePermiso('logistica', 'eliminacion'),
+  zValidator('json', AnularLiquidacionSchema),
+  async (c) => {
+    try {
+      const data = await liquidacionesService.anular(
+        Number(c.req.param('id')),
+        c.get('accessToken'),
+        c.get('user').id,
+        c.req.valid('json').motivo,
+      )
+      return c.json(data)
+    } catch (err) {
+      if (err instanceof LiqHttpError) {
+        const body: Record<string, unknown> = { error: err.code }
+        if (err.detail !== undefined) body.detail = err.detail
+        return c.json(body, err.status as any)
+      }
+      throw err
+    }
+  },
+)
 
 liquidaciones.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'))

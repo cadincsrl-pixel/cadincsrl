@@ -80,6 +80,10 @@ function mapLiqRpcError(error: PostgrestError): LiqHttpError {
     /LIQUIDACION_NO_EXISTE/.test(msg)     ? 'LIQUIDACION_NO_EXISTE' :
     /LIQUIDACION_YA_EN_BORRADOR/.test(msg) ? 'LIQUIDACION_YA_EN_BORRADOR' :
     /LIQUIDACION_VACIA/.test(msg)         ? 'LIQUIDACION_VACIA' :
+    /MOTIVO_REQUERIDO/.test(msg)          ? 'MOTIVO_REQUERIDO' :
+    /LIQUIDACION_NO_CERRADA/.test(msg)    ? 'LIQUIDACION_NO_CERRADA' :
+    /LIQUIDACION_CON_CONTENIDO/.test(msg) ? 'LIQUIDACION_CON_CONTENIDO' :
+    /LIQUIDACION_CON_SALDO_ARRASTRADO/.test(msg) ? 'LIQUIDACION_CON_SALDO_ARRASTRADO' :
     /SALDO_NEGATIVO_YA_LIQUIDADO/.test(msg) ? 'SALDO_NEGATIVO_YA_LIQUIDADO' :
     /SALDO_NEGATIVO_EN_BORRADOR/.test(msg)  ? 'SALDO_NEGATIVO_EN_BORRADOR' :
     error.code || 'UNKNOWN'
@@ -94,6 +98,13 @@ function mapLiqRpcError(error: PostgrestError): LiqHttpError {
     // los subtotales intactos, y los reportes la contaban como plata real
     // (pasó el 2026-07-26 con las liq 23 y 25). Migración 20260729d.
     case 'LIQUIDACION_VACIA':           return new LiqHttpError(409, code)
+    // ── Anulación (migración 20260729e) ──
+    case 'MOTIVO_REQUERIDO':            return new LiqHttpError(400, code)
+    case 'LIQUIDACION_NO_CERRADA':      return new LiqHttpError(409, code)
+    // Tiene tramos/adelantos/gastos adentro: anularla los dejaría marcados como
+    // liquidados contra una liquidación nula. El camino es reabrir.
+    case 'LIQUIDACION_CON_CONTENIDO':   return new LiqHttpError(409, code)
+    case 'LIQUIDACION_CON_SALDO_ARRASTRADO': return new LiqHttpError(409, code)
     // El adelanto que nació del saldo negativo de esta liquidación ya fue
     // descontado en otra posterior; el `detail` trae el id de esa otra para
     // que el frontend diga cuál hay que reabrir primero.
@@ -315,6 +326,22 @@ export const liquidacionesService = {
       .maybeSingle()
     if (selErr) throw new Error(selErr.message)
     return liq ?? data
+  },
+
+  // Anula una liquidación cerrada y VACÍA, dejando el rastro (quién, cuándo, por
+  // qué) en lugar de borrarla: el número ya salió impreso en recibos, así que si
+  // alguien pregunta por ella tiene que haber respuesta. Las que tienen
+  // contenido se reabren, no se anulan — la RPC lo rechaza.
+  async anular(id: number, _token: string, userId: string, motivo: string) {
+    // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    const { data, error } = await supabaseAdmin.rpc('anular_liquidacion', {
+      p_liquidacion_id: id,
+      p_user_id:        userId,
+      p_motivo:         motivo,
+    })
+    if (error) throw mapLiqRpcError(error)
+    // La RPC devuelve `returns liquidaciones`: PostgREST lo entrega como objeto.
+    return Array.isArray(data) ? data[0] : data
   },
 
   async delete(id: number, _token: string, userId?: string) {
