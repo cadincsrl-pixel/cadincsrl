@@ -104,8 +104,14 @@ tramos.post('/:id/mover', zValidator('json', MoverSchema), async (c) => {
 })
 
 tramos.delete('/:id', async (c) => {
-  const data = await tramosService.delete(Number(c.req.param('id')), c.get('accessToken'))
-  return c.json(data)
+  try {
+    const data = await tramosService.delete(Number(c.req.param('id')), c.get('accessToken'))
+    return c.json(data)
+  } catch (err: any) {
+    if (err.code === 'TRAMO_LIQUIDADO') return c.json({ error: err.code, message: err.message }, 409)
+    if (err.code === 'TRAMO_COBRADO')   return c.json({ error: err.code, message: err.message }, 409)
+    return c.json({ error: err.message }, 500)
+  }
 })
 
 export default tramos

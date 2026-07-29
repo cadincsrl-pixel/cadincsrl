@@ -24,6 +24,15 @@ function parseRoute(path: string, method: string): { modulo: string; entidad: st
   if (parts.includes('archivar')) return { modulo: 'obras', entidad: 'obra', accion: 'archivar' }
   if (parts.includes('desarchivar')) return { modulo: 'obras', entidad: 'obra', accion: 'desarchivar' }
 
+  // Ciclo de vida de una liquidación de chofer. Sin esto quedaban registradas
+  // como 'actualizar liquidación' y era imposible distinguir un cierre de una
+  // reapertura: reconstruir el incidente del 2026-07-26 (las cáscaras 23 y 25)
+  // requirió aparear timestamps al milisegundo.
+  if (parts.includes('liquidaciones')) {
+    if (parts.includes('cerrar'))  return { modulo: 'liquidaciones', entidad: 'liquidación', accion: 'cerrar' }
+    if (parts.includes('reabrir')) return { modulo: 'liquidaciones', entidad: 'liquidación', accion: 'reabrir' }
+  }
+
   // Mapeo de módulos
   const ENTIDADES: Record<string, string> = {
     solicitudes: 'solicitud',
@@ -117,10 +126,36 @@ export async function auditMiddleware(c: Context, next: Next) {
   // Extraer ID de entidad de la URL. Para rutas con verbo al final
   // (/obras/:cod/archivar, /solicitudes/:id/comprar, etc.) el ID es el
   // penúltimo segmento.
+  // Todo segmento final que sea una ACCIÓN o un sub-recurso sobre un id: el id
+  // es el penúltimo. Sin esto `entidad_id` guardaba la palabra del verbo
+  // ("cerrar") en lugar del número, y la auditoría no servía para rastrear qué
+  // registro se tocó — el agujero que hizo imposible reconstruir de un vistazo
+  // lo del 2026-07-26. La lista sale de barrer las rutas mutativas del repo:
+  //   grep -rhoE "\.(post|patch|put|delete)\('/[^']*:[a-zA-Z]+/[a-z-]+'" src/modules/
+  // Si agregás una ruta con verbo al final, sumala acá.
   const VERBOS_SUFIJO = new Set([
     'archivar', 'desarchivar',
     'comprar', 'despachar', 'enviar', 'rechazar', 'revertir',
     'mover',
+    // Liquidaciones de chofer
+    'cerrar', 'reabrir',
+    // Gastos de logística
+    'aprobar', 'marcar-pagado',
+    // Tramos
+    'descarga', 'revertir-descarga',
+    // Facturación
+    'cobrar',
+    // Solicitudes
+    'revertir-envio',
+    // Personal / usuarios
+    'baja', 'reset-password', 'semana',
+    // Sub-recursos colgados de un id
+    'seguro-poliza', 'remito', 'modelos',
+    // OJO: 'maquinas' y 'obras' NO van acá aunque existan como
+    // /maquinas/:id/... — también son colecciones (`POST /api/alquiler/maquinas`,
+    // `POST /api/alquiler/obras`), y ahí el penúltimo segmento es el módulo, no
+    // un id: guardaría entidad_id='alquiler'. Antes de sumar un nombre a esta
+    // lista, verificá que no exista también como ruta de colección.
   ])
   const urlParts = path.split('/')
   const last = urlParts[urlParts.length - 1] ?? ''

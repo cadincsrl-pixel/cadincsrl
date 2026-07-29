@@ -79,6 +79,7 @@ function mapLiqRpcError(error: PostgrestError): LiqHttpError {
     /SIN_PERMISO/.test(msg)               ? 'SIN_PERMISO' :
     /LIQUIDACION_NO_EXISTE/.test(msg)     ? 'LIQUIDACION_NO_EXISTE' :
     /LIQUIDACION_YA_EN_BORRADOR/.test(msg) ? 'LIQUIDACION_YA_EN_BORRADOR' :
+    /LIQUIDACION_VACIA/.test(msg)         ? 'LIQUIDACION_VACIA' :
     /SALDO_NEGATIVO_YA_LIQUIDADO/.test(msg) ? 'SALDO_NEGATIVO_YA_LIQUIDADO' :
     /SALDO_NEGATIVO_EN_BORRADOR/.test(msg)  ? 'SALDO_NEGATIVO_EN_BORRADOR' :
     error.code || 'UNKNOWN'
@@ -89,6 +90,10 @@ function mapLiqRpcError(error: PostgrestError): LiqHttpError {
     case 'SIN_PERMISO':                 return new LiqHttpError(403, code, error.details ?? undefined)
     case 'LIQUIDACION_NO_EXISTE':       return new LiqHttpError(404, code)
     case 'LIQUIDACION_YA_EN_BORRADOR':  return new LiqHttpError(409, code)
+    // Cerrar un borrador sin NADA vinculado dejaba una cáscara 'cerrada' con
+    // los subtotales intactos, y los reportes la contaban como plata real
+    // (pasó el 2026-07-26 con las liq 23 y 25). Migración 20260729d.
+    case 'LIQUIDACION_VACIA':           return new LiqHttpError(409, code)
     // El adelanto que nació del saldo negativo de esta liquidación ya fue
     // descontado en otra posterior; el `detail` trae el id de esa otra para
     // que el frontend diga cuál hay que reabrir primero.

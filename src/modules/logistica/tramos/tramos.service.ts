@@ -260,6 +260,34 @@ export const tramosService = {
 
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
+
+    // Un tramo liquidado NO se borra. Era el único camino mutativo que quedaba
+    // sin este candado (editar, registrar descarga y revertir ya lo tenían), y
+    // es la vía viva más probable de fabricar una liquidación huérfana: borrar
+    // el último tramo de una liquidación cerrada la deja como cáscara, con los
+    // subtotales intactos y nada adentro, y los reportes la siguen contando
+    // como plata real. Pasó el 2026-07-26 con las liq 23 y 25.
+    // El camino correcto es reabrir la liquidación (que desliga los tramos) y
+    // recién ahí borrar.
+    const { data: tramo, error: e0 } = await supabase
+      .from('tramos')
+      .select('liquidacion_id, cobro_id')
+      .eq('id', id)
+      .single()
+    if (e0) throw new Error(e0.message)
+    if (tramo.liquidacion_id) {
+      throw codedError(
+        'TRAMO_LIQUIDADO',
+        `No se puede borrar: el tramo está liquidado (liquidación N° ${tramo.liquidacion_id}). Reabrí esa liquidación primero.`,
+      )
+    }
+    if (tramo.cobro_id) {
+      throw codedError(
+        'TRAMO_COBRADO',
+        `No se puede borrar: el tramo está en un cobro facturado (N° ${tramo.cobro_id}). Deshacé el cobro primero.`,
+      )
+    }
+
     // liquidacion_tramos era del modelo paralelo viejo — tabla eliminada
     // en la migración 20260424_drop_modelo_paralelo. El CASCADE de la FK
     // tramos.liquidacion_id se maneja arriba (los tramos a liquidar se
