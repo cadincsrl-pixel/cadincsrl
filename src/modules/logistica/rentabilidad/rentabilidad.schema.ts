@@ -29,8 +29,10 @@ export const ParametrosSchema = z.object({
 
 const baseViaje = z.object({
   nombre:               z.string().min(1).max(120),
-  km_ida:               z.number().min(0),
-  km_vuelta:            z.number().min(0),
+  // Un solo campo: ida y vuelta eran el mismo número y el cálculo siempre usó
+  // la suma. Las columnas km_ida/km_vuelta quedan en la tabla sin uso hasta
+  // que se dropeen (migración 20260729_rentabilidad_km_total).
+  km_total:             z.number().min(0),
   toneladas:            z.number().min(0),
   dias_calendario:      z.number().min(0),
   viajes_por_mes:       z.number().min(0),
