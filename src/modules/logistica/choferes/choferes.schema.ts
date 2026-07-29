@@ -32,12 +32,25 @@ export const UpdateChoferSchema = z.object({
   estado:    z.enum(['activo', 'descanso', 'inactivo']).optional(),
   camion_id: z.number().nullable().optional(),
   batea_id:  z.number().nullable().optional(),
-  basico_dia:        z.number().optional(),
-  precio_km_cargado: z.number().optional(),
-  precio_km_vacio:   z.number().optional(),
+  // basico_dia / precio_km_cargado / precio_km_vacio NO se editan por acá: son
+  // cache de la última versión del historial. Cambiarlos in-place re-valuaba
+  // retroactivamente todo el trabajo sin liquidar (mismo bug que tarja el
+  // 2026-06-26). Van por PATCH /choferes/:id/tarifas, que pide "vigente desde"
+  // y guarda una versión. Migración 20260729g.
   es_propio:         z.boolean().optional(),
   obs:               z.string().optional(),
 })
+
+// Alta de una versión de tarifas vigente desde una fecha.
+export const SetTarifasChoferSchema = z.object({
+  desde:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida'),
+  basico_dia:        z.number().min(0).optional(),
+  precio_km_cargado: z.number().min(0).optional(),
+  precio_km_vacio:   z.number().min(0).optional(),
+}).refine(
+  d => d.basico_dia != null || d.precio_km_cargado != null || d.precio_km_vacio != null,
+  { message: 'Mandá al menos una tarifa' },
+)
 
 // Traspaso de unidades entre choferes: el origen entrega su camión y/o batea
 // al destino en una sola operación. Con `intercambio`, el origen recibe a su
@@ -55,3 +68,4 @@ export const TraspasoChoferSchema = z.object({
 export type CreateChoferDto   = z.infer<typeof CreateChoferSchema>
 export type UpdateChoferDto   = z.infer<typeof UpdateChoferSchema>
 export type TraspasoChoferDto = z.infer<typeof TraspasoChoferSchema>
+export type SetTarifasChoferDto = z.infer<typeof SetTarifasChoferSchema>

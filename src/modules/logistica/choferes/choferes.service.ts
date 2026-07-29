@@ -1,12 +1,44 @@
-import { createSupabaseClient } from '../../../lib/supabase.js'
+import { createSupabaseClient, supabase as supabaseAdmin } from '../../../lib/supabase.js'
 import type { CreateChoferDto, UpdateChoferDto, TraspasoChoferDto } from './choferes.schema.js'
 
 export const choferesService = {
+  // Guarda una VERSIÓN de las tarifas del chofer vigente desde una fecha, en
+  // lugar de pisar las columnas. Antes era un UPDATE in-place y el "parcial" de
+  // Gastos > Reportes (trabajo hecho y sin liquidar) se valúa con la tarifa
+  // actual: el día de un aumento se re-valuaba retroactivamente todo lo
+  // pendiente. Es el mismo bug que tarja el 2026-06-26.
+  // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+  async setTarifas(
+    id: number,
+    dto: { desde: string; basico_dia?: number; precio_km_cargado?: number; precio_km_vacio?: number },
+    _token: string,
+    userId: string,
+  ) {
+    const { data, error } = await supabaseAdmin.rpc('set_tarifas_chofer', {
+      p_chofer_id:  id,
+      p_desde:      dto.desde,
+      p_basico_dia: dto.basico_dia        ?? null,
+      p_km_cargado: dto.precio_km_cargado ?? null,
+      p_km_vacio:   dto.precio_km_vacio   ?? null,
+      p_user_id:    userId,
+    })
+    if (error) {
+      const msg = error.message || ''
+      if (/CHOFER_NO_EXISTE/.test(msg)) throw Object.assign(new Error('CHOFER_NO_EXISTE'), { status: 404, code: 'CHOFER_NO_EXISTE' })
+      if (/DESDE_REQUERIDO/.test(msg))  throw Object.assign(new Error('DESDE_REQUERIDO'),  { status: 400, code: 'DESDE_REQUERIDO' })
+      throw new Error(msg)
+    }
+    return Array.isArray(data) ? data[0] : data
+  },
+
   async getAll(token: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('choferes')
-      .select('*')
+      // Historial de tarifas embebido, igual que categorias con categoria_tarifas:
+      // basico_dia / precio_km_* en `choferes` son sólo cache de la última
+      // versión, así que cualquier cálculo con fecha necesita el historial.
+      .select('*, choferes_basico_hist ( id, valor_dia, desde ), choferes_km_hist ( id, valor_km, desde, tipo )')
       .order('nombre')
     if (error) throw new Error(error.message)
     return data

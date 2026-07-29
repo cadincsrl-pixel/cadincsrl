@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { choferesService } from './choferes.service.js'
-import { CreateChoferSchema, UpdateChoferSchema, TraspasoChoferSchema } from './choferes.schema.js'
+import { CreateChoferSchema, UpdateChoferSchema, TraspasoChoferSchema, SetTarifasChoferSchema } from './choferes.schema.js'
 import documentosRoutes from './documentos.routes.js'
 
 const choferes = new Hono()
@@ -34,6 +34,29 @@ choferes.patch('/:id', requirePermiso('logistica', 'actualizacion'), zValidator(
   const data = await choferesService.update(id, c.req.valid('json'), c.get('accessToken'), c.get('user').id)
   return c.json(data)
 })
+
+// Alta de una versión de tarifas. Separado del PATCH general a propósito: las
+// tarifas ya no se pisan in-place, se versionan con su fecha de vigencia.
+choferes.patch(
+  '/:id/tarifas',
+  requirePermiso('logistica', 'actualizacion'),
+  zValidator('json', SetTarifasChoferSchema),
+  async (c) => {
+    try {
+      const data = await choferesService.setTarifas(
+        Number(c.req.param('id')),
+        c.req.valid('json'),
+        c.get('accessToken'),
+        c.get('user').id,
+      )
+      return c.json(data)
+    } catch (err: any) {
+      if (err?.code === 'CHOFER_NO_EXISTE') return c.json({ error: err.code, message: 'El chofer no existe' }, 404)
+      if (err?.code === 'DESDE_REQUERIDO')  return c.json({ error: err.code, message: 'Falta la fecha de vigencia' }, 400)
+      return c.json({ error: err?.message ?? 'UNKNOWN' }, 500)
+    }
+  },
+)
 
 choferes.delete('/:id', requirePermiso('logistica', 'eliminacion'), async (c) => {
   const id = Number(c.req.param('id'))
