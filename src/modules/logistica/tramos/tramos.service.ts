@@ -58,16 +58,39 @@ export const tramosService = {
 
   async getAll(token: string) {
     const supabase = createSupabaseClient(token)
-    // Orden estable: fecha_operacion DESC; tiebreaker manual (orden_dia)
-    // y finalmente id DESC.
-    const { data, error } = await supabase
-      .from('tramos')
-      .select('*')
-      .order('fecha_operacion', { ascending: false, nullsFirst: false })
-      .order('orden_dia', { ascending: false, nullsFirst: false })
-      .order('id', { ascending: false })
-    if (error) throw new Error(error.message)
-    return data
+    // PostgREST capea cada RESPUESTA a 1000 filas y el recorte es silencioso
+    // (CLAUDE.md §5.7 del frontend). Como el orden es fecha DESC, al pasar las
+    // 1000 se caerían los tramos MÁS VIEJOS: un viaje viejo sin liquidar
+    // desaparecería de la lista de pendientes y ese chofer no cobraría nunca.
+    // Se pagina en el server y se devuelve todo junto — mismo shape de siempre.
+    // A ~81 tramos/mes esto compra años; si el payload molesta algún día, el
+    // paso siguiente es filtrar por pantalla (rango de fechas / sin_liquidar).
+    const PAGINA = 1000
+    const todos: Record<string, unknown>[] = []
+    for (let desde = 0; ; desde += PAGINA) {
+      // Orden estable: fecha_operacion DESC; tiebreaker manual (orden_dia)
+      // y finalmente id DESC — necesario para que las páginas no se solapen.
+      const { data, error } = await supabase
+        .from('tramos')
+        .select('*')
+        .order('fecha_operacion', { ascending: false, nullsFirst: false })
+        .order('orden_dia', { ascending: false, nullsFirst: false })
+        .order('id', { ascending: false })
+        .range(desde, desde + PAGINA - 1)
+      if (error) throw new Error(error.message)
+      todos.push(...(data ?? []))
+      if ((data ?? []).length < PAGINA) break
+    }
+    // Dedup por id: un INSERT entre página y página corre las filas hacia
+    // abajo (orden DESC) y puede repetir una en el borde. Duplicada rompería
+    // los agregados; perdida no puede quedar, el corrimiento va para abajo.
+    const vistos = new Set<number>()
+    return todos.filter(t => {
+      const id = Number(t.id)
+      if (vistos.has(id)) return false
+      vistos.add(id)
+      return true
+    })
   },
 
   async mover(id: number, dir: 'up' | 'down', _token: string, userId?: string) {
