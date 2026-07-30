@@ -10,7 +10,7 @@ export const choferesService = {
   // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
   async setTarifas(
     id: number,
-    dto: { desde: string; basico_dia?: number; precio_km_cargado?: number; precio_km_vacio?: number },
+    dto: { desde: string; basico_dia?: number; precio_km_cargado?: number; precio_km_vacio?: number; pct_facturacion?: number },
     _token: string,
     userId: string,
   ) {
@@ -21,6 +21,7 @@ export const choferesService = {
       p_km_cargado: dto.precio_km_cargado ?? null,
       p_km_vacio:   dto.precio_km_vacio   ?? null,
       p_user_id:    userId,
+      p_pct:        dto.pct_facturacion   ?? null,
     })
     if (error) {
       const msg = error.message || ''
@@ -38,7 +39,7 @@ export const choferesService = {
       // Historial de tarifas embebido, igual que categorias con categoria_tarifas:
       // basico_dia / precio_km_* en `choferes` son sólo cache de la última
       // versión, así que cualquier cálculo con fecha necesita el historial.
-      .select('*, choferes_basico_hist ( id, valor_dia, desde ), choferes_km_hist ( id, valor_km, desde, tipo )')
+      .select('*, choferes_basico_hist ( id, valor_dia, desde ), choferes_km_hist ( id, valor_km, desde, tipo ), choferes_pct_hist ( id, pct, desde )')
       .order('nombre')
     if (error) throw new Error(error.message)
     return data

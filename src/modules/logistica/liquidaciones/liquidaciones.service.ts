@@ -233,6 +233,10 @@ export const liquidacionesService = {
       p_tramo_chofer_ids:     dto.tramo_chofer_ids ?? [],
       p_estadia_ids:          dto.estadia_ids ?? [],
       p_total_estadias:       dto.total_estadias ?? 0,
+      p_modalidad:            dto.modalidad ?? 'km_jornal',
+      p_pct_aplicado:         dto.pct_aplicado ?? null,
+      p_base_neta:            dto.base_neta ?? null,
+      p_subtotal_pct:         dto.subtotal_pct ?? null,
     })
     if (error) {
       const err = new Error(error.message) as Error & { code?: string; detail?: string | null }

@@ -16,6 +16,9 @@ export const CreateChoferSchema = z.object({
   // false = fletero externo, no está en la nómina de CADINC. Excluido de
   // Gastos > Reportes.
   es_propio:         z.boolean().optional().default(true),
+  // km_jornal = básico + km (default). pct = % de la facturación neta de sus
+  // viajes + jornal opcional (basico_dia; 0 = solo %).
+  modalidad_pago:    z.enum(['km_jornal', 'pct']).optional().default('km_jornal'),
   obs:               z.string().optional().default(''),
 })
 
@@ -38,6 +41,7 @@ export const UpdateChoferSchema = z.object({
   // 2026-06-26). Van por PATCH /choferes/:id/tarifas, que pide "vigente desde"
   // y guarda una versión. Migración 20260729g.
   es_propio:         z.boolean().optional(),
+  modalidad_pago:    z.enum(['km_jornal', 'pct']).optional(),
   obs:               z.string().optional(),
 })
 
@@ -47,8 +51,10 @@ export const SetTarifasChoferSchema = z.object({
   basico_dia:        z.number().min(0).optional(),
   precio_km_cargado: z.number().min(0).optional(),
   precio_km_vacio:   z.number().min(0).optional(),
+  // % de facturación (modalidad pct), versionado igual que el resto.
+  pct_facturacion:   z.number().min(0).max(100).optional(),
 }).refine(
-  d => d.basico_dia != null || d.precio_km_cargado != null || d.precio_km_vacio != null,
+  d => d.basico_dia != null || d.precio_km_cargado != null || d.precio_km_vacio != null || d.pct_facturacion != null,
   { message: 'Mandá al menos una tarifa' },
 )
 

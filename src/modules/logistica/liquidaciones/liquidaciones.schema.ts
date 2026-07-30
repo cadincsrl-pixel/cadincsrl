@@ -26,6 +26,11 @@ export const CreateLiquidacionSchema = z.object({
   // Filas de tramo_choferes (relevos) a liquidar para este chofer. Fase 2 de relevos.
   tramo_chofer_ids:     z.array(z.number()).optional().default([]),
   estadia_ids:          z.array(z.number()).optional().default([]),
+  // Modalidad pct (migración 20260730b/c): los tres componentes viajan juntos.
+  modalidad:            z.enum(['km_jornal', 'pct']).optional().default('km_jornal'),
+  pct_aplicado:         z.number().min(0).max(100).optional().nullable(),
+  base_neta:            z.number().min(0).optional().nullable(),
+  subtotal_pct:         z.number().min(0).optional().nullable(),
 })
 
 export const UpdateLiquidacionSchema = z.object({
