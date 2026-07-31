@@ -4,10 +4,11 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "vitest run && tsc",
+    "build": "npm run test:guard && tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:guard": "node -e \"const fs=require('fs'),cp=require('child_process');if(fs.existsSync('node_modules/vitest')){const r=cp.spawnSync('npx',['vitest','run'],{stdio:'inherit',shell:process.platform==='win32'});process.exit(r.status??1)}else{console.warn('⚠ vitest no instalado: build SIN tests (este entorno omite devDependencies)')}\""
   },
   "keywords": [],
   "author": "",
