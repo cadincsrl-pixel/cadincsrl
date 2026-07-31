@@ -6,14 +6,33 @@ export const remitosEnvioService = {
 
   async getAll(token: string, obra_cod?: string) {
     const supabase = createSupabaseClient(token)
-    let q = supabase
-      .from('remitos_envio')
-      .select('*, items:remitos_envio_item(*)')
-      .order('fecha', { ascending: false })
-    if (obra_cod) q = q.eq('obra_cod', obra_cod)
-    const { data, error } = await q
-    if (error) throw new Error(error.message)
-    return data
+    // PostgREST capea cada respuesta a 1000 filas y el recorte es silencioso
+    // (mismo patrón que tramos, arreglado el 30/07). Hay ~460 remitos creciendo
+    // ~180/mes: sin esto, en unos meses el historial perdería los más viejos.
+    // Orden fecha DESC + id DESC estable para paginar sin solapes.
+    const PAGINA = 1000
+    const todos: Record<string, unknown>[] = []
+    for (let desde = 0; ; desde += PAGINA) {
+      let q = supabase
+        .from('remitos_envio')
+        .select('*, items:remitos_envio_item(*)')
+        .order('fecha', { ascending: false })
+        .order('id', { ascending: false })
+        .range(desde, desde + PAGINA - 1)
+      if (obra_cod) q = q.eq('obra_cod', obra_cod)
+      const { data, error } = await q
+      if (error) throw new Error(error.message)
+      todos.push(...(data ?? []))
+      if ((data ?? []).length < PAGINA) break
+    }
+    // Dedup por id: un INSERT entre páginas puede repetir una fila en el borde.
+    const vistos = new Set<number>()
+    return todos.filter(r => {
+      const id = Number(r.id)
+      if (vistos.has(id)) return false
+      vistos.add(id)
+      return true
+    })
   },
 
   async getById(id: number, token: string) {
