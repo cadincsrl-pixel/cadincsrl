@@ -21,13 +21,37 @@ const { rpcMock, fromMock } = vi.hoisted(() => ({
   fromMock: vi.fn(),
 }))
 
+// Respuesta neutra para tablas de "ruido" que el service toca de pasada y los
+// tests no quieren asertar. `solicitud_item_eventos` se agregó el 2026-05-30
+// (instrumentación de transiciones): sin este ruteo, su insert consumía las
+// respuestas encoladas con mockReturnValueOnce y corría TODA la cola — los 15
+// tests fallaban por drift, no porque el service estuviera mal.
+const TABLAS_NEUTRAS = new Set(['solicitud_item_eventos'])
+function neutro() {
+  const obj: any = {
+    select: () => obj, update: () => obj, insert: () => obj, delete: () => obj,
+    eq: () => obj, in: () => obj, order: () => obj,
+    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+    single:      () => Promise.resolve({ data: null, error: null }),
+    then: (f: any) => Promise.resolve({ data: null, error: null }).then(f),
+  }
+  return obj
+}
+function fromRouter(tabla: string) {
+  return TABLAS_NEUTRAS.has(tabla) ? neutro() : fromMock(tabla)
+}
+
 vi.mock('../../../src/lib/supabase.js', () => ({
   createSupabaseClient: (_token: string) => ({
     rpc: rpcMock,
-    from: fromMock,
+    from: fromRouter,
   }),
+  // El cliente admin (service role) TAMBIÉN expone rpc: desde la migración
+  // 20260527 las RPC SECURITY DEFINER se llaman con supabaseAdmin, y el mock
+  // viejo no lo tenía — 'supabase.rpc is not a function'.
   supabase: {
-    from: fromMock,
+    from: fromRouter,
+    rpc: rpcMock,
   },
 }))
 
@@ -55,6 +79,7 @@ function chainable(resolved: { data: any; error: any }) {
 beforeEach(() => {
   rpcMock.mockReset()
   fromMock.mockReset()
+  fromMock.mockImplementation(() => neutro())
   delete process.env.USE_RPC_RESOLVER
 })
 
@@ -119,6 +144,10 @@ describe('comprarItem dispatcher', () => {
 
     expect(rpcMock).toHaveBeenCalledTimes(1)
     expect(rpcMock).toHaveBeenCalledWith('resolver_item_compra', {
+      // p_cantidad_comprada y p_pagado_por se sumaron al contrato después de
+      // abril (comprar distinto de lo pedido + quién pagó al proveedor).
+      p_cantidad_comprada: null,
+      p_pagado_por:        'cadinc',
       p_item_id:      itemId,
       p_proveedor_id: 7,
       p_precio_unit:  100.5,

@@ -35,20 +35,40 @@ vi.mock('../../../src/middleware/permission.js', () => ({
 }))
 
 // ── Mock del módulo supabase ──────────────────────────────────
+// Neutro para tablas de ruido (eventos de ítem, 2026-05-30) — ver el
+// comentario gemelo en solicitudes.service.test.ts.
+function neutroRt() {
+  const obj: any = {
+    select: () => obj, update: () => obj, insert: () => obj, delete: () => obj,
+    eq: () => obj, in: () => obj, order: () => obj,
+    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+    single:      () => Promise.resolve({ data: null, error: null }),
+    then: (f: any) => Promise.resolve({ data: null, error: null }).then(f),
+  }
+  return obj
+}
+
 vi.mock('../../../src/lib/supabase.js', () => ({
   createSupabaseClient: (_t: string) => ({
     rpc: rpcMock,
-    from: fromSolicitudesMock,
+    from: (t: string) => t === 'solicitud_item_eventos' ? neutroRt() : fromSolicitudesMock(t),
   }),
-  // `supabase` (service-role): usado por tienePermisoExtra para leer profiles
+  // `supabase` (service-role): lee profiles (tienePermisoExtra) y desde la
+  // migración 20260527 también ejecuta las RPC SECURITY DEFINER.
   supabase: {
-    from: (_table: string) => ({
-      select: () => ({
-        eq: () => ({
-          single: () => Promise.resolve({ data: state.profile, error: null }),
+    rpc: rpcMock,
+    from: (table: string) => {
+      if (table === 'solicitud_item_eventos') return neutroRt()
+      if (table === 'profiles') return {
+        select: () => ({
+          eq: () => ({
+            single:      () => Promise.resolve({ data: state.profile, error: null }),
+            maybeSingle: () => Promise.resolve({ data: state.profile, error: null }),
+          }),
         }),
-      }),
-    }),
+      }
+      return fromSolicitudesMock(table)
+    },
   },
 }))
 
@@ -93,6 +113,10 @@ afterEach(() => {
 
 describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
   it('sin forzar_sin_stock llama al service y devuelve 200', async () => {
+    // Desde que existe requireResolverItems (flag certificaciones.resolver_items)
+    // el perfil ya no puede ser null: sin el flag, la ruta corta en 403 antes
+    // de llegar al handler.
+    state.profile = { rol: 'user', obras_scope: 'todas', permisos: { certificaciones: { resolver_items: true } } }
     rpcMock.mockResolvedValueOnce({ data: [{ item_id: 10 }], error: null })
     fromSolicitudesMock.mockReturnValueOnce(chainable({
       data: { id: 10, estado: 'de_deposito', solicitud_compra: { id: 1, obra_cod: 'O-1' } },
@@ -107,7 +131,7 @@ describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
   })
 
   it('con forzar_sin_stock=true SIN permiso devuelve 403 SIN_PERMISO_FORZAR y NO llama al service', async () => {
-    state.profile = { rol: 'user', permisos: { certificaciones: { creacion: true } } }
+    state.profile = { rol: 'user', obras_scope: 'todas', permisos: { certificaciones: { creacion: true, resolver_items: true } } }
 
     const res = await postDespachar({ precio_unit: 20, forzar_sin_stock: true })
     expect(res.status).toBe(403)
@@ -119,7 +143,8 @@ describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
   it('con forzar_sin_stock=true CON permiso llama a la RPC con p_forzar_sin_stock=true', async () => {
     state.profile = {
       rol: 'user',
-      permisos: { certificaciones: { creacion: true, forzar_despacho: true } },
+      obras_scope: 'todas',
+      permisos: { certificaciones: { creacion: true, resolver_items: true, forzar_despacho: true } },
     }
     rpcMock.mockResolvedValueOnce({ data: [{ item_id: 10 }], error: null })
     fromSolicitudesMock.mockReturnValueOnce(chainable({
