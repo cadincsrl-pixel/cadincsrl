@@ -43,7 +43,9 @@ const baseViaje = z.object({
   chofer_por_km:        z.number().min(0),
   chofer_por_dia:       z.number().min(0),
   modalidad_pago:       z.enum(['km_jornal', 'pct_jornal']),
-  pct_sobre_tarifa:     z.number().min(0).max(1),
+  // Porcentaje entero (15 = 15%), misma convención que choferes.pct_facturacion.
+  // Hasta 2026-07-31 era fracción (0.15) — los datos viejos se convirtieron ×100.
+  pct_sobre_tarifa:     z.number().min(0).max(100),
   obs:                  z.string().optional().nullable(),
 })
 
