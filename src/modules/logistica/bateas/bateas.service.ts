@@ -6,7 +6,21 @@ export const bateasService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb.from('bateas').select('*').order('patente')
     if (error) throw new Error(error.message)
-    return data
+
+    // RTO vigente por batea (el vence_el más nuevo de tipo 'rto') para la
+    // columna de vencimientos del listado. Best-effort: si falla, el listado
+    // sale igual sin la fecha.
+    const { data: rtos } = await sb
+      .from('batea_documentos')
+      .select('batea_id, vence_el')
+      .eq('tipo', 'rto')
+      .not('vence_el', 'is', null)
+    const rtoPorBatea = new Map<number, string>()
+    for (const r of rtos ?? []) {
+      const prev = rtoPorBatea.get(r.batea_id)
+      if (!prev || r.vence_el > prev) rtoPorBatea.set(r.batea_id, r.vence_el)
+    }
+    return (data ?? []).map(b => ({ ...b, rto_vence_el: rtoPorBatea.get(b.id) ?? null }))
   },
 
   async create(dto: CreateBateaDto, token: string, userId: string) {
