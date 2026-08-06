@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag, esCapataz } from '../../middleware/permission.js'
 import { horasService } from './horas.service.js'
+import { calcularCostoObra, viernesISO } from './costo-obra.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
 import { supabase, createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -45,6 +46,77 @@ horas.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
 
   return c.json(all)
 })
+
+
+// GET /costo-obra?obra_cod=X&desde=&hasta= — costo de MANO DE OBRA de una
+// obra, semana por semana, con el cálculo canónico (ver costo-obra.ts).
+// Nació para el bot de WhatsApp: "¿cuánto se gastó en la obra X?" no tenía
+// endpoint y el bot respondía solo materiales (2026-08-06).
+horas.get('/costo-obra',
+  requirePermiso('tarja', 'lectura'),
+  requireFlag('tarja', 'ver_costos', true, true),
+  async (c) => {
+    const obraCod = c.req.query('obra_cod')
+    if (!obraCod) return c.json({ error: 'OBRA_REQUERIDA' }, 400)
+    const desde = c.req.query('desde')
+    const hasta = c.req.query('hasta')
+    const userId = c.get('user').id
+
+    const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
+    if (allowed != null && !allowed.includes(obraCod)) return c.json({ error: 'SIN_ACCESO_OBRA' }, 403)
+
+    // Horas de la obra: cliente admin + paginación (puede superar 1000 filas).
+    const PAGE = 1000
+    const horasObra: any[] = []
+    let from = 0
+    while (true) {
+      let q = supabase.from('horas')
+        .select('leg, fecha, horas')
+        .eq('obra_cod', obraCod)
+        .gt('horas', 0)
+        .order('fecha')
+        .range(from, from + PAGE - 1)
+      if (desde) q = q.gte('fecha', desde)
+      if (hasta) q = q.lte('fecha', hasta)
+      const { data, error } = await q
+      if (error) return c.json({ error: error.message }, 500)
+      if (!data || data.length === 0) break
+      horasObra.push(...data)
+      if (data.length < PAGE) break
+      from += PAGE
+    }
+
+    const [extras, personal, categorias, tarifas, catObra] = await Promise.all([
+      supabase.from('tarja_hs_extras').select('leg, sem_key, hs').eq('obra_cod', obraCod),
+      supabase.from('personal').select('leg, cat_id, personal_cat_historial(cat_id, desde)'),
+      supabase.from('categorias').select('id, vh, categoria_tarifas(vh, desde)'),
+      supabase.from('tarifas').select('cat_id, vh, desde').eq('obra_cod', obraCod),
+      supabase.from('cat_obra').select('leg, cat_id, desde').eq('obra_cod', obraCod),
+    ])
+    for (const r of [extras, personal, categorias, tarifas, catObra]) {
+      if (r.error) return c.json({ error: r.error.message }, 500)
+    }
+
+    // hs_extras filtradas al rango pedido (por sem_key) si vino rango.
+    let extrasRows = (extras.data ?? []) as { leg: string; sem_key: string; hs: number }[]
+    if (desde) extrasRows = extrasRows.filter(e => e.sem_key.slice(0, 10) >= viernesISO(desde))
+    if (hasta) extrasRows = extrasRows.filter(e => e.sem_key.slice(0, 10) <= hasta)
+
+    // Hoy en hora argentina (UTC-3 fijo, sin DST): el server corre en UTC.
+    const hoyISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+
+    const resultado = calcularCostoObra({
+      horas: horasObra,
+      hsExtras: extrasRows,
+      personal: (personal.data ?? []) as any,
+      categorias: (categorias.data ?? []) as any,
+      tarifas: (tarifas.data ?? []) as any,
+      catObra: (catObra.data ?? []) as any,
+      hoyISO,
+    })
+
+    return c.json({ obra_cod: obraCod, desde: desde ?? null, hasta: hasta ?? null, ...resultado })
+  })
 
 
 horas.get('/trabajador/:leg', requirePermiso('tarja', 'lectura'), async (c) => {
