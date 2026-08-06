@@ -134,9 +134,11 @@ export const cobrosService = {
 
     const update: Record<string, unknown> = {
       estado: 'cobrado', updated_by: userId, updated_at: new Date().toISOString(),
+      // Fecha real del cobro (columna propia desde 20260806); sin fecha del
+      // modal cae a hoy. La nota en obs se mantiene por compatibilidad con
+      // PDFs/exports que la leen.
+      cobrado_en: fechaCobro ?? new Date().toISOString().slice(0, 10),
     }
-    // La fecha real del cobro no tiene columna propia: se anota en obs, igual
-    // que hace el flujo de líquido producto al crear el cobro.
     if (fechaCobro) {
       const { data: actual, error: errObs } = await supabase
         .from('cobros').select('obs').eq('id', id).maybeSingle()
@@ -164,7 +166,7 @@ export const cobrosService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('cobros')
-      .update({ estado: 'pendiente', updated_by: userId, updated_at: new Date().toISOString() })
+      .update({ estado: 'pendiente', cobrado_en: null, updated_by: userId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single()
