@@ -226,6 +226,16 @@ solicitudes.post('/items/:itemId/revertir', requireResolverItems, requireItemObr
   )
 }))
 
+// POST /items/:itemId/comprar-faltante — parte un ítem de_deposito con envío
+// parcial: el original se cierra por lo enviado (devolviendo el resto al
+// stock) y nace un ítem nuevo pendiente por el faltante, para comprarlo.
+// RPC transaccional comprar_faltante_item (migración 20260806b).
+solicitudes.post('/items/:itemId/comprar-faltante', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
+  return solicitudesService.comprarFaltanteItem(
+    Number(c.req.param('itemId')), c.get('user').id
+  )
+}))
+
 // POST /items/:itemId/revertir-envio — deshace SOLO el envío: el item vuelve
 // a su estado previo (comprado/de_deposito), manteniendo la compra. Limpia
 // fecha_envio y desvincula del remito (borra el remito si queda vacío).

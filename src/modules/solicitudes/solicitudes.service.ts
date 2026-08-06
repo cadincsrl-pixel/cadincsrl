@@ -688,6 +688,29 @@ export const solicitudesService = {
     return data
   },
 
+  // Parte un ítem de_deposito con envío parcial cuyo faltante NO está en
+  // depósito y hay que comprarlo: cierra el original por lo enviado (devuelve
+  // el resto al stock, ajusta MCC) y crea un ítem nuevo pendiente por el
+  // faltante. RPC transaccional (20260806b). supabaseAdmin: SECURITY DEFINER
+  // revocada de authenticated (20260527); el scope de obra lo validó el
+  // middleware antes de llegar acá.
+  async comprarFaltanteItem(itemId: number, userId?: string) {
+    const { data, error } = await supabaseAdmin.rpc('comprar_faltante_item', {
+      p_item_id: itemId,
+      p_user_id: userId ?? null,
+    })
+    if (error) {
+      const msg = error.message ?? ''
+      if (/ITEM_NO_EXISTE/.test(msg))      throw new HttpError(404, 'ITEM_NO_EXISTE')
+      if (/ITEM_NO_DE_DEPOSITO/.test(msg)) throw new HttpError(409, 'ITEM_NO_DE_DEPOSITO')
+      if (/SIN_ENVIOS/.test(msg))          throw new HttpError(409, 'SIN_ENVIOS')
+      if (/ITEM_COMPLETO/.test(msg))       throw new HttpError(409, 'ITEM_COMPLETO')
+      if (/ITEM_COBRADO/.test(msg))        throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: error.details })
+      throw new HttpError(500, 'DB_ERROR', { dbMessage: msg })
+    }
+    return data
+  },
+
   async revertirItem(itemId: number, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
     // Un item cuyo MCC ya fue cobrado al cliente no se puede revertir: el
