@@ -362,6 +362,41 @@ export const solicitudesService = {
   // Dispatcher: según feature flag, usa RPC transaccional o camino legacy.
   // Si dto.queda_en_proveedor=true, en cambio dispara la RPC de
   // 'en_proveedor' (no hay camino legacy: feature nuevo).
+  // Si el item recien resuelto YA tiene todo enviado (envios parciales
+  // previos a un revertir->editar->re-resolver cubren la cantidad efectiva),
+  // promoverlo directo a 'enviado' para que no quede fosilizado en "por
+  // enviar" con pendiente 0. Caso real: placas cielorraso CC-017 2026-08-07
+  // (20 pedidas -> 14 enviadas -> revertido -> editado a 14 -> re-despachado:
+  // quedaba de_deposito 14/14). El revertir conserva cantidad_enviada a
+  // proposito (es historia fisica de lo que viajo).
+  async _promoverSiYaEnviado(item: any, token: string, userId: string) {
+    if (!item) return item
+    const efectiva = Number(item.cantidad_comprada ?? item.cantidad)
+    const enviada  = Number(item.cantidad_enviada ?? 0)
+    const promovible = item.estado === 'comprado' || item.estado === 'de_deposito'
+    if (!promovible || enviada <= 0 || enviada < efectiva) return item
+    const supabase = createSupabaseClient(token)
+    const hoy = new Date().toISOString().slice(0, 10)
+    const { data: actualizado, error } = await supabase
+      .from('solicitud_compra_item')
+      .update({ estado: 'enviado', fecha_envio: hoy, updated_by: userId })
+      .eq('id', item.id)
+      .select('*, solicitud_compra(id, obra_cod)')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    await registrarItemEvento(supabase, {
+      itemId:         item.id,
+      solicitudId:    item.solicitud_id ?? null,
+      accion:         'enviado',
+      estadoAnterior: item.estado,
+      estadoNuevo:    'enviado',
+      cantidad:       enviada,
+      comentario:     'Completado automaticamente: los envios previos ya cubren la cantidad',
+      userId,
+    })
+    return actualizado ?? item
+  },
+
   async comprarItem(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
     // en_proveedor: la RPC hace el cambio de estado; el evento se escribe
     // acá best-effort (pendiente de mover adentro de la RPC — plan #2 B2).
@@ -388,12 +423,10 @@ export const solicitudesService = {
 
     // Camino RPC: el evento 'comprado' lo escribe la RPC DENTRO de la TX
     // (atómico). No escribir acá para no duplicar.
-    if (useRpcResolver()) {
-      return await this.comprarItemViaRPC(itemId, dto, token, userId)
-    }
-
-    // Camino legacy: escribe su propio evento al final del método.
-    return await this.comprarItemLegacy(itemId, dto, token, userId)
+    const item = useRpcResolver()
+      ? await this.comprarItemViaRPC(itemId, dto, token, userId)
+      : await this.comprarItemLegacy(itemId, dto, token, userId)
+    return await this._promoverSiYaEnviado(item, token, userId)
   },
 
   // RPC `resolver_item_en_proveedor`: marca item='en_proveedor' + suma
@@ -445,9 +478,10 @@ export const solicitudesService = {
   ) {
     // Camino RPC: el evento 'despachado' lo escribe la RPC DENTRO de la TX.
     // Camino legacy: lo escribe al final del método. Sin doble escritura.
-    return useRpcResolver()
+    const item = useRpcResolver()
       ? await this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
       : await this.despacharItemLegacy(itemId, dto, token, userId, forzarSinStock)
+    return await this._promoverSiYaEnviado(item, token, userId)
   },
 
   // Camino RPC — transaccional en Postgres (resolver_item_compra).
