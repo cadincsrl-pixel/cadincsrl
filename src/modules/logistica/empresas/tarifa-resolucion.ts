@@ -16,6 +16,9 @@ export type TarifaRow = {
   cantera_id:    number
   deposito_id:   number | null
   tipo_unidad:   'batea' | 'chasis' | null
+  // null = tarifa única/base. Con valor = variante ("Tarifa 2", cliente final)
+  // para la misma ruta; el tramo elige cuál vía tramos.tarifa_variante.
+  variante:      string | null
   valor_ton:     number
   vigente_desde: string
 }
@@ -31,6 +34,7 @@ export function normalizarTarifa(t: Record<string, unknown>): TarifaRow {
     cantera_id:    Number(t.cantera_id),
     deposito_id:   t.deposito_id == null ? null : Number(t.deposito_id),
     tipo_unidad:   (t.tipo_unidad ?? null) as 'batea' | 'chasis' | null,
+    variante:      t.variante == null ? null : String(t.variante),
     valor_ton:     Number(t.valor_ton),
     vigente_desde: String(t.vigente_desde),
   }
@@ -51,7 +55,13 @@ export function unidadDelCamion(
  *  Escalera de especificidad — gana el primer pool no vacío:
  *    depósito + unidad  >  depósito  >  unidad  >  general
  *  Dentro del pool gana la de `vigente_desde` más reciente que no supere la
- *  fecha. Las tarifas sin `tipo_unidad` valen para cualquier unidad. */
+ *  fecha. Las tarifas sin `tipo_unidad` valen para cualquier unidad.
+ *
+ *  `variante` (tramos.tarifa_variante) se matchea EXACTA antes de la escalera:
+ *  un tramo con "Tarifa 2" sólo resuelve tarifas variante="Tarifa 2"; un tramo
+ *  sin variante sólo resuelve tarifas sin variante. Sin fallback a la base a
+ *  propósito: si la variante elegida no existe para la ruta, el viaje queda
+ *  visible como "sin tarifa" en vez de facturarse con otra en silencio. */
 export function tarifaDelViaje(
   tarifas:    TarifaRow[],
   empresaId:  number,
@@ -59,10 +69,12 @@ export function tarifaDelViaje(
   depositoId: number | null,
   fecha:      string | null,
   tipoUnidad?: 'batea' | 'chasis',
+  variante?:  string | null,
 ): TarifaRow | null {
   if (!canteraId || !fecha) return null
   const base = tarifas.filter(t =>
     t.empresa_id === empresaId && t.cantera_id === canteraId && t.vigente_desde <= fecha
+    && (t.variante ?? null) === (variante ?? null)
   )
   const pools = [
     depositoId != null && tipoUnidad ? base.filter(t => t.deposito_id === depositoId && t.tipo_unidad === tipoUnidad) : [],

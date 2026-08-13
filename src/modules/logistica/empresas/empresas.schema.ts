@@ -33,6 +33,10 @@ export const CreateTarifaEmpresaSchema = z.object({
   // null/ausente = vale para cualquier unidad; 'chasis'/'batea' = específica
   // según el camión del viaje (chasis paga distinto en algunas empresas).
   tipo_unidad:   z.enum(['batea', 'chasis']).nullable().optional(),
+  // null/ausente = tarifa única/base. Con valor ("Tarifa 2", nombre del
+  // cliente final, etc.) = variante para la misma ruta: el tramo elige cuál
+  // aplica vía tramos.tarifa_variante (match exacto, sin fallback a la base).
+  variante:      z.string().trim().min(1).max(60).nullable().optional(),
   valor_ton:     z.number().min(0),
   vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   obs:           z.string().optional().default(''),
@@ -42,8 +46,8 @@ export const CreateTarifaEmpresaSchema = z.object({
 })
 
 // Update solo permite cambiar valor/fecha/obs. La identidad
-// (empresa+cantera+depósito) es la del registro y se mantiene; si se quiere
-// cambiar el par, se elimina y se crea una nueva.
+// (empresa+cantera+depósito+variante) es la del registro y se mantiene; si se
+// quiere cambiar el par, se elimina y se crea una nueva.
 export const UpdateTarifaEmpresaSchema = z.object({
   valor_ton:     z.number().min(0).optional(),
   vigente_desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

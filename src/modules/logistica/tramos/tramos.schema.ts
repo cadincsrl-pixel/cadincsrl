@@ -28,6 +28,9 @@ export const CreateTramoSchema = z.object({
   estado: z.enum(['en_curso', 'completado']).optional(),
 
   empresa_id: z.number().nullable().optional(),
+  // Qué variante de tarifa factura este tramo (cuando la ruta tiene más de
+  // una en tarifas_empresa_cantera.variante). null = tarifa base.
+  tarifa_variante: z.string().trim().min(1).max(60).nullable().optional(),
   obs: z.string().optional().default(''),
 })
 .refine(
@@ -53,6 +56,7 @@ export const UpdateTramoSchema = z.object({
   remito_descarga:         z.string().optional(),
   remito_descarga_img_url: z.string().url().nullable().optional(),
   fecha_vacio:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  tarifa_variante:    z.string().trim().min(1).max(60).nullable().optional(),
   obs:                z.string().optional(),
   estado:             z.enum(['en_curso', 'completado']).optional(),
 })

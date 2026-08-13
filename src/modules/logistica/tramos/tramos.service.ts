@@ -25,7 +25,10 @@ const CAMPOS_SIN_PLATA = new Set([
 // Sólo afectan la FACTURACIÓN al cliente (el cobro se arma por tonelada y por
 // tarifa de la empresa). La liquidación del chofer no los mira, así que un
 // tramo liquidado pero todavía sin facturar los puede corregir.
-const CAMPOS_SOLO_COBRO = new Set(['toneladas_carga', 'toneladas_descarga', 'empresa_id'])
+// `tarifa_variante` sigue el mismo criterio que toneladas: la liquidación pct
+// snapshotea su subtotal al cerrarse, así que corregir la variante después
+// solo afecta el cobro futuro (misma exposición ya aceptada para toneladas).
+const CAMPOS_SOLO_COBRO = new Set(['toneladas_carga', 'toneladas_descarga', 'empresa_id', 'tarifa_variante'])
 
 // El resto (chofer, camión, tipo, cantera, depósito, fechas, estado) cambia km
 // o días: pega en la liquidación Y en el cobro.

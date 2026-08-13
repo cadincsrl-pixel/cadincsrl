@@ -37,13 +37,14 @@ type FacturasAfectadas = { facturas: string[]; total: number; viajes: number }
 type CobroDelViaje = { id: number; factura_nro: string | null }
 
 type ViajeFacturado = {
-  id:             number
-  camion_id:      number | null
-  deposito_id:    number | null
-  fecha_carga:    string | null
-  fecha_descarga: string | null
-  cobro_id:       number | null
-  cobros:         CobroDelViaje | CobroDelViaje[] | null
+  id:              number
+  camion_id:       number | null
+  deposito_id:     number | null
+  tarifa_variante: string | null
+  fecha_carga:     string | null
+  fecha_descarga:  string | null
+  cobro_id:        number | null
+  cobros:          CobroDelViaje | CobroDelViaje[] | null
 }
 
 /** Facturas ya emitidas cuyo precio CAMBIA si se aplica `cambio` a la tarifa `t`.
@@ -77,7 +78,7 @@ async function facturasAfectadasPorTarifa(
   // Es un puñado de filas (una por versión de precio), no hace falta paginar.
   const { data: hermanasRaw, error: eTar } = await supabase
     .from('tarifas_empresa_cantera')
-    .select('id, empresa_id, cantera_id, deposito_id, tipo_unidad, valor_ton, vigente_desde')
+    .select('id, empresa_id, cantera_id, deposito_id, tipo_unidad, variante, valor_ton, vigente_desde')
     .eq('empresa_id', t.empresa_id)
     .eq('cantera_id', t.cantera_id)
   if (eTar) throw new Error(eTar.message)
@@ -115,7 +116,7 @@ async function facturasAfectadasPorTarifa(
   // todos ya cobrados. El número se usa sólo para etiquetar el mensaje.
   const { data, error } = await supabase
     .from('tramos')
-    .select('id, camion_id, deposito_id, fecha_carga, fecha_descarga, cobro_id, cobros!inner(id, factura_nro)')
+    .select('id, camion_id, deposito_id, tarifa_variante, fecha_carga, fecha_descarga, cobro_id, cobros!inner(id, factura_nro)')
     .eq('empresa_id', t.empresa_id)
     .eq('cantera_id', t.cantera_id)
     .not('cobro_id', 'is', null)
@@ -136,8 +137,9 @@ async function facturasAfectadasPorTarifa(
     const fecha  = fechaDeTarifa(row)
     const unidad = unidadDelCamion((camiones ?? []) as CamionRow[], row.camion_id)
     const dep    = row.deposito_id == null ? null : Number(row.deposito_id)
-    const resAntes   = tarifaDelViaje(antes,   t.empresa_id, t.cantera_id, dep, fecha, unidad)
-    const resDespues = tarifaDelViaje(despues, t.empresa_id, t.cantera_id, dep, fecha, unidad)
+    const varnt  = row.tarifa_variante ?? null
+    const resAntes   = tarifaDelViaje(antes,   t.empresa_id, t.cantera_id, dep, fecha, unidad, varnt)
+    const resDespues = tarifaDelViaje(despues, t.empresa_id, t.cantera_id, dep, fecha, unidad, varnt)
 
     // Lo que importa no es si la tarifa que se toca es la que resuelve, sino
     // si al viaje le CAMBIA el precio aplicado. Sin esto, mover sólo la
@@ -165,7 +167,7 @@ async function traerTarifa(
 ): Promise<TarifaRow> {
   const { data, error } = await supabase
     .from('tarifas_empresa_cantera')
-    .select('id, empresa_id, cantera_id, deposito_id, tipo_unidad, valor_ton, vigente_desde')
+    .select('id, empresa_id, cantera_id, deposito_id, tipo_unidad, variante, valor_ton, vigente_desde')
     .eq('id', id)
     .maybeSingle()
   if (error) throw new Error(error.message)
@@ -252,6 +254,7 @@ export const empresasService = {
         cantera_id:    campos.cantera_id,
         deposito_id:   campos.deposito_id ?? null,
         tipo_unidad:   campos.tipo_unidad ?? null,
+        variante:      campos.variante ?? null,
         valor_ton:     Number(campos.valor_ton),
         vigente_desde: campos.vigente_desde,
       }
