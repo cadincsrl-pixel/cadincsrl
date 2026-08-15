@@ -12,6 +12,12 @@ export const ContratistasSchema = z.object({
   dni: z.string().nullable(),
 })
 
+// El CBU argentino son 22 dígitos; se acepta con espacios/guiones y se limpia.
+const CbuSchema = z
+  .string()
+  .transform(s => s.replace(/[\s-]/g, ''))
+  .refine(s => s === '' || /^\d{22}$/.test(s), 'El CBU debe tener 22 dígitos')
+
 export const CreateContratistaSchema = z.object({
   nom:          z.string().min(1, 'El nombre es requerido'),
   especialidad: z.string().nullable().optional(),
@@ -21,6 +27,10 @@ export const CreateContratistaSchema = z.object({
   cuit:         z.string().nullable().optional(),
   cuil:         z.string().nullable().optional(),
   dni:          z.string().nullable().optional(),
+  banco_cuenta:   z.string().nullable().optional(),
+  cbu:            CbuSchema.nullable().optional(),
+  alias_cbu:      z.string().nullable().optional(),
+  titular_cuenta: z.string().nullable().optional(),
 })
 
 export const UpdateContratistaSchema = z.object({
@@ -32,6 +42,10 @@ export const UpdateContratistaSchema = z.object({
   cuit:         z.string().nullable().optional(),
   cuil:         z.string().nullable().optional(),
   dni:          z.string().nullable().optional(),
+  banco_cuenta:   z.string().nullable().optional(),
+  cbu:            CbuSchema.nullable().optional(),
+  alias_cbu:      z.string().nullable().optional(),
+  titular_cuenta: z.string().nullable().optional(),
 })
 
 // ── DNI adjunto (bucket privado contratista-docs) ──
