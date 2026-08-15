@@ -29,6 +29,24 @@ async function sha256OfBlob(blob: Blob): Promise<string> {
   return createHash('sha256').update(buf).digest('hex')
 }
 
+// Title Case con colapso de espacios: "  CESAR   LADRILLOS " → "Cesar Ladrillos".
+// Se aplica a contratistas.nom en create/update para que el catálogo no vuelva
+// a mezclar mayúsculas/minúsculas (los datos viejos se emparejaron con la
+// migración 20260815_contratistas_nom_initcap).
+function normalizarNom(nom: string): string {
+  return nom
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(/(^|[\s.'-])\p{L}/gu, (m) => m.toUpperCase())
+}
+
+// Los códigos de obra pueden tener espacios ("CC CADINC 1"); para el path de
+// Storage se sanitizan a un slug seguro.
+function slugObra(obraCod: string): string {
+  return obraCod.replace(/[^a-zA-Z0-9-]/g, '_')
+}
+
 export const contratistasService = {
 
   async getAll(token: string) {
@@ -58,7 +76,7 @@ export const contratistasService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('contratistas')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .insert({ ...dto, nom: normalizarNom(dto.nom), created_by: userId, updated_by: userId })
       .select()
       .single()
 
@@ -68,9 +86,10 @@ export const contratistasService = {
 
   async update(id: number, dto: UpdateContratistaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    const patch = dto.nom != null ? { ...dto, nom: normalizarNom(dto.nom) } : dto
     const { data, error } = await supabase
       .from('contratistas')
-      .update({ ...dto, updated_by: userId })
+      .update({ ...patch, updated_by: userId })
       .eq('id', id)
       .select()
       .single()
@@ -246,6 +265,13 @@ export const contratistasService = {
 
   async desasignar(obraCod: string, contratId: number, token: string) {
     const supabase = createSupabaseClient(token)
+    // Si la asignación tenía cotización adjunta, borrar el archivo (best-effort).
+    const { data: prev } = await supabase
+      .from('asig_contrat')
+      .select('cotizacion_doc_path')
+      .eq('obra_cod', obraCod)
+      .eq('contrat_id', contratId)
+      .single()
     const { error } = await supabase
       .from('asig_contrat')
       .delete()
@@ -253,7 +279,128 @@ export const contratistasService = {
       .eq('contrat_id', contratId)
 
     if (error) throw new Error(error.message)
+    const prevPath = (prev as { cotizacion_doc_path?: string | null } | null)?.cotizacion_doc_path
+    if (prevPath) {
+      await supabaseAdmin.storage.from(DNI_BUCKET).remove([prevPath]).catch(() => undefined)
+    }
     return { success: true }
+  },
+
+  // ── Adjunto de la cotización (foto/PDF del presupuesto) ────────
+  // Mismo flujo de 2 pasos que el DNI, pero el registro vive en asig_contrat
+  // (el doc es de la cotización obra×contratista, no del contratista).
+  async cotizDocUploadUrl(obraCod: string, contratId: number, dto: DniUploadUrlDto) {
+    if (!DNI_ALLOWED_MIME.has(dto.mime_type)) {
+      throw new HTTPException(400, { message: 'Tipo de archivo no permitido (foto o PDF)' })
+    }
+    if (dto.size_bytes <= 0 || dto.size_bytes > DNI_MAX_BYTES) {
+      throw new HTTPException(400, { message: 'Archivo demasiado grande (máx 10 MB)' })
+    }
+    const ext  = dniExtFromMime(dto.mime_type)
+    const path = `cotizacion/${slugObra(obraCod)}/${contratId}/${randomUUID()}.${ext}`
+    const { data, error } = await supabaseAdmin.storage.from(DNI_BUCKET).createSignedUploadUrl(path)
+    if (error) throw new HTTPException(500, { message: error.message })
+    return { path, token: data.token, signed_url: data.signedUrl }
+  },
+
+  async cotizDocRegistrar(
+    obraCod: string,
+    contratId: number,
+    dto: DniRegistrarDto,
+    userId: string,
+    token: string,
+  ) {
+    if (!dto.storage_path.startsWith(`cotizacion/${slugObra(obraCod)}/${contratId}/`)) {
+      throw new HTTPException(400, { message: 'Path inválido' })
+    }
+    const dl = await supabaseAdmin.storage.from(DNI_BUCKET).download(dto.storage_path)
+    if (dl.error || !dl.data) {
+      throw new HTTPException(400, { message: 'El archivo no se subió correctamente' })
+    }
+    const hash = await sha256OfBlob(dl.data)
+
+    const supabase = createSupabaseClient(token)
+    const { data: prev } = await supabase
+      .from('asig_contrat')
+      .select('cotizacion_doc_path')
+      .eq('obra_cod', obraCod)
+      .eq('contrat_id', contratId)
+      .single()
+
+    const { data, error } = await supabase
+      .from('asig_contrat')
+      .update({
+        cotizacion_doc_path:   dto.storage_path,
+        cotizacion_doc_nombre: dto.nombre_archivo,
+        cotizacion_doc_mime:   dto.mime_type,
+        cotizacion_doc_size:   dl.data.size,
+        cotizacion_doc_hash:   hash,
+        updated_by:            userId,
+        updated_at:            new Date().toISOString(),
+      })
+      .eq('obra_cod', obraCod)
+      .eq('contrat_id', contratId)
+      .select()
+      .single()
+    if (error) throw new HTTPException(500, { message: error.message })
+
+    const prevPath = (prev as { cotizacion_doc_path?: string | null } | null)?.cotizacion_doc_path
+    if (prevPath && prevPath !== dto.storage_path) {
+      await supabaseAdmin.storage.from(DNI_BUCKET).remove([prevPath]).catch(() => undefined)
+    }
+    return data
+  },
+
+  async cotizDocSignedUrl(obraCod: string, contratId: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data: a, error } = await supabase
+      .from('asig_contrat')
+      .select('cotizacion_doc_path, cotizacion_doc_nombre')
+      .eq('obra_cod', obraCod)
+      .eq('contrat_id', contratId)
+      .single()
+    if (error) throw new HTTPException(500, { message: error.message })
+    if (!a?.cotizacion_doc_path) {
+      throw new HTTPException(404, { message: 'La cotización no tiene adjunto' })
+    }
+    const { data, error: sErr } = await supabaseAdmin.storage
+      .from(DNI_BUCKET)
+      .createSignedUrl(a.cotizacion_doc_path, 900, { download: a.cotizacion_doc_nombre ?? undefined })
+    if (sErr) throw new HTTPException(500, { message: sErr.message })
+    return { url: data.signedUrl, nombre_archivo: a.cotizacion_doc_nombre }
+  },
+
+  async cotizDocDelete(obraCod: string, contratId: number, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data: prev } = await supabase
+      .from('asig_contrat')
+      .select('cotizacion_doc_path')
+      .eq('obra_cod', obraCod)
+      .eq('contrat_id', contratId)
+      .single()
+
+    const { data, error } = await supabase
+      .from('asig_contrat')
+      .update({
+        cotizacion_doc_path:   null,
+        cotizacion_doc_nombre: null,
+        cotizacion_doc_mime:   null,
+        cotizacion_doc_size:   null,
+        cotizacion_doc_hash:   null,
+        updated_by:            userId,
+        updated_at:            new Date().toISOString(),
+      })
+      .eq('obra_cod', obraCod)
+      .eq('contrat_id', contratId)
+      .select()
+      .single()
+    if (error) throw new HTTPException(500, { message: error.message })
+
+    const prevPath = (prev as { cotizacion_doc_path?: string | null } | null)?.cotizacion_doc_path
+    if (prevPath) {
+      await supabaseAdmin.storage.from(DNI_BUCKET).remove([prevPath]).catch(() => undefined)
+    }
+    return data
   },
 
   // ── Certificaciones ──

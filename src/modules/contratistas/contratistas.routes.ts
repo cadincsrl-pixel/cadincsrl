@@ -143,10 +143,82 @@ contratistas.get('/asig/:obraCod', requirePermiso('tarja', 'lectura'), async (c)
   // las asignaciones pero sin los campos financieros.
   const veCostos = await tieneFlag(userId, 'tarja', 'ver_costos', true)
   if (!veCostos && Array.isArray(data)) {
-    return c.json(data.map(({ cotizacion: _c, cotizacion_obs: _o, ...rest }) => rest))
+    return c.json(data.map(({
+      cotizacion: _c,
+      cotizacion_obs: _o,
+      cotizacion_doc_path: _p,
+      cotizacion_doc_nombre: _n,
+      cotizacion_doc_mime: _m,
+      cotizacion_doc_size: _s,
+      cotizacion_doc_hash: _h,
+      ...rest
+    }) => rest))
   }
   return c.json(data)
 })
+
+// ── Adjunto de la cotización (foto/PDF del presupuesto) ──
+// Mutaciones con el mismo gating que la cotización; la URL firmada expone el
+// presupuesto (montos) → ver_costos.
+contratistas.post(
+  '/asig/:obraCod/:contratId/cotizacion-doc/upload-url',
+  requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'ver_pii', true),
+  zValidator('json', DniUploadUrlSchema),
+  async (c) => {
+    const obraCod = c.req.param('obraCod')
+    const contratId = Number(c.req.param('contratId'))
+    if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
+    await validarObraDelUsuario(c.get('user').id, obraCod, 'tarja')
+    const data = await contratistasService.cotizDocUploadUrl(obraCod, contratId, c.req.valid('json'))
+    return c.json(data)
+  },
+)
+
+contratistas.post(
+  '/asig/:obraCod/:contratId/cotizacion-doc',
+  requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'ver_pii', true),
+  zValidator('json', DniRegistrarSchema),
+  async (c) => {
+    const obraCod = c.req.param('obraCod')
+    const contratId = Number(c.req.param('contratId'))
+    if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
+    await validarObraDelUsuario(c.get('user').id, obraCod, 'tarja')
+    const data = await contratistasService.cotizDocRegistrar(
+      obraCod, contratId, c.req.valid('json'), c.get('user').id, c.get('accessToken'),
+    )
+    return c.json(data, 201)
+  },
+)
+
+contratistas.get(
+  '/asig/:obraCod/:contratId/cotizacion-doc/signed-url',
+  requirePermiso('tarja', 'lectura'),
+  requireFlag('tarja', 'ver_costos', true, true),
+  async (c) => {
+    const obraCod = c.req.param('obraCod')
+    const contratId = Number(c.req.param('contratId'))
+    if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
+    await validarObraDelUsuario(c.get('user').id, obraCod, 'tarja')
+    const data = await contratistasService.cotizDocSignedUrl(obraCod, contratId, c.get('accessToken'))
+    return c.json(data)
+  },
+)
+
+contratistas.delete(
+  '/asig/:obraCod/:contratId/cotizacion-doc',
+  requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'ver_pii', true),
+  async (c) => {
+    const obraCod = c.req.param('obraCod')
+    const contratId = Number(c.req.param('contratId'))
+    if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
+    await validarObraDelUsuario(c.get('user').id, obraCod, 'tarja')
+    const data = await contratistasService.cotizDocDelete(obraCod, contratId, c.get('accessToken'), c.get('user').id)
+    return c.json(data)
+  },
+)
 
 // Cargar/editar la cotización inicial del contratista en la obra.
 // Mismo gating que las certificaciones (montos → jefatura).
