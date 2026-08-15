@@ -54,6 +54,13 @@ export const AsigContratistaSchema = z.object({
   contrat_id: z.number(),
 })
 
+// Cotización inicial del contratista para la obra (columna de asig_contrat).
+// null = borrar la cotización cargada.
+export const CotizacionAsigSchema = z.object({
+  cotizacion:     z.number().min(0).nullable(),
+  cotizacion_obs: z.string().nullable().optional(),
+})
+
 export const CertificacionSchema = z.object({
   obra_cod: z.string().min(1),
   contrat_id: z.number(),
@@ -69,4 +76,5 @@ export type UpdateContratistaDto = z.infer<typeof UpdateContratistaSchema>
 export type DniUploadUrlDto = z.infer<typeof DniUploadUrlSchema>
 export type DniRegistrarDto = z.infer<typeof DniRegistrarSchema>
 export type AsigContratistaDto = z.infer<typeof AsigContratistaSchema>
+export type CotizacionAsigDto = z.infer<typeof CotizacionAsigSchema>
 export type CertificacionDto = z.infer<typeof CertificacionSchema>

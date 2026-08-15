@@ -5,6 +5,7 @@ import type {
   CreateContratistaDto,
   UpdateContratistaDto,
   AsigContratistaDto,
+  CotizacionAsigDto,
   CertificacionDto,
   DniUploadUrlDto,
   DniRegistrarDto,
@@ -211,6 +212,31 @@ export const contratistasService = {
     const { data, error } = await supabase
       .from('asig_contrat')
       .insert({ ...dto, created_by: userId, updated_by: userId })
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateAsigCotizacion(
+    obraCod: string,
+    contratId: number,
+    dto: CotizacionAsigDto,
+    token: string,
+    userId: string,
+  ) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('asig_contrat')
+      .update({
+        cotizacion:     dto.cotizacion,
+        cotizacion_obs: dto.cotizacion_obs ?? null,
+        updated_by:     userId,
+        updated_at:     new Date().toISOString(),
+      })
+      .eq('obra_cod', obraCod)
+      .eq('contrat_id', contratId)
       .select()
       .single()
 

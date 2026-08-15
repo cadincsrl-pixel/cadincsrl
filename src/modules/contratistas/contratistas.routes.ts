@@ -1,12 +1,13 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireFlag } from '../../middleware/permission.js'
+import { requirePermiso, requireFlag, tieneFlag } from '../../middleware/permission.js'
 import { contratistasService } from './contratistas.service.js'
 import {
   CreateContratistaSchema,
   UpdateContratistaSchema,
   AsigContratistaSchema,
+  CotizacionAsigSchema,
   CertificacionSchema,
   DniUploadUrlSchema,
   DniRegistrarSchema,
@@ -138,8 +139,34 @@ contratistas.get('/asig/:obraCod', requirePermiso('tarja', 'lectura'), async (c)
   const userId = c.get('user').id
   await validarObraDelUsuario(userId, obraCod, 'tarja')
   const data = await contratistasService.getAsigByObra(obraCod, token)
+  // La cotización es un monto: usuarios con ver_costos=false (capataz) reciben
+  // las asignaciones pero sin los campos financieros.
+  const veCostos = await tieneFlag(userId, 'tarja', 'ver_costos', true)
+  if (!veCostos && Array.isArray(data)) {
+    return c.json(data.map(({ cotizacion: _c, cotizacion_obs: _o, ...rest }) => rest))
+  }
   return c.json(data)
 })
+
+// Cargar/editar la cotización inicial del contratista en la obra.
+// Mismo gating que las certificaciones (montos → jefatura).
+contratistas.patch(
+  '/asig/:obraCod/:contratId',
+  requirePermiso('tarja', 'actualizacion'),
+  requireFlag('tarja', 'ver_pii', true),
+  zValidator('json', CotizacionAsigSchema),
+  async (c) => {
+    const obraCod = c.req.param('obraCod')
+    const contratId = Number(c.req.param('contratId'))
+    if (isNaN(contratId)) return c.json({ error: 'ID inválido' }, 400)
+    const dto = c.req.valid('json')
+    const token = c.get('accessToken')
+    const userId = c.get('user').id
+    await validarObraDelUsuario(userId, obraCod, 'tarja')
+    const data = await contratistasService.updateAsigCotizacion(obraCod, contratId, dto, token, userId)
+    return c.json(data)
+  },
+)
 
 contratistas.post('/asig', requirePermiso('tarja', 'actualizacion'), requireFlag('tarja', 'ver_pii', true), zValidator('json', AsigContratistaSchema), async (c) => {
   const dto = c.req.valid('json')

@@ -96,3 +96,23 @@ export function requireFlag(
     return next()
   })
 }
+
+/**
+ * Chequeo inline (no-middleware) de un flag de permisos. Para handlers que
+ * no rechazan sino que degradan la respuesta (ej.: GET asignaciones de
+ * contratistas devuelve las filas pero sin `cotizacion` si el usuario tiene
+ * `ver_costos=false`). Admin siempre true.
+ */
+export async function tieneFlag(
+  userId: string,
+  modulo: string,
+  flag: string,
+  defaultActual: boolean = false,
+): Promise<boolean> {
+  const profile = await fetchPermisos(userId)
+  if (!profile) return false
+  if (profile.rol === 'admin') return true
+  const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
+  const v = permisos?.[modulo]?.[flag]
+  return v === undefined ? defaultActual : Boolean(v)
+}
