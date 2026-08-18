@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const CreateProveedorSchema = z.object({
-  nombre: z.string().min(1),
+  nombre: z.string().trim().min(1),
   cuit:   z.string().optional().default(''),
   tel:    z.string().optional().default(''),
   email:  z.string().optional().default(''),

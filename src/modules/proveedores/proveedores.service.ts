@@ -1,5 +1,15 @@
+import { HTTPException } from 'hono/http-exception'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type { CreateProveedorDto, UpdateProveedorDto } from './proveedores.schema.js'
+
+// El índice único parcial `proveedores_nombre_uniq_activo` (migración 20260818_proveedores_dedup)
+// impide dos proveedores activos con el mismo nombre ignorando mayúsculas y espacios.
+function traducirError(error: { code?: string; message: string }): never {
+  if (error.code === '23505') {
+    throw new HTTPException(409, { message: 'Ya existe un proveedor activo con ese nombre' })
+  }
+  throw new HTTPException(500, { message: error.message })
+}
 
 export const proveedoresService = {
   async getAll(token: string) {
@@ -20,7 +30,7 @@ export const proveedoresService = {
       .insert({ ...dto, created_by: userId, updated_by: userId })
       .select()
       .single()
-    if (error) throw new Error(error.message)
+    if (error) traducirError(error)
     return data
   },
 
@@ -32,7 +42,7 @@ export const proveedoresService = {
       .eq('id', id)
       .select()
       .single()
-    if (error) throw new Error(error.message)
+    if (error) traducirError(error)
     return data
   },
 
