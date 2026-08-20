@@ -131,6 +131,38 @@ export const solicitudesService = {
     }))
   },
 
+  // Vista liviana para la campana de notificaciones: solo solicitudes
+  // aprobadas con ítems todavía en estado 'pendiente', con el mínimo de
+  // campos. La campana pollea este endpoint — getAll (lista completa con
+  // items+proveedores, cientos de KB) agotaba el bandwidth de Render.
+  async getPendientes(token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    let q = supabase
+      .from('solicitud_compra')
+      // !inner: solo solicitudes con al menos un ítem pendiente; el filtro
+      // sobre el embed deja en `items` únicamente los pendientes.
+      .select('id, obra_cod, fecha, obra:obras(nom), items:solicitud_compra_item!inner(id)')
+      .eq('estado', 'aprobada')
+      .eq('items.estado', 'pendiente')
+      .order('fecha', { ascending: false })
+      .order('id', { ascending: false })
+
+    const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
+    if (allowed != null) {
+      if (allowed.length === 0) return []
+      q = q.in('obra_cod', allowed)
+    }
+
+    const { data, error } = await q
+    if (error) throw new Error(error.message)
+
+    return (data ?? []).map(({ obra, items, ...s }) => ({
+      ...s,
+      obra_nom: (obra as unknown as { nom: string } | null)?.nom ?? null,
+      n_pendientes: (items as unknown[]).length,
+    }))
+  },
+
   async getById(id: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase

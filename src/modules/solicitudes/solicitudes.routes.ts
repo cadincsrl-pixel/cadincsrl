@@ -51,6 +51,15 @@ solicitudes.get('/', async (c) => {
   )(c)
 })
 
+// GET /pendientes — vista liviana para la campana de notificaciones (id,
+// obra, fecha, cantidad de ítems por comprar). Declarada ANTES de /:id
+// para que "pendientes" no matchee como parámetro.
+solicitudes.get('/pendientes', async (c) => {
+  return withAccess(() =>
+    solicitudesService.getPendientes(c.get('accessToken'), c.get('user').id),
+  )(c)
+})
+
 solicitudes.get('/:id', async (c) => {
   return withAccess(() =>
     solicitudesService.getById(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id),

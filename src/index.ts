@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
+import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { HTTPException } from 'hono/http-exception'
@@ -61,6 +62,10 @@ const app = new Hono()
 
 // ── Middleware global ──
 app.use('*', logger())
+// gzip de respuestas: los JSON grandes (solicitudes, horas, tramos) comprimen
+// ~10×. Sin esto el plan Hobby de Render (5 GB de bandwidth) se agotaba solo
+// con el tráfico normal de la app (agosto 2026).
+app.use('*', compress())
 app.use('*', cors({
   origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
   credentials: true,
