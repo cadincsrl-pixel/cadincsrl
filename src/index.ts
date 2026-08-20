@@ -46,6 +46,7 @@ import proveedoresRoutes from './modules/proveedores/proveedores.routes.js'
 import facturasCompraRoutes from './modules/facturas-compra/facturas-compra.routes.js'
 import stockRoutes from './modules/stock/stock.routes.js'
 import stockProveedorRoutes from './modules/stock-proveedor/stock-proveedor.routes.js'
+import stockClienteRoutes from './modules/stock-cliente/stock-cliente.routes.js'
 import cuentaClienteRoutes from './modules/cuenta-cliente/cuenta-cliente.routes.js'
 import adminRoutes from './modules/admin/admin.routes.js'
 import remitosEnvioRoutes from './modules/remitos-envio/remitos-envio.routes.js'
@@ -125,6 +126,7 @@ app.route('/api/proveedores', proveedoresRoutes)
 app.route('/api/facturas-compra', facturasCompraRoutes)
 app.route('/api/stock', stockRoutes)
 app.route('/api/stock-proveedor', stockProveedorRoutes)
+app.route('/api/stock-cliente', stockClienteRoutes)
 app.route('/api/cuenta-cliente', cuentaClienteRoutes)
 app.route('/api/admin', adminRoutes)
 app.route('/api/remitos-envio', remitosEnvioRoutes)

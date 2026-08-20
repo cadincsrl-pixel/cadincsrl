@@ -8,6 +8,7 @@ import { solicitudesService, HttpError } from './solicitudes.service.js'
 import {
   CreateSolicitudSchema, UpdateSolicitudSchema,
   ComprarItemSchema, DespacharItemSchema, EnviarItemSchema, EditarItemSchema,
+  ResolverStockClienteSchema,
 } from './solicitudes.schema.js'
 
 // Variable de contexto usada por el gate de despacho forzado.
@@ -174,6 +175,15 @@ async function requireItemObraScope(c: any, next: any) {
 // resolver_items: ver el historial es lectura, no resolución).
 solicitudes.get('/items/:itemId/eventos', requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.getItemEventos(Number(c.req.param('itemId')), c.get('accessToken'))
+}))
+
+// POST /items/:itemId/stock-cliente — resuelve el ítem con material del
+// CLIENTE administrado en depósito (ledger stock_cliente). No factura: el
+// material ya es del cliente (RPC resolver_item_stock_cliente, sin MCC).
+solicitudes.post('/items/:itemId/stock-cliente', requireResolverItems, requireItemObraScope, zValidator('json', ResolverStockClienteSchema), itemHandler(async (c) => {
+  return solicitudesService.resolverItemStockCliente(
+    Number(c.req.param('itemId')), c.req.valid('json').stock_item_id, c.get('user').id
+  )
 }))
 
 solicitudes.post('/items/:itemId/comprar', requireResolverItems, requireItemObraScope, zValidator('json', ComprarItemSchema), itemHandler(async (c) => {

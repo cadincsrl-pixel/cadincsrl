@@ -10,6 +10,10 @@ const ItemSchema = z.object({
   material_id: z.number().int().positive().nullable().optional().default(null),
 })
 
+export const ResolverStockClienteSchema = z.object({
+  stock_item_id: z.number().int().positive(),
+})
+
 export const CreateSolicitudSchema = z.object({
   obra_cod:  z.string().min(1),
   prioridad: z.enum(['normal', 'urgente']).default('normal'),

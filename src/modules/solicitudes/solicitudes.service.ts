@@ -7,7 +7,7 @@ import type {
   ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto,
 } from './solicitudes.schema.js'
 
-type ItemEstado = 'pendiente' | 'comprado' | 'de_deposito' | 'en_proveedor' | 'retirado' | 'enviado' | 'rechazado'
+type ItemEstado = 'pendiente' | 'comprado' | 'de_deposito' | 'en_proveedor' | 'retirado' | 'de_stock_cliente' | 'enviado' | 'rechazado'
 
 // ── Feature flag ─────────────────────────────────────────────
 // Si USE_RPC_RESOLVER === 'true', resolverItem{Compra,Despacho} usan las
@@ -79,7 +79,7 @@ export function mapRpcError(error: PostgrestError): HttpError {
 // Incluye en_proveedor (comprado, esperando retiro) y retirado (traído, listo
 // para enviar) — antes faltaban y dejaban la solicitud en 'pendiente' aunque
 // todos sus ítems estuvieran en gestión.
-const ESTADOS_RESUELTOS: ItemEstado[] = ['comprado', 'de_deposito', 'en_proveedor', 'retirado', 'enviado']
+const ESTADOS_RESUELTOS: ItemEstado[] = ['comprado', 'de_deposito', 'en_proveedor', 'retirado', 'de_stock_cliente', 'enviado']
 
 function calcProgreso(items: Array<{ estado: ItemEstado }>): string {
   const actionable = items.filter(i => i.estado !== 'rechazado')
@@ -709,7 +709,8 @@ export const solicitudesService = {
       })
       .eq('id', itemId)
       // 'retirado' = traído del proveedor, listo para enviar (flujo §5.8).
-      .in('estado', ['comprado', 'de_deposito', 'retirado'])
+      // 'de_stock_cliente' = material del cliente en depósito, listo para enviar.
+      .in('estado', ['comprado', 'de_deposito', 'retirado', 'de_stock_cliente'])
       .select()
       .maybeSingle()
     if (error) throw new Error(error.message)
@@ -777,6 +778,45 @@ export const solicitudesService = {
     return data
   },
 
+  // Resuelve un ítem pendiente con material del CLIENTE administrado en el
+  // depósito (ledger stock_cliente, migración 20260820). RPC transaccional
+  // SIEMPRE (no hay camino legacy: la feature nació con RPC). Sin MCC a
+  // propósito: el material ya es del cliente, facturarlo sería doble cobro.
+  // supabaseAdmin: SECURITY DEFINER revocada de authenticated (20260527);
+  // permiso y scope de obra ya validados por el middleware.
+  async resolverItemStockCliente(itemId: number, stockItemId: number, userId?: string) {
+    const { data, error } = await supabaseAdmin.rpc('resolver_item_stock_cliente', {
+      p_item_id:       itemId,
+      p_stock_item_id: stockItemId,
+      p_user_id:       userId ?? null,
+    })
+    if (error) {
+      const msg = error.message ?? ''
+      if (/ITEM_NO_EXISTE/.test(msg))          throw new HttpError(404, 'ITEM_NO_EXISTE')
+      if (/ITEM_YA_PROCESADO/.test(msg))       throw new HttpError(409, 'ITEM_YA_PROCESADO')
+      if (/SOLICITUD_NO_EXISTE/.test(msg))     throw new HttpError(404, 'SOLICITUD_NO_EXISTE')
+      if (/STOCK_CLIENTE_NO_EXISTE/.test(msg)) throw new HttpError(404, 'STOCK_CLIENTE_NO_EXISTE')
+      if (/OBRA_DISTINTA/.test(msg))           throw new HttpError(409, 'OBRA_DISTINTA')
+      if (/SALDO_INSUFICIENTE/.test(msg))      throw new HttpError(409, 'SALDO_INSUFICIENTE')
+      throw new HttpError(500, 'DB_ERROR', { dbMessage: msg })
+    }
+    return Array.isArray(data) ? data[0] : data
+  },
+
+  async revertirItemStockCliente(itemId: number, userId?: string) {
+    const { data, error } = await supabaseAdmin.rpc('revertir_item_stock_cliente', {
+      p_item_id: itemId,
+      p_user_id: userId ?? null,
+    })
+    if (error) {
+      const msg = error.message ?? ''
+      if (/ITEM_NO_EXISTE/.test(msg))             throw new HttpError(404, 'ITEM_NO_EXISTE')
+      if (/ITEM_NO_DE_STOCK_CLIENTE/.test(msg))   throw new HttpError(409, 'ITEM_NO_DE_STOCK_CLIENTE')
+      throw new HttpError(500, 'DB_ERROR', { dbMessage: msg })
+    }
+    return Array.isArray(data) ? data[0] : data
+  },
+
   async revertirItem(itemId: number, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
     // Un item cuyo MCC ya fue cobrado al cliente no se puede revertir: el
@@ -791,6 +831,11 @@ export const solicitudesService = {
     // Estado previo (entre comprado/de_deposito/rechazado) para la traza.
     const { data: prev } = await supabase
       .from('solicitud_compra_item').select('estado').eq('id', itemId).maybeSingle()
+    // de_stock_cliente revierte por su RPC (devuelve el consumo al ledger del
+    // cliente y no tocó stock propio ni MCC — el flujo genérico no aplica).
+    if (prev?.estado === 'de_stock_cliente') {
+      return this.revertirItemStockCliente(itemId, userId)
+    }
     const { data, error } = await supabase
       .from('solicitud_compra_item')
       .update({
@@ -884,7 +929,7 @@ export const solicitudesService = {
     //   (b) un ítem despachado al que el comprador le agregó proveedor_id como
     //       corrección volvía a 'comprado' en vez de 'de_deposito'.
     // Fallback a la inferencia vieja para ítems previos a los eventos (<2026-05-30).
-    const RESUELTOS = ['comprado', 'de_deposito', 'retirado']
+    const RESUELTOS = ['comprado', 'de_deposito', 'retirado', 'de_stock_cliente']
     const { data: ev } = await supabase
       .from('solicitud_item_eventos')
       .select('estado_nuevo')

@@ -108,8 +108,9 @@ export const remitosEnvioService = {
           .maybeSingle()
         if (!itemPrev) continue
         // Solo estados listos para enviar ('retirado' = ya se trajo del
-        // proveedor, flujo en_proveedor → retirar).
-        if (!['comprado', 'de_deposito', 'retirado'].includes(itemPrev.estado)) continue
+        // proveedor, flujo en_proveedor → retirar; 'de_stock_cliente' =
+        // material del cliente en depósito, ya descontado de su ledger).
+        if (!['comprado', 'de_deposito', 'retirado', 'de_stock_cliente'].includes(itemPrev.estado)) continue
 
         const efectiva  = Number(itemPrev.cantidad_comprada ?? itemPrev.cantidad)
         const yaEnviada = Number(itemPrev.cantidad_enviada ?? 0)
@@ -138,7 +139,7 @@ export const remitosEnvioService = {
             ...(completo ? { estado: 'enviado', fecha_envio: hoy, remito_envio_id: remito.id } : {}),
           })
           .eq('id', itemId)
-          .in('estado', ['comprado', 'de_deposito', 'retirado'])
+          .in('estado', ['comprado', 'de_deposito', 'retirado', 'de_stock_cliente'])
           .select('id')
           .maybeSingle()
 
