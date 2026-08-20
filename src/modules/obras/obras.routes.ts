@@ -13,9 +13,11 @@ obras.use('*', authMiddleware)
 
 // GET /api/obras?modulo=tarja
 //
-// Lectura accesible desde tarja o certificaciones (los jefes de obra
-// solo tienen certificaciones y necesitan ver SUS obras al pedir
-// materiales).
+// Lectura accesible desde tarja, certificaciones o herramientas (los
+// jefes de obra solo tienen certificaciones y necesitan ver SUS obras
+// al pedir materiales; herramientas necesita las obras como origen/
+// destino de movimientos — sin esto un usuario solo-herramientas veía
+// todos los dropdowns de obra vacíos por un 403 silencioso).
 //
 // Query param opcional `modulo`: cuando se pasa, respeta el override
 // `permisos.<modulo>.obras_scope` del perfil. Sin parámetro se usa el
@@ -25,6 +27,7 @@ obras.use('*', authMiddleware)
 obras.get('/', requirePermisoOr([
   { modulo: 'tarja', accion: 'lectura' },
   { modulo: 'certificaciones', accion: 'lectura' },
+  { modulo: 'herramientas', accion: 'lectura' },
 ]), async (c) => {
   const token  = c.get('accessToken')
   const userId = c.get('user').id

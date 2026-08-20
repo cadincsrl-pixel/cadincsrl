@@ -42,6 +42,34 @@ herramientas.get('/config', requirePermiso('herramientas', 'lectura'), async (c)
   })
 })
 
+// GET /api/herramientas/responsables
+//
+// Datos mínimos para el combo de responsable de movimientos (grupos
+// Operarios / Usuarios del sistema / Contratistas). Existe porque las
+// fuentes completas están gateadas por otros módulos y para un operador
+// de herramientas fallaban con 403 silencioso (combo vacío sin error):
+//   - /api/usuarios          → admin-only
+//   - /api/personal          → pide personal|tarja lectura
+//   - /api/contratistas      → pide tarja lectura
+// Devuelve solo nombres e ids — sin PII (mismo criterio que
+// /api/obras/responsables-disponibles).
+herramientas.get('/responsables', requirePermiso('herramientas', 'lectura'), async (c) => {
+  const [personal, usuarios, contratistas] = await Promise.all([
+    supabase.from('personal').select('leg, nom').order('nom'),
+    supabase.from('profiles').select('id, nombre, rol, rol_base').eq('activo', true).order('nombre'),
+    supabase.from('contratistas').select('id, nom, especialidad').order('nom'),
+  ])
+
+  const err = personal.error ?? usuarios.error ?? contratistas.error
+  if (err) return c.json({ error: err.message }, 500)
+
+  return c.json({
+    personal:     personal.data     ?? [],
+    usuarios:     usuarios.data     ?? [],
+    contratistas: contratistas.data ?? [],
+  })
+})
+
 // GET /api/herramientas/stats
 herramientas.get('/stats', requirePermiso('herramientas', 'lectura'), async (c) => {
   const { data: herrs } = await supabase
