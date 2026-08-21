@@ -21,8 +21,8 @@ export const cobrosService = {
     const supabase = createSupabaseClient(token)
 
     // 0. Si la empresa cobra con facturación, el cobro ES una factura emitida
-    // por CADINC: exige nº + fecha de factura y exactamente un viaje (una
-    // factura por viaje — regla del negocio, no técnica).
+    // por CADINC: exige nº + fecha de factura y al menos un viaje. Una misma
+    // factura puede cubrir varios viajes (2026-08-20; antes era 1 a 1).
     const { data: empresa, error: errEmp } = await supabase
       .from('empresas_transportistas')
       .select('modalidad_cobro')
@@ -41,9 +41,9 @@ export const cobrosService = {
         e.code = 'FALTA_FACTURA'
         throw e
       }
-      if (!dto.tramo_ids || dto.tramo_ids.length !== 1) {
-        const e = new Error('FACTURA_UN_VIAJE') as Error & { code?: string }
-        e.code = 'FACTURA_UN_VIAJE'
+      if (!dto.tramo_ids || dto.tramo_ids.length < 1) {
+        const e = new Error('FACTURA_SIN_VIAJES') as Error & { code?: string }
+        e.code = 'FACTURA_SIN_VIAJES'
         throw e
       }
     }
