@@ -84,6 +84,8 @@ const ModuloPermisosSchema = z.object({
   resolver_items:    z.boolean().optional(),
   forzar_despacho:   z.boolean().optional(),
   administrar_obras: z.boolean().optional(),
+  // Tarja: ver/editar costos de personal de oficina (gate del módulo oficina).
+  costos_oficina:    z.boolean().optional(),
   // Alquiler: cargar/editar cobros sin ser admin (eliminar sigue admin-only).
   gestionar_cobros:  z.boolean().optional(),
   // Estos dos faltaban en el whitelist y el strip de zod los perdía en
