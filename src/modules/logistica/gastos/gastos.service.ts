@@ -54,6 +54,12 @@ const CAMPOS_FINANCIEROS = new Set<keyof UpdateGastoDto>([
   'fecha',
 ])
 
+// Hoy en Argentina (UTC-3 fijo, sin DST). Después de las 21:00 AR el "hoy"
+// UTC ya es mañana — usar toISOString() pelado permitiría fechas futuras.
+function hoyAR(): string {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+}
+
 function extFromMime(mime: string): string {
   if (mime === 'image/jpeg') return 'jpg'
   if (mime === 'image/png')  return 'png'
@@ -353,10 +359,20 @@ export const gastosService = {
     // ir al RPC si es obvio).
     const { data: cat } = await sb
       .from('gastos_categorias')
-      .select('codigo')
+      .select('codigo, nombre, permite_fecha_futura')
       .eq('id', dto.categoria_id)
       .maybeSingle()
     const esCombustible = cat?.codigo === 'combustible'
+
+    // Peaje/gomería son hechos consumados: no se cargan adelantados. Otras
+    // categorías sí (previsión). Flag data-driven en gastos_categorias.
+    if (cat && cat.permite_fecha_futura === false && dto.fecha > hoyAR()) {
+      throw new HttpError(400, 'FECHA_FUTURA_NO_PERMITIDA', {
+        categoria: cat.nombre,
+        fecha:     dto.fecha,
+        message:   `Los gastos de ${cat.nombre} no se pueden cargar con fecha futura.`,
+      })
+    }
 
     if (esCombustible && !dto.carga_combustible) {
       throw new HttpError(400, 'CARGA_REQUERIDA', {
@@ -486,12 +502,31 @@ export const gastosService = {
 
     const { data: actual, error: e0 } = await sb
       .from('gastos_logistica')
-      .select('id, estado, liquidacion_id, comprobante_url')
+      .select('id, estado, liquidacion_id, comprobante_url, fecha, categoria_id')
       .eq('id', id)
       .is('deleted_at', null)
       .maybeSingle()
     if (e0)     throw new HttpError(500, 'DB_ERROR', e0.message)
     if (!actual) throw new HttpError(404, 'GASTO_NO_EXISTE')
+
+    // Misma regla que en create: la combinación resultante de categoría +
+    // fecha no puede quedar en el futuro si la categoría no lo permite.
+    if (dto.fecha !== undefined || dto.categoria_id !== undefined) {
+      const catIdEf  = dto.categoria_id ?? actual.categoria_id
+      const fechaEf  = dto.fecha ?? actual.fecha
+      const { data: catEf } = await sb
+        .from('gastos_categorias')
+        .select('nombre, permite_fecha_futura')
+        .eq('id', catIdEf)
+        .maybeSingle()
+      if (catEf && catEf.permite_fecha_futura === false && fechaEf > hoyAR()) {
+        throw new HttpError(400, 'FECHA_FUTURA_NO_PERMITIDA', {
+          categoria: catEf.nombre,
+          fecha:     fechaEf,
+          message:   `Los gastos de ${catEf.nombre} no se pueden cargar con fecha futura.`,
+        })
+      }
+    }
 
     // Inmutable total si ya está en una liquidación.
     if (actual.liquidacion_id) {
