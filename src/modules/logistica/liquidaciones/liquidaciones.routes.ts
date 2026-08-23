@@ -26,6 +26,9 @@ liquidaciones.post('/', zValidator('json', CreateLiquidacionSchema), async (c) =
     const data = await liquidacionesService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
     return c.json(data, 201)
   } catch (err: any) {
+    // Errores tipados del service (ej. PCT_INCONSISTENTE, 400): salen con su
+    // status propio, no como 500 genérico.
+    if (err instanceof LiqHttpError) return handleLiqError(err, c)
     // El RPC lanza TRAMO_INVALIDO / ADELANTO_INVALIDO / GASTO_INVALIDO cuando
     // los IDs no pertenecen al chofer o ya están liquidados. Mapeo a 400.
     const msg = err?.message ?? ''

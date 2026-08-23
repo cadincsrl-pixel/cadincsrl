@@ -71,6 +71,30 @@ export class LiqHttpError extends Error {
   }
 }
 
+// ── Invariante aritmético de la modalidad pct ────────────────────────────────
+// subtotal_pct debe ser base_neta × pct_aplicado/100, con tolerancia de $1 por
+// redondeo del cliente. El backend persiste lo que manda el frontend (la base
+// NO se recalcula desde los tramos acá — eso es otro proyecto); este guard solo
+// evita que una terna incoherente quede grabada como plata del chofer. Corre en
+// el service ANTES de las RPCs (create_liquidacion_con_reintegros /
+// cerrar_liquidacion), que solo validan non-null.
+function assertPctConsistente(
+  base_neta:    number | null | undefined,
+  pct_aplicado: number | null | undefined,
+  subtotal_pct: number | null | undefined,
+): void {
+  if (base_neta == null || pct_aplicado == null || subtotal_pct == null) return
+  const esperado = base_neta * pct_aplicado / 100
+  if (Math.abs(subtotal_pct - esperado) > 1) {
+    throw new LiqHttpError(400, 'PCT_INCONSISTENTE', {
+      base_neta,
+      pct_aplicado,
+      subtotal_pct_recibido: subtotal_pct,
+      subtotal_pct_esperado: Math.round(esperado * 100) / 100,
+    })
+  }
+}
+
 function mapLiqRpcError(error: PostgrestError): LiqHttpError {
   const msg = error.message || ''
   const code =
@@ -206,6 +230,11 @@ export const liquidacionesService = {
   },
 
   async create(dto: CreateLiquidacionDto, _token: string, userId: string) {
+    // Modalidad pct: no persistir una terna base/%/subtotal que no cierra.
+    if ((dto.modalidad ?? 'km_jornal') === 'pct') {
+      assertPctConsistente(dto.base_neta, dto.pct_aplicado, dto.subtotal_pct)
+    }
+
     // Delegamos al RPC transaccional — garantiza que si algún vínculo
     // falla (tramo/adelanto/gasto no valido), nada se persiste y la
     // liquidación no queda a medio crear. Ver migración 20260423_liquidaciones_reintegros.
@@ -275,6 +304,23 @@ export const liquidacionesService = {
   },
 
   async cerrar(id: number, _token: string, userId: string) {
+    // Guard pct ANTES de la RPC (la RPC no se toca): el cierre snapshotea lo
+    // ya persistido sin recalcular, así que si la terna base/%/subtotal quedó
+    // incoherente en el borrador, acá es la última puerta antes de que sea
+    // plata firmada. Si la liquidación no existe, se deja que la RPC devuelva
+    // LIQUIDACION_NO_EXISTE como siempre.
+    const { data: prev, error: ePrev } = await supabaseAdmin
+      .from('liquidaciones')
+      .select('modalidad, base_neta, pct_aplicado, subtotal_pct')
+      .eq('id', id)
+      .maybeSingle()
+    if (ePrev) throw new LiqHttpError(500, 'DB_ERROR', ePrev.message)
+    if (prev?.modalidad === 'pct') {
+      // numeric llega como string vía PostgREST → normalizar antes de comparar.
+      const num = (v: unknown) => (v == null ? null : Number(v))
+      assertPctConsistente(num(prev.base_neta), num(prev.pct_aplicado), num(prev.subtotal_pct))
+    }
+
     // RPC transaccional: pasa los gastos vinculados 'aprobado' → 'pagado'
     // (el chofer cobra el reintegro con esta liquidación), cierra la
     // liquidación y, si el total neto quedó negativo, genera el adelanto

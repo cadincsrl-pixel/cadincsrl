@@ -23,11 +23,13 @@ const CAMPOS_SIN_PLATA = new Set([
 ])
 
 // Sólo afectan la FACTURACIÓN al cliente (el cobro se arma por tonelada y por
-// tarifa de la empresa). La liquidación del chofer no los mira, así que un
-// tramo liquidado pero todavía sin facturar los puede corregir.
-// `tarifa_variante` sigue el mismo criterio que toneladas: la liquidación pct
-// snapshotea su subtotal al cerrarse, así que corregir la variante después
-// solo afecta el cobro futuro (misma exposición ya aceptada para toneladas).
+// tarifa de la empresa). En modalidad km_jornal la liquidación del chofer no
+// los mira (días × básico + km × $/km), así que un tramo liquidado pero
+// todavía sin facturar los puede corregir.
+// ⚠️ En modalidad pct estos campos SÍ mueven la comisión: la base_neta es
+// Σ ton × tarifa (por empresa/variante) ÷ 1,21, y queda SNAPSHOTEADA al crear
+// el borrador — cerrar NO recalcula. Por eso update() los bloquea cuando la
+// liquidación del tramo es pct (ver guard más abajo).
 const CAMPOS_SOLO_COBRO = new Set(['toneladas_carga', 'toneladas_descarga', 'empresa_id', 'tarifa_variante'])
 
 // El resto (chofer, camión, tipo, cantera, depósito, fechas, estado) cambia km
@@ -182,6 +184,26 @@ export const tramosService = {
           'TRAMO_LIQUIDADO',
           `No se puede cambiar ${tocaLiquidacion.join(', ')}: el tramo está liquidado (liquidación N° ${tramo.liquidacion_id}). Los remitos y las observaciones sí se pueden corregir.`,
         )
+      }
+      // La exención de CAMPOS_SOLO_COBRO vale sólo para km_jornal. En pct la
+      // comisión del chofer se calcula sobre ton × tarifa (empresa/variante
+      // incluidas) y la base_neta queda snapshoteada al CREAR el borrador —
+      // cerrar no recalcula. Editar estos campos con el tramo ya vinculado
+      // desincronizaría la base sin que nadie lo note.
+      const soloCobroCambiados = cambiados.filter(k => CAMPOS_SOLO_COBRO.has(k))
+      if (tramo.liquidacion_id && soloCobroCambiados.length > 0) {
+        const { data: liq, error: eLiq } = await supabase
+          .from('liquidaciones')
+          .select('modalidad')
+          .eq('id', tramo.liquidacion_id)
+          .maybeSingle()
+        if (eLiq) throw new Error(eLiq.message)
+        if (liq?.modalidad === 'pct') {
+          throw codedError(
+            'TRAMO_LIQUIDADO',
+            `No se puede cambiar ${soloCobroCambiados.join(', ')}: el tramo está en la liquidación N° ${tramo.liquidacion_id}, de modalidad porcentaje, y esos campos afectan la comisión del chofer. Reabrí (o eliminá el borrador de) esa liquidación primero.`,
+          )
+        }
       }
       // El cobro se arma por tonelada y por tarifa de empresa/unidad: cualquiera
       // de estos campos lo desincroniza.
