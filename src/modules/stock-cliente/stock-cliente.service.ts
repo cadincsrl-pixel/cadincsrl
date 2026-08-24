@@ -2,6 +2,7 @@ import { createSupabaseClient } from '../../lib/supabase.js'
 import type {
   ListStockClienteDto,
   EntradaStockClienteDto,
+  EntradaLoteStockClienteDto,
   SalidaStockClienteDto,
 } from './stock-cliente.schema.js'
 
@@ -15,6 +16,78 @@ export class StockClienteHttpError extends Error {
     super(code)
     this.name = 'StockClienteHttpError'
   }
+}
+
+// Núcleo compartido por entrada() y entradaLote(): find-or-create del material
+// por obra + descripción normalizada más el movimiento de entrada. El índice
+// único parcial (sci_obra_descripcion_uq: obra + lower(btrim(descripcion))
+// entre activos) respalda contra carreras: si dos entradas simultáneas crean
+// el mismo material, la segunda pega 23505 y reintenta el lookup.
+async function registrarEntradaItem(
+  supabase: ReturnType<typeof createSupabaseClient>,
+  args: {
+    obra_cod:    string
+    descripcion: string
+    unidad:      string
+    cantidad:    number
+    fecha?:      string
+    obs:         string
+  },
+  userId: string,
+) {
+  const desc = args.descripcion.trim()
+  // ilike trata % y _ como comodines: sin escapar, "Hierro 8_mm" podría
+  // matchear (y sumarle saldo a) otro ítem. Solo queremos case-insensitive.
+  const descPattern = desc.replace(/([%_\\])/g, '\\$1')
+  let { data: item } = await supabase
+    .from('stock_cliente_items')
+    .select('*')
+    .eq('obra_cod', args.obra_cod)
+    .eq('activo', true)
+    .ilike('descripcion', descPattern)
+    .maybeSingle()
+
+  if (!item) {
+    const { data: creado, error: errCrear } = await supabase
+      .from('stock_cliente_items')
+      .insert({
+        obra_cod: args.obra_cod, descripcion: desc, unidad: args.unidad,
+        created_by: userId, updated_by: userId,
+      })
+      .select()
+      .single()
+    if (errCrear) {
+      if (errCrear.code === '23505') {
+        const { data: existente } = await supabase
+          .from('stock_cliente_items')
+          .select('*')
+          .eq('obra_cod', args.obra_cod)
+          .eq('activo', true)
+          .ilike('descripcion', desc)
+          .maybeSingle()
+        if (!existente) throw new Error(errCrear.message)
+        item = existente
+      } else if (errCrear.code === '23503') {
+        throw new StockClienteHttpError(404, 'OBRA_NO_EXISTE')
+      } else {
+        throw new Error(errCrear.message)
+      }
+    } else {
+      item = creado
+    }
+  }
+
+  const { data: mov, error } = await supabase
+    .from('stock_cliente_movimientos')
+    .insert({
+      item_id: item.id, tipo: 'entrada', motivo: 'entrega_cliente',
+      cantidad: args.cantidad, fecha: args.fecha ?? undefined,
+      obs: args.obs || null, created_by: userId,
+    })
+    .select()
+    .single()
+  if (error) throw new Error(error.message)
+  return { item, movimiento: mov }
 }
 
 export const stockClienteService = {
@@ -50,61 +123,52 @@ export const stockClienteService = {
 
   async entrada(dto: EntradaStockClienteDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
+    return registrarEntradaItem(supabase, {
+      obra_cod:    dto.obra_cod,
+      descripcion: dto.descripcion,
+      unidad:      dto.unidad,
+      cantidad:    dto.cantidad,
+      fecha:       dto.fecha,
+      obs:         dto.obs,
+    }, userId)
+  },
 
-    // Find-or-create del material por obra + descripción normalizada. El
-    // índice único parcial (sci_obra_descripcion_uq) respalda contra carreras:
-    // si dos entradas simultáneas crean el mismo material, la segunda pega
-    // 23505 y reintenta el lookup.
-    const desc = dto.descripcion.trim()
-    let { data: item } = await supabase
-      .from('stock_cliente_items')
-      .select('*')
-      .eq('obra_cod', dto.obra_cod)
-      .eq('activo', true)
-      .ilike('descripcion', desc)
-      .maybeSingle()
+  // Entrega en lote: muchos materiales de una misma factura/remito. Loop
+  // secuencial NO-atómico (patrón aceptado en el repo — no hay transacción
+  // multi-statement vía PostgREST sin RPC): se procesa en orden y, si un
+  // insert falla a mitad, los anteriores QUEDAN registrados. El error sale
+  // con detail de qué ítem falló y cuántos entraron, para que el usuario
+  // sepa qué recargar.
+  async entradaLote(dto: EntradaLoteStockClienteDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const registrados: { item_id: number; descripcion: string; cantidad: number }[] = []
 
-    if (!item) {
-      const { data: creado, error: errCrear } = await supabase
-        .from('stock_cliente_items')
-        .insert({
-          obra_cod: dto.obra_cod, descripcion: desc, unidad: dto.unidad,
-          created_by: userId, updated_by: userId,
-        })
-        .select()
-        .single()
-      if (errCrear) {
-        if (errCrear.code === '23505') {
-          const { data: existente } = await supabase
-            .from('stock_cliente_items')
-            .select('*')
-            .eq('obra_cod', dto.obra_cod)
-            .eq('activo', true)
-            .ilike('descripcion', desc)
-            .maybeSingle()
-          if (!existente) throw new Error(errCrear.message)
-          item = existente
-        } else if (errCrear.code === '23503') {
-          throw new StockClienteHttpError(404, 'OBRA_NO_EXISTE')
-        } else {
-          throw new Error(errCrear.message)
+    for (const it of dto.items) {
+      try {
+        const { item } = await registrarEntradaItem(supabase, {
+          obra_cod:    dto.obra_cod,
+          descripcion: it.descripcion,
+          unidad:      it.unidad,
+          cantidad:    it.cantidad,
+          fecha:       dto.fecha,
+          obs:         dto.obs,
+        }, userId)
+        registrados.push({ item_id: item.id, descripcion: item.descripcion, cantidad: it.cantidad })
+      } catch (err) {
+        const detail = {
+          item_fallido: it.descripcion,
+          registrados:  registrados.length,
+          total:        dto.items.length,
+          motivo:       err instanceof StockClienteHttpError ? err.code
+                      : err instanceof Error                 ? err.message
+                      : String(err),
         }
-      } else {
-        item = creado
+        const status = err instanceof StockClienteHttpError ? err.status : 500
+        throw new StockClienteHttpError(status, 'ENTRADA_LOTE_PARCIAL', detail)
       }
     }
 
-    const { data: mov, error } = await supabase
-      .from('stock_cliente_movimientos')
-      .insert({
-        item_id: item.id, tipo: 'entrada', motivo: 'entrega_cliente',
-        cantidad: dto.cantidad, fecha: dto.fecha ?? undefined,
-        obs: dto.obs || null, created_by: userId,
-      })
-      .select()
-      .single()
-    if (error) throw new Error(error.message)
-    return { item, movimiento: mov }
+    return { obra_cod: dto.obra_cod, fecha: dto.fecha ?? null, items: registrados }
   },
 
   async salida(dto: SalidaStockClienteDto, token: string, userId: string) {

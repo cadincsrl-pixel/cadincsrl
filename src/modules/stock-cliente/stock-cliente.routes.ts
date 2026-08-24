@@ -6,6 +6,7 @@ import { stockClienteService, StockClienteHttpError } from './stock-cliente.serv
 import {
   ListStockClienteSchema,
   EntradaStockClienteSchema,
+  EntradaLoteStockClienteSchema,
   SalidaStockClienteSchema,
 } from './stock-cliente.schema.js'
 
@@ -47,6 +48,26 @@ stockCliente.post('/entrada', zValidator('json', EntradaStockClienteSchema), asy
     return c.json(data, 201)
   } catch (err) { return handle(err, c) }
 })
+
+// ── Entrega del cliente en lote (varios materiales de una misma factura/remito) ──
+stockCliente.post(
+  '/entrada-lote',
+  // El superRefine del schema marca descripciones repetidas con message
+  // 'MATERIAL_DUPLICADO'; el hook lo mapea al shape { error: CODE } que espera
+  // el frontend (el default del zValidator devolvería el ZodError crudo).
+  zValidator('json', EntradaLoteStockClienteSchema, (result, c) => {
+    if (!result.success) {
+      const dup = result.error.issues.some((i) => i.message === 'MATERIAL_DUPLICADO')
+      if (dup) return c.json({ error: 'MATERIAL_DUPLICADO' }, 400)
+    }
+  }),
+  async (c) => {
+    try {
+      const data = await stockClienteService.entradaLote(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
+      return c.json(data, 201)
+    } catch (err) { return handle(err, c) }
+  },
+)
 
 // ── Salida manual (consumo sin solicitud / ajuste / devolución) ──
 stockCliente.post('/salida', zValidator('json', SalidaStockClienteSchema), async (c) => {

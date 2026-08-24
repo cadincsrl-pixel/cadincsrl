@@ -16,6 +16,34 @@ export const EntradaStockClienteSchema = z.object({
   obs:         z.string().optional().default(''),
 })
 
+// Entrega del cliente en lote: muchos materiales de una misma factura/remito.
+// La cabecera (obra, fecha, obs) aplica a todos los movimientos. Descripciones
+// duplicadas dentro del lote se rechazan acá (el find-or-create del service
+// sumaría dos entradas al mismo ítem sin que el usuario lo note).
+export const EntradaLoteStockClienteSchema = z.object({
+  obra_cod: z.string().min(1),
+  fecha:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  obs:      z.string().optional().default(''),
+  items: z.array(z.object({
+    descripcion: z.string().trim().min(1),
+    unidad:      z.string().trim().min(1).default('unid'),
+    cantidad:    z.number().positive(),
+  })).min(1),
+}).superRefine((val, ctx) => {
+  const vistos = new Set<string>()
+  val.items.forEach((it, i) => {
+    const key = it.descripcion.trim().toLowerCase()
+    if (vistos.has(key)) {
+      ctx.addIssue({
+        code:    'custom',
+        message: 'MATERIAL_DUPLICADO',
+        path:    ['items', i, 'descripcion'],
+      })
+    }
+    vistos.add(key)
+  })
+})
+
 // Salida manual (consumo sin solicitud, ajuste o devolución al cliente).
 export const SalidaStockClienteSchema = z.object({
   item_id:  z.number().int().positive(),
@@ -25,6 +53,7 @@ export const SalidaStockClienteSchema = z.object({
   obs:      z.string().optional().default(''),
 })
 
-export type ListStockClienteDto    = z.infer<typeof ListStockClienteSchema>
-export type EntradaStockClienteDto = z.infer<typeof EntradaStockClienteSchema>
+export type ListStockClienteDto        = z.infer<typeof ListStockClienteSchema>
+export type EntradaStockClienteDto     = z.infer<typeof EntradaStockClienteSchema>
+export type EntradaLoteStockClienteDto = z.infer<typeof EntradaLoteStockClienteSchema>
 export type SalidaStockClienteDto  = z.infer<typeof SalidaStockClienteSchema>
