@@ -15,6 +15,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0",
     "@hono/node-server": "^1.19.11",
     "@hono/zod-validator": "^0.7.6",
     "@supabase/supabase-js": "^2.78.0",

@@ -58,6 +58,7 @@ import flotaGpsInternalRoutes from './modules/flota/gps-sync/flota-gps-sync.inte
 import alquilerRoutes from './modules/alquiler/alquiler.routes.js'
 import aridosRoutes from './modules/aridos/aridos.routes.js'
 import oficinaRoutes from './modules/oficina/oficina.routes.js'
+import asistenteRoutes from './modules/asistente/asistente.routes.js'
 
 
 const app = new Hono()
@@ -138,6 +139,7 @@ app.route('/api/flota', flotaRoutes)
 app.route('/api/alquiler', alquilerRoutes)
 app.route('/api/aridos', aridosRoutes)
 app.route('/api/oficina', oficinaRoutes)
+app.route('/api/asistente', asistenteRoutes)
 
 // ── Manejo global de errores ──
 app.onError((err, c) => {
