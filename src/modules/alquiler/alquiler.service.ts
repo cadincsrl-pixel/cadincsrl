@@ -176,6 +176,21 @@ async function requireGestionCobros(userId: string): Promise<void> {
   }
 }
 
+// Documentación de máquinas: admin o flag `permisos.alquiler.gestionar_docs`
+// (2026-08-26). Permite a un operador cargar/renovar la póliza de seguro y
+// actualizar aseguradora/vencimiento SIN abrir el resto del ABM de flota:
+// en updateMaquina el no-admin con este flag queda limitado a los campos de
+// seguro (el resto del dto se descarta). Devuelve esAdmin para eso.
+async function requireGestionDocs(userId: string): Promise<{ esAdmin: boolean }> {
+  const { data } = await supabaseAdmin.from('profiles').select('rol, permisos').eq('id', userId).single()
+  if (data?.rol === 'admin') return { esAdmin: true }
+  const flag = (data?.permisos as Record<string, Record<string, unknown>> | null)?.alquiler?.gestionar_docs
+  if (flag !== true) {
+    forbidden('Necesitás el permiso "Documentación de máquinas" de Alquiler para gestionar seguros y papeles')
+  }
+  return { esAdmin: false }
+}
+
 // Importe devengado de un parte = horas × precio_hora (de la asignación),
 // redondeado a 2 decimales. null si la máquina no tiene precio fijado.
 function calcImporte(horas: number | null | undefined, precio: number | null): number | null {
@@ -223,11 +238,23 @@ export const alquilerService = {
   },
 
   async updateMaquina(id: number, dto: UpdateMaquinaDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    // Admin edita todo. No-admin con flag gestionar_docs: SOLO los campos de
+    // seguro — el modal manda el form completo, así que acá se filtra (los
+    // demás campos del dto se descartan en vez de rechazar el request).
+    const { esAdmin } = await requireGestionDocs(userId)
+    let cambios: UpdateMaquinaDto = dto
+    if (!esAdmin) {
+      cambios = {}
+      if (dto.seguro !== undefined)       cambios.seguro = dto.seguro
+      if (dto.seguro_vence !== undefined) cambios.seguro_vence = dto.seguro_vence
+      if (Object.keys(cambios).length === 0) {
+        forbidden('Solo podés modificar los datos del seguro de la máquina')
+      }
+    }
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_maquinas')
-      .update({ ...dto, updated_by: userId })
+      .update({ ...cambios, updated_by: userId })
       .eq('id', id)
       .select()
       .single()
@@ -973,11 +1000,11 @@ export const alquilerService = {
     return { success: true }
   },
 
-  // ── Póliza de seguro (archivo adjunto, admin-only) ────────────
+  // ── Póliza de seguro (archivo adjunto; admin o flag gestionar_docs) ──
   // Flujo de 2 pasos (calcado de vehiculo-docs): pedir signed upload URL →
   // el cliente sube el archivo al bucket → registrar el storage_path.
   async seguroUploadUrl(maquinaId: number, dto: SeguroUploadUrlDto, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionDocs(userId)
     if (!SEGURO_ALLOWED_MIME.has(dto.mime_type)) {
       throw new HTTPException(400, { message: 'Tipo de archivo no permitido (foto o PDF)' })
     }
@@ -992,7 +1019,7 @@ export const alquilerService = {
   },
 
   async seguroRegistrar(maquinaId: number, dto: SeguroRegistrarDto, userId: string, token: string) {
-    await requireAdmin(userId)
+    await requireGestionDocs(userId)
     // Verificar que el archivo realmente se subió y que el path es de esta máquina.
     if (!dto.storage_path.startsWith(`maquina/${maquinaId}/`)) {
       throw new HTTPException(400, { message: 'Path inválido' })
@@ -1032,7 +1059,7 @@ export const alquilerService = {
   },
 
   async seguroSignedUrl(maquinaId: number, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionDocs(userId)
     const sb = createSupabaseClient(token)
     const { data: maq, error } = await sb
       .from('alquiler_maquinas')
@@ -1051,7 +1078,7 @@ export const alquilerService = {
   },
 
   async seguroDelete(maquinaId: number, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionDocs(userId)
     const sb = createSupabaseClient(token)
     const { data: maq } = await sb
       .from('alquiler_maquinas').select('seguro_poliza_path').eq('id', maquinaId).single()

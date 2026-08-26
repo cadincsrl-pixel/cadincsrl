@@ -90,6 +90,9 @@ const ModuloPermisosSchema = z.object({
   asistente_ia:      z.boolean().optional(),
   // Alquiler: cargar/editar cobros sin ser admin (eliminar sigue admin-only).
   gestionar_cobros:  z.boolean().optional(),
+  // Alquiler: gestionar documentación de máquinas (póliza de seguro,
+  // aseguradora y vencimiento) sin ser admin. El resto del ABM sigue admin-only.
+  gestionar_docs:    z.boolean().optional(),
   // Estos dos faltaban en el whitelist y el strip de zod los perdía en
   // silencio al guardar un usuario (2026-07-17): el gate de stock chequea
   // aprobar_ajustes_stock, y el wizard escribe obras_scope por módulo.

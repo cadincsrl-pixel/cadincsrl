@@ -53,7 +53,7 @@ alquiler.delete('/maquinas/:id', async (c) => {
   return c.json(await alquilerService.deleteMaquina(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
 })
 
-// ── Póliza de seguro de la máquina (admin-only; bucket alquiler-docs) ──
+// ── Póliza de seguro de la máquina (admin o flag gestionar_docs; bucket alquiler-docs) ──
 // Flujo de 2 pasos: pedir URL firmada de subida → registrar el storage_path.
 alquiler.post('/maquinas/:id/seguro-poliza/upload-url', zValidator('json', SeguroUploadUrlSchema), async (c) => {
   return c.json(await alquilerService.seguroUploadUrl(Number(c.req.param('id')), c.req.valid('json'), c.get('user').id))
