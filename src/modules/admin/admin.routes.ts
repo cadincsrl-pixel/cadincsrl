@@ -22,6 +22,8 @@ admin.use('*', async (c, next) => {
 admin.get('/audit', async (c) => {
   const user_id = c.req.query('user_id')
   const modulo = c.req.query('modulo')
+  const accion = c.req.query('accion')
+  const q = c.req.query('q')
   const desde = c.req.query('desde')
   const hasta = c.req.query('hasta')
   const limit = c.req.query('limit')
@@ -29,6 +31,8 @@ admin.get('/audit', async (c) => {
   const data = await auditService.getAll(c.get('accessToken'), {
     user_id: user_id || undefined,
     modulo: modulo || undefined,
+    accion: accion || undefined,
+    q: q || undefined,
     desde: desde || undefined,
     hasta: hasta || undefined,
     limit: limit ? Number(limit) : undefined,
