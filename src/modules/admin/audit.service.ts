@@ -34,10 +34,14 @@ export const auditService = {
     if (filters?.modulo) q = q.eq('modulo', filters.modulo)
     if (filters?.accion) q = q.eq('accion', filters.accion)
     // Búsqueda de texto SERVER-SIDE sobre toda la tabla (no solo las 500
-    // cargadas): matchea detalle, entidad y entidad_id. Se sanean los
-    // metacaracteres de ilike y la coma (separador del .or de PostgREST).
+    // cargadas): matchea detalle, entidad y entidad_id. La coma y los
+    // paréntesis se quitan (separadores del .or de PostgREST); `%` y `_`
+    // se ESCAPAN (no se quitan: "contrat_id" tiene que matchear literal).
     if (filters?.q) {
-      const safe = filters.q.replace(/[\\%_,()]/g, ' ').trim()
+      const safe = filters.q
+        .replace(/[,()\\]/g, ' ')
+        .replace(/([%_])/g, '\\$1')
+        .trim()
       if (safe) {
         q = q.or(`detalle.ilike.%${safe}%,entidad.ilike.%${safe}%,entidad_id.ilike.%${safe}%`)
       }
