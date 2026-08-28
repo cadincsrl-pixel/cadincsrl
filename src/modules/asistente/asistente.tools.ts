@@ -503,6 +503,121 @@ async function stockDeposito(input: z.infer<typeof StockDepositoInput>, ctx: Too
   }
 }
 
+// ── 8. facturacion_logistica ──────────────────────────────────────────
+// Lo que CADINC les factura/cobra a las empresas transportistas por la
+// mercadería movida (tabla `cobros`, tab Facturación de logística), más
+// los tramos cargados que todavía no entraron en ninguna factura.
+
+const FacturacionLogisticaInput = z.object({
+  desde:          FechaISO.optional().describe('Fecha inicial YYYY-MM-DD (default: últimos 30 días)'),
+  hasta:          FechaISO.optional().describe('Fecha final YYYY-MM-DD (default: hoy)'),
+  empresa_nombre: z.string().min(2).optional().describe('Filtrar por nombre (o parte) de la empresa transportista'),
+})
+
+type CobroRow = {
+  fecha_desde: string
+  fecha_hasta: string
+  toneladas_totales: number | null
+  total: number | null
+  estado: string
+  factura_nro: string | null
+  empresa: { nombre: string } | null
+}
+
+async function facturacionLogistica(input: z.infer<typeof FacturacionLogisticaInput>, ctx: ToolCtx) {
+  if (!tieneLectura(ctx.perfil, 'logistica')) return sinPermiso('lectura del módulo logistica')
+
+  const desde = input.desde ?? haceDias(30)
+  const hasta = input.hasta ?? hoyAR()
+
+  let empresaIds: number[] | null = null
+  if (input.empresa_nombre) {
+    const safe = input.empresa_nombre.replace(/[\\%_,]/g, ' ')
+    const { data: emps, error } = await supabase
+      .from('empresas_transportistas')
+      .select('id, nombre')
+      .ilike('nombre', `%${safe}%`)
+    if (error) throw new Error(error.message)
+    if (!emps || emps.length === 0) {
+      return { error: 'EMPRESA_NO_ENCONTRADA', detalle: `Ninguna empresa matchea "${input.empresa_nombre}"` }
+    }
+    empresaIds = emps.map(e => e.id as number)
+  }
+
+  // Cobros cuyo período de viajes se solapa con [desde, hasta].
+  const cobros = await paginar<CobroRow>((from, to) => {
+    let q = supabase.from('cobros')
+      .select('fecha_desde, fecha_hasta, toneladas_totales, total, estado, factura_nro, empresa:empresas_transportistas(nombre)')
+      .gte('fecha_hasta', desde)
+      .lte('fecha_desde', hasta)
+      .order('fecha_hasta', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to)
+    if (empresaIds) q = q.in('empresa_id', empresaIds)
+    return q as any
+  })
+
+  const totalFacturado = cobros.reduce((s, c) => s + num(c.total), 0)
+  const cobrados       = cobros.filter(c => c.estado === 'cobrado')
+  const pendientes     = cobros.filter(c => c.estado !== 'cobrado')
+
+  const porEmpresa = new Map<string, { total: number; toneladas: number; cobros: number; pendiente_de_cobro: number }>()
+  for (const c of cobros) {
+    const nombre = c.empresa?.nombre ?? '(sin empresa)'
+    const e = porEmpresa.get(nombre) ?? { total: 0, toneladas: 0, cobros: 0, pendiente_de_cobro: 0 }
+    e.total     += num(c.total)
+    e.toneladas += num(c.toneladas_totales)
+    e.cobros    += 1
+    if (c.estado !== 'cobrado') e.pendiente_de_cobro += num(c.total)
+    porEmpresa.set(nombre, e)
+  }
+
+  // Mercadería ya movida pero todavía sin facturar: tramos cargados del
+  // rango sin cobro_id. Sin valorizar (la tarifa por ruta es versionada y
+  // con variantes) — se informa cantidad y toneladas.
+  const sinFacturar = await paginar<{ toneladas_carga: number | null; toneladas_descarga: number | null }>((from, to) => {
+    let q = supabase.from('tramos')
+      .select('toneladas_carga, toneladas_descarga')
+      .eq('tipo', 'cargado')
+      .is('cobro_id', null)
+      .gte('fecha_operacion', desde)
+      .lte('fecha_operacion', hasta)
+      .order('id')
+      .range(from, to)
+    if (empresaIds) q = q.in('empresa_id', empresaIds)
+    return q
+  })
+  const tonSinFacturar = sinFacturar.reduce(
+    (s, t) => s + num(t.toneladas_descarga ?? t.toneladas_carga), 0)
+
+  return {
+    desde,
+    hasta,
+    empresa_filtro: input.empresa_nombre ?? null,
+    total_facturado: round2(totalFacturado),
+    toneladas_facturadas: round2(cobros.reduce((s, c) => s + num(c.toneladas_totales), 0)),
+    cantidad_facturas: cobros.length,
+    cobrado:            { total: round2(cobrados.reduce((s, c) => s + num(c.total), 0)),   count: cobrados.length },
+    pendiente_de_cobro: { total: round2(pendientes.reduce((s, c) => s + num(c.total), 0)), count: pendientes.length },
+    por_empresa: [...porEmpresa.entries()]
+      .map(([empresa, e]) => ({ empresa, ...e, total: round2(e.total), toneladas: round2(e.toneladas), pendiente_de_cobro: round2(e.pendiente_de_cobro) }))
+      .sort((a, b) => b.total - a.total),
+    ultimas_facturas: cobros.slice(0, 10).map(c => ({
+      empresa: c.empresa?.nombre ?? null,
+      periodo: `${c.fecha_desde} → ${c.fecha_hasta}`,
+      total: num(c.total),
+      toneladas: num(c.toneladas_totales),
+      estado: c.estado,
+      factura_nro: c.factura_nro,
+    })),
+    sin_facturar_aun: {
+      tramos_cargados: sinFacturar.length,
+      toneladas: round2(tonSinFacturar),
+      nota: 'Viajes cargados del rango que todavía no entraron en ninguna factura (sin valorizar).',
+    },
+  }
+}
+
 // ── Registro de herramientas ──────────────────────────────────────────
 // PROHIBIDO acá: herramientas sobre sueldos de oficina (oficina_*) y
 // cualquier escritura. No agregar "de yapa".
@@ -569,5 +684,12 @@ export const ASISTENTE_TOOLS: AsistenteTool[] = [
       'Stock del depósito central: materiales con su saldo actual (entradas − salidas), top 30, con filtro de texto opcional por nombre de material.',
     input_schema: jsonSchema(StockDepositoInput),
     run: conValidacion(StockDepositoInput, stockDeposito),
+  },
+  {
+    name: 'facturacion_logistica',
+    description:
+      'Facturación de logística: lo que CADINC les factura y cobra a las empresas transportistas por la mercadería movida. Totales del rango (facturado, cobrado, pendiente de cobro), desglose por empresa, últimas facturas, y viajes cargados que todavía no se facturaron. Sin rango, usa los últimos 30 días. Filtro opcional por empresa.',
+    input_schema: jsonSchema(FacturacionLogisticaInput),
+    run: conValidacion(FacturacionLogisticaInput, facturacionLogistica),
   },
 ]
