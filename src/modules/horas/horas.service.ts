@@ -116,7 +116,9 @@ export const horasService = {
     if (rows.length > 0) {
       const { error } = await supabase
         .from('horas')
-        .upsert(rows, { onConflict: 'obra_cod,fecha,leg' })
+        // solo_nuevas: placeholders que solo INSERTAN — una fila existente
+        // (horas reales recién tipeadas) jamás se pisa con 0.
+        .upsert(rows, { onConflict: 'obra_cod,fecha,leg', ignoreDuplicates: dto.solo_nuevas === true })
 
       if (error) throw new Error(error.message)
     }

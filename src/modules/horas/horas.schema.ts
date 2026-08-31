@@ -22,6 +22,11 @@ export const UpsertHorasLoteSchema = z.object({
     leg: z.string().min(1),
     horas: z.number().min(0),
   })),
+  // true = el lote son PLACEHOLDERS (0hs para poblar la semana): inserta solo
+  // filas nuevas y NUNCA pisa una existente (ignoreDuplicates). Cierra la
+  // carrera copia-de-semana vs. carga de celda: sin esto, un 0 del lote podía
+  // sobreescribir horas reales tipeadas entre el GET y el PUT de la copia.
+  solo_nuevas: z.boolean().optional(),
 })
 
 export type Hora = z.infer<typeof HoraSchema>
