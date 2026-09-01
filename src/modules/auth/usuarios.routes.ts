@@ -93,6 +93,9 @@ const ModuloPermisosSchema = z.object({
   // Alquiler: gestionar documentación de máquinas (póliza de seguro,
   // aseguradora y vencimiento) sin ser admin. El resto del ABM sigue admin-only.
   gestionar_docs:    z.boolean().optional(),
+  // Logística: anular (borrar) cobros PENDIENTES de facturación sin tener
+  // eliminación del módulo entero. Los cobros ya cobrados siguen bloqueados.
+  anular_cobros:     z.boolean().optional(),
   // Estos dos faltaban en el whitelist y el strip de zod los perdía en
   // silencio al guardar un usuario (2026-07-17): el gate de stock chequea
   // aprobar_ajustes_stock, y el wizard escribe obras_scope por módulo.

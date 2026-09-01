@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso } from '../../../middleware/permission.js'
+import { requirePermiso, tieneFlag } from '../../../middleware/permission.js'
 import { cobrosService } from './cobros.service.js'
 import { CreateCobroSchema } from './cobros.schema.js'
 import adjuntosRoutes from './adjuntos.routes.js'
@@ -11,7 +11,14 @@ cobros.use('*', authMiddleware)
 cobros.on(['GET'],    '*', requirePermiso('logistica', 'lectura'))
 cobros.on(['POST'],   '*', requirePermiso('logistica', 'creacion'))
 cobros.on(['PATCH'],  '*', requirePermiso('logistica', 'actualizacion'))
-cobros.on(['DELETE'], '*', requirePermiso('logistica', 'eliminacion'))
+// DELETE: eliminación del módulo O flag fino `anular_cobros` — permite
+// borrar cobros pendientes (y sus adjuntos) sin abrirle a la persona la
+// eliminación de TODO logística (tramos, gastos, etc.). Patrón gestionar_docs.
+// El service igual bloquea borrar cobros ya cobrados (COBRO_YA_COBRADO).
+cobros.on(['DELETE'], '*', async (c, next) => {
+  if (await tieneFlag(c.get('user').id, 'logistica', 'anular_cobros')) return next()
+  return requirePermiso('logistica', 'eliminacion')(c, next)
+})
 
 // Sub-router de adjuntos: /api/logistica/cobros/:id/adjuntos/...
 cobros.route('/', adjuntosRoutes)
