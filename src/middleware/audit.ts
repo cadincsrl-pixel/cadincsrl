@@ -45,7 +45,10 @@ function parseRoute(path: string, method: string): { modulo: string; entidad: st
     'hs-extras': 'hs extra',
     categorias: 'categoría',
     tarifas: 'tarifa',
-    contratistas: 'contratista',
+    contratistas: parts[1] === 'cert' ? 'certificación contratista'
+      : parts[1] === 'presupuestos' ? 'presupuesto contratista'
+      : parts[1] === 'asig' ? 'asignación contratista'
+      : 'contratista',
     certificaciones: parts[1] === 'materiales' ? 'material cert.' : parts[1] === 'adicionales' ? 'adicional' : 'certificación',
     usuarios: 'usuario',
     herramientas: 'herramienta',
@@ -151,6 +154,9 @@ export async function auditMiddleware(c: Context, next: Next) {
     'baja', 'reset-password', 'semana',
     // Sub-recursos colgados de un id
     'seguro-poliza', 'remito', 'modelos',
+    // Adjuntos de contratistas: /:id/dni, /presupuestos/:id/doc y sus
+    // /upload-url (se saltan en cadena: /presupuestos/5/doc/upload-url → 5)
+    'dni', 'doc', 'upload-url',
     // OJO: 'maquinas' y 'obras' NO van acá aunque existan como
     // /maquinas/:id/... — también son colecciones (`POST /api/alquiler/maquinas`,
     // `POST /api/alquiler/obras`), y ahí el penúltimo segmento es el módulo, no
@@ -158,11 +164,11 @@ export async function auditMiddleware(c: Context, next: Next) {
     // lista, verificá que no exista también como ruta de colección.
   ])
   const urlParts = path.split('/')
-  const last = urlParts[urlParts.length - 1] ?? ''
-  const prev = urlParts[urlParts.length - 2] ?? ''
-  const entidadId = urlParts.length > 3
-    ? (VERBOS_SUFIJO.has(last) ? prev : last)
-    : undefined
+  // Se saltan todos los sufijos encadenados: /presupuestos/5/doc/upload-url
+  // → 'upload-url' y 'doc' son sufijos → el id es '5'.
+  let idx = urlParts.length - 1
+  while (idx > 0 && VERBOS_SUFIJO.has(urlParts[idx] ?? '')) idx--
+  const entidadId = urlParts.length > 3 ? urlParts[idx] : undefined
 
   const token = c.get('accessToken') as string
   const ip = c.req.header('x-forwarded-for') ?? c.req.header('x-real-ip') ?? ''

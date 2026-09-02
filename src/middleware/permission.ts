@@ -99,9 +99,9 @@ export function requireFlag(
 
 /**
  * Chequeo inline (no-middleware) de un flag de permisos. Para handlers que
- * no rechazan sino que degradan la respuesta (ej.: GET asignaciones de
- * contratistas devuelve las filas pero sin `cotizacion` si el usuario tiene
- * `ver_costos=false`). Admin siempre true.
+ * no rechazan sino que degradan la respuesta (ej.: GET /contratistas devuelve
+ * el catálogo sin dni/cuil/cbu si el usuario tiene `ver_pii=false`).
+ * Admin siempre true.
  */
 export async function tieneFlag(
   userId: string,
