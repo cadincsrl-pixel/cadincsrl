@@ -261,6 +261,7 @@ describe('schemas de material', () => {
       precio_ref: 0, proveedor_id: null, obs: '', alias: [], forzar: false,
       // Default false: un material nace sin color y hay que tildarlo en el ABM.
       usa_color: false,
+      clase: 'material',
     })
   })
 
@@ -270,6 +271,15 @@ describe('schemas de material', () => {
     // sin forma de marcarlo desde el ABM.
     expect(CreateMaterialSchema.parse({ rubro_id: 1, nombre: 'Latex', usa_color: true }).usa_color).toBe(true)
     expect(UpdateMaterialSchema.parse({ usa_color: true })).toEqual({ usa_color: true })
+  })
+
+  it('clase es seteable en alta y en PATCH, y default material', () => {
+    // Misma regresion que usa_color: si no esta en materialFields, zod lo descarta
+    // en silencio y el espejo del catalogo queda inerte.
+    expect(CreateMaterialSchema.parse({ rubro_id: 1, nombre: 'Tenaza', clase: 'herramienta' }).clase).toBe('herramienta')
+    expect(CreateMaterialSchema.parse({ rubro_id: 1, nombre: 'Cemento' }).clase).toBe('material')
+    expect(UpdateMaterialSchema.parse({ clase: 'herramienta' })).toEqual({ clase: 'herramienta' })
+    expect(CreateMaterialSchema.safeParse({ rubro_id: 1, nombre: 'X', clase: 'otra' }).success).toBe(false)
   })
 
   it('rechaza alias vacíos', () => {

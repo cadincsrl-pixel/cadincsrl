@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { CreateSolicitudSchema } from '../../../src/modules/solicitudes/solicitudes.schema.js'
 
 // ── Mock del módulo supabase antes de importar el service ─────
 // `vi.hoisted` garantiza que las fns existen cuando vi.mock (hoisteado) las usa.
@@ -441,5 +442,29 @@ describe('despacharItemViaRPC propaga HttpError', () => {
     await expect(
       solicitudesService.despacharItem(itemId, dto as any, token, userId),
     ).rejects.toMatchObject({ status: 404, code: 'ITEM_NO_DISPONIBLE' })
+  })
+})
+
+
+// ── clase / devuelve (migracion 20260902u) ──────────────────────────────────
+describe('clase y devuelve en el item', () => {
+  const base = { obra_cod: 'CC-001', items: [{ descripcion: 'amoladora', cantidad: 1 }] }
+
+  it('default: material, sin devolver', () => {
+    const r = CreateSolicitudSchema.parse(base)
+    expect(r.items[0].clase).toBe('material')
+    expect(r.items[0].devuelve).toBe(false)
+  })
+
+  it('devuelve=true sin clase=herramienta es 400, no 500', () => {
+    // El CHECK de la tabla lo rechazaria; el refine lo frena ANTES de Postgres,
+    // asi el cliente recibe un 400 claro y no el texto crudo del constraint.
+    const r = CreateSolicitudSchema.safeParse({ ...base, items: [{ descripcion: 'x', cantidad: 1, devuelve: true }] })
+    expect(r.success).toBe(false)
+  })
+
+  it('herramienta que se devuelve pasa', () => {
+    const r = CreateSolicitudSchema.parse({ ...base, items: [{ descripcion: 'x', cantidad: 1, clase: 'herramienta', devuelve: true }] })
+    expect(r.items[0]).toMatchObject({ clase: 'herramienta', devuelve: true })
   })
 })

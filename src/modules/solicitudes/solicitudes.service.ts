@@ -235,6 +235,8 @@ export const solicitudesService = {
         unidad:       it.unidad,
         obs:          it.obs ?? null,
         color:        it.color ?? null,
+        clase:        it.clase ?? 'material',
+        devuelve:     it.devuelve ?? false,
         estado:       'pendiente',
       }
       if (it.material_id) row.material_id = it.material_id
@@ -313,6 +315,8 @@ export const solicitudesService = {
             // sin `if`, a diferencia de material_id: hay que poder BORRAR el color
             // de un item (mandar null lo limpia).
             color:       it.color ?? null,
+            clase:       it.clase ?? 'material',
+            devuelve:    it.devuelve ?? false,
           }
           if (it.material_id) updateItem.material_id = it.material_id
           const { error: updErr } = await supabase
@@ -330,6 +334,8 @@ export const solicitudesService = {
             unidad:       it.unidad,
             obs:          it.obs ?? null,
             color:        it.color ?? null,
+            clase:        it.clase ?? 'material',
+            devuelve:     it.devuelve ?? false,
             estado:       'pendiente',
           }
           if (it.material_id) row.material_id = it.material_id
@@ -1085,6 +1091,16 @@ export const solicitudesService = {
       .eq('cod', sol.obra_cod)
       .maybeSingle()
     if (obra?.es_deposito) return
+
+    // Una HERRAMIENTA nunca se factura al cliente como material: es un activo de
+    // CADINC que va y vuelve, no un consumible.
+    //
+    // Este NO es el unico camino a MCC, y hay que saberlo: `retirar_de_proveedor`
+    // (stock en proveedor -> retiro con remito) y `comprar_faltante_item` escriben
+    // por su cuenta y tienen su propio guard por clase (migracion 20260902w). Las
+    // RPCs resolver_item_compra/_despacho tambien insertan, pero estan dormidas
+    // (USE_RPC_RESOLVER=false); si alguien prende el flag, la fuga vuelve por ahi.
+    if (item.clase === 'herramienta') return
 
     // Despacho de depósito interno siempre es 'cadinc' (el material es propio
     // de CADINC, no aplica "cliente paga directo" aunque el item lo tenga seteado).

@@ -36,6 +36,10 @@ const materialFields = {
   // esto es true. Tiene que ser seteable desde el ABM: sin esto, todo material
   // nuevo nacia en false para siempre y nunca podia llevar color.
   usa_color:     z.boolean(),
+  // Espejo de solicitud_compra_item.clase: al elegir este material en un pedido
+  // la linea nace pre-tildada como herramienta. Tiene que ser seteable desde el
+  // ABM o el espejo queda inerte (solo se podria marcar por SQL).
+  clase:         z.enum(['material', 'herramienta']),
 }
 
 export const CreateMaterialSchema = z.object({
@@ -47,6 +51,7 @@ export const CreateMaterialSchema = z.object({
   obs:           materialFields.obs.optional().default(''),
   alias:         materialFields.alias.optional().default([]),
   usa_color:     materialFields.usa_color.optional().default(false),
+  clase:         materialFields.clase.optional().default('material'),
   // `forzar: true` saltea el chequeo de "¿no será este?" (409
   // MATERIAL_PARECIDO). No es una columna: el service lo descarta antes de
   // insertar.

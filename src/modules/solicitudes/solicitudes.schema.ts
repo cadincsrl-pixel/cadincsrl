@@ -13,6 +13,19 @@ const ItemSchema = z.object({
   // (ver migración 20260902s) — el backend no lo valida contra eso porque un
   // material puede dejar de usar color y los pedidos viejos seguirían siendo válidos.
   color:       z.string().nullable().optional().default(null),
+  // material | herramienta. La derivacion al pañol es un filtro sobre esto.
+  // Default 'material': todo lo existente y todo lo que nadie marque sigue igual.
+  clase:       z.enum(['material', 'herramienta']).optional().default('material'),
+  // Solo con clase='herramienta': la obra DEVUELVE en vez de pedir. Es el
+  // disparador de la devolucion, que hasta ahora no existia (11 devoluciones
+  // contra 22 asignaciones en el historico).
+  devuelve:    z.boolean().optional().default(false),
+}).refine(d => !d.devuelve || d.clase === 'herramienta', {
+  // El CHECK de la tabla rechaza devuelve=true con clase='material'. Sin este
+  // refine el body llegaba a Postgres y volvia un 500 con el texto crudo del
+  // constraint; asi es un 400 con mensaje claro.
+  message: 'Solo una herramienta se puede devolver',
+  path: ['devuelve'],
 })
 
 export const ResolverStockClienteSchema = z.object({
@@ -41,6 +54,19 @@ const UpdateItemSchema = z.object({
   // (ver migración 20260902s) — el backend no lo valida contra eso porque un
   // material puede dejar de usar color y los pedidos viejos seguirían siendo válidos.
   color:       z.string().nullable().optional().default(null),
+  // material | herramienta. La derivacion al pañol es un filtro sobre esto.
+  // Default 'material': todo lo existente y todo lo que nadie marque sigue igual.
+  clase:       z.enum(['material', 'herramienta']).optional().default('material'),
+  // Solo con clase='herramienta': la obra DEVUELVE en vez de pedir. Es el
+  // disparador de la devolucion, que hasta ahora no existia (11 devoluciones
+  // contra 22 asignaciones en el historico).
+  devuelve:    z.boolean().optional().default(false),
+}).refine(d => !d.devuelve || d.clase === 'herramienta', {
+  // El CHECK de la tabla rechaza devuelve=true con clase='material'. Sin este
+  // refine el body llegaba a Postgres y volvia un 500 con el texto crudo del
+  // constraint; asi es un 400 con mensaje claro.
+  message: 'Solo una herramienta se puede devolver',
+  path: ['devuelve'],
 })
 
 export const UpdateSolicitudSchema = z.object({
