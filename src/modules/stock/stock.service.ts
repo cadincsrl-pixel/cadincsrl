@@ -1,5 +1,112 @@
+import type { PostgrestError } from '@supabase/supabase-js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto } from './stock.schema.js'
+
+// ─────────────────────────────────────────────────────────────────────────
+// Error tipado del módulo
+// ─────────────────────────────────────────────────────────────────────────
+// Las rutas lo desarman en `{ error, code, ...extra }`. Cualquier otro Error
+// cae al onError global (500).
+export class StockHttpError extends Error {
+  constructor(
+    readonly status: 400 | 404 | 409,
+    readonly code: string,
+    message: string,
+    readonly extra: Record<string, unknown> = {},
+  ) {
+    super(message)
+    this.name = 'StockHttpError'
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Búsqueda difusa de materiales (anti-duplicados + "¿no será este?")
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Espejo en TypeScript de lo que hace Postgres:
+//   `public.norm_material(text)`  (migración 20260902c) y `similarity()` de
+//   pg_trgm. Se replica acá en vez de hacer una RPC porque el catálogo son
+//   ~718 filas activas: traerlas y comparar en memoria cuesta menos que
+//   mantener una función más en la base, y el alta de materiales es una
+//   operación poco frecuente.
+//
+// Si el catálogo crece a decenas de miles de filas, esto debería pasar a una
+// RPC que use el índice GIN de trigramas (`stock_materiales_nombre_trgm`).
+
+/** Minúsculas, sin tildes ni ñ, espacios colapsados. Igual que `public.norm_material`. */
+export function normMaterial(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // saca los diacriticos (á -> a, ñ -> n)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+/**
+ * Trigramas al estilo pg_trgm: se parte en palabras por caracteres no
+ * alfanuméricos y cada palabra se rellena con 2 espacios adelante y 1 atrás
+ * antes de cortar las ventanas de 3.
+ *   "cat" → "  c", " ca", "cat", "at "
+ */
+export function trigramas(texto: string): Set<string> {
+  const out = new Set<string>()
+  // \p{Nd} y no \p{N}: pg_trgm no considera dígito a los superíndices
+  // ("1.5mm²" corta la palabra antes del ²), verificado contra show_trgm().
+  for (const palabra of normMaterial(texto).split(/[^\p{L}\p{Nd}]+/u)) {
+    if (!palabra) continue
+    const relleno = `  ${palabra} `
+    for (let i = 0; i + 3 <= relleno.length; i++) out.add(relleno.slice(i, i + 3))
+  }
+  return out
+}
+
+/** Jaccard sobre trigramas — mismo número que `similarity()` de pg_trgm. */
+export function similitud(a: string, b: string): number {
+  const ta = trigramas(a)
+  const tb = trigramas(b)
+  if (ta.size === 0 || tb.size === 0) return 0
+  let comunes = 0
+  for (const t of ta) if (tb.has(t)) comunes++
+  return comunes / (ta.size + tb.size - comunes)
+}
+
+export type MaterialCandidato = {
+  id: number
+  nombre: string
+  unidad: string | null
+  /** Similitud por trigramas contra el nombre (0..1). */
+  sim: number
+  /** true si el nombre buscado coincide EXACTO con uno de sus alias. */
+  por_alias: boolean
+}
+
+type FilaMaterialLite = {
+  id: number
+  nombre: string
+  unidad: string | null
+  alias: string[] | null
+}
+
+const UMBRAL_PARECIDO = 0.45
+const MAX_CANDIDATOS  = 5
+const PAGINA          = 1000 // tope duro de PostgREST: paginamos, no pedimos de más
+
+/** Normaliza una lista de alias: normalizados, sin vacíos y sin repetidos. */
+export function normalizarAlias(alias: readonly string[] | null | undefined): string[] {
+  if (!alias) return []
+  const vistos = new Set<string>()
+  for (const a of alias) {
+    const n = normMaterial(a)
+    if (n) vistos.add(n)
+  }
+  return [...vistos]
+}
+
+/** ¿El error de Postgres es la violación del único parcial sobre el nombre? */
+function esNombreDuplicado(error: PostgrestError): boolean {
+  return error.code === '23505' && /nombre|unique/i.test(`${error.message} ${error.details ?? ''}`)
+}
 
 export const stockService = {
 
@@ -30,14 +137,18 @@ export const stockService = {
   },
 
   // ── Materiales ──
-  async getMateriales(token: string, rubro_id?: number) {
+  //
+  // Por defecto solo los activos: las bajas lógicas no deben aparecer en el
+  // selector de la solicitud. `incluirInactivos` es para el ABM.
+  async getMateriales(token: string, rubro_id?: number, incluirInactivos = false) {
     const supabase = createSupabaseClient(token)
+    // `select('*')` ya trae `alias` (columna de la tabla desde 20260902c).
     // Intentar con proveedores, fallback sin
     let q = supabase
       .from('stock_materiales')
       .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
-      .eq('activo', true)
       .order('nombre')
+    if (!incluirInactivos) q = q.eq('activo', true)
     if (rubro_id) q = q.eq('rubro_id', rubro_id)
     let { data, error } = await q
     if (error) {
@@ -45,8 +156,8 @@ export const stockService = {
       let q2 = supabase
         .from('stock_materiales')
         .select('*, stock_rubros(nombre, icono)')
-        .eq('activo', true)
         .order('nombre')
+      if (!incluirInactivos) q2 = q2.eq('activo', true)
       if (rubro_id) q2 = q2.eq('rubro_id', rubro_id)
       const res = await q2
       if (res.error) throw new Error(res.error.message)
@@ -55,30 +166,125 @@ export const stockService = {
     return data
   },
 
+  /**
+   * Materiales activos parecidos a `nombre`, para el "¿no será este?" del alta.
+   * Matchea por alias exacto (el sinónimo con el que se pide en obra) o por
+   * similitud de trigramas > 0.45 contra el nombre. Los de alias van primero:
+   * son la señal más fuerte aunque el nombre técnico no se parezca en nada
+   * ("t1" → "Tornillo T1 autoperforante").
+   */
+  async buscarParecidos(nombre: string, token: string, excluirId?: number): Promise<MaterialCandidato[]> {
+    const supabase = createSupabaseClient(token)
+    const buscado  = normMaterial(nombre)
+    if (!buscado) return []
+
+    const filas: FilaMaterialLite[] = []
+    // Paginado explícito: PostgREST corta en 1000 filas por response y el
+    // catálogo puede pasar ese número.
+    for (let desde = 0; desde < PAGINA * 20; desde += PAGINA) {
+      const { data, error } = await supabase
+        .from('stock_materiales')
+        .select('id, nombre, unidad, alias')
+        .eq('activo', true)
+        .order('id')
+        .range(desde, desde + PAGINA - 1)
+      if (error) throw new Error(error.message)
+      if (!data || data.length === 0) break
+      filas.push(...(data as FilaMaterialLite[]))
+      if (data.length < PAGINA) break
+    }
+
+    return filas
+      .filter(f => f.id !== excluirId)
+      .map<MaterialCandidato>(f => ({
+        id:        f.id,
+        nombre:    f.nombre,
+        unidad:    f.unidad,
+        sim:       Math.round(similitud(buscado, f.nombre) * 1000) / 1000,
+        por_alias: (f.alias ?? []).some(a => normMaterial(a) === buscado),
+      }))
+      .filter(c => c.por_alias || c.sim > UMBRAL_PARECIDO)
+      .sort((a, b) => Number(b.por_alias) - Number(a.por_alias) || b.sim - a.sim)
+      .slice(0, MAX_CANDIDATOS)
+  },
+
   async createMaterial(dto: CreateMaterialDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const insertData: any = { ...dto, created_by: userId, updated_by: userId }
+    const { forzar, alias, nombre, ...campos } = dto
+    const nombreLimpio = nombre.trim()
+
+    // Antes de sumar una fila más al catálogo, ofrecer las que ya existen.
+    // `forzar: true` es el "no, es otro material" del usuario.
+    if (!forzar) {
+      const candidatos = await stockService.buscarParecidos(nombreLimpio, token)
+      if (candidatos.length > 0) {
+        throw new StockHttpError(
+          409,
+          'MATERIAL_PARECIDO',
+          `Ya hay ${candidatos.length === 1 ? 'un material parecido' : 'materiales parecidos'} en el catálogo. Usá uno de esos o volvé a guardar confirmando que es distinto.`,
+          { candidatos },
+        )
+      }
+    }
+
+    const insertData: Record<string, unknown> = {
+      ...campos,
+      nombre:     nombreLimpio,
+      alias:      normalizarAlias(alias),
+      created_by: userId,
+      updated_by: userId,
+    }
     if (!insertData.proveedor_id) delete insertData.proveedor_id
+
     const { data, error } = await supabase
       .from('stock_materiales')
       .insert(insertData)
       .select('*, stock_rubros(nombre, icono)')
       .single()
-    if (error) throw new Error(error.message)
+    if (error) {
+      // El índice único parcial `stock_materiales_nombre_norm_uidx` atrapa el
+      // duplicado literal aunque venga con `forzar: true`.
+      if (esNombreDuplicado(error)) {
+        const candidatos = await stockService.buscarParecidos(nombreLimpio, token).catch(() => [])
+        throw new StockHttpError(
+          409,
+          'MATERIAL_DUPLICADO',
+          `Ya existe un material activo llamado "${nombreLimpio}". Usá ese en vez de crear otro.`,
+          { candidatos },
+        )
+      }
+      throw new Error(error.message)
+    }
     return data
   },
 
   async updateMaterial(id: number, dto: UpdateMaterialDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const updateData: any = { ...dto, updated_by: userId }
+    const updateData: Record<string, unknown> = { ...dto, updated_by: userId }
     if (updateData.proveedor_id === null || updateData.proveedor_id === undefined) delete updateData.proveedor_id
+    // `alias` solo se toca si vino en el body (el schema de update no tiene
+    // defaults justamente para no pisarlo con `[]` en cada PATCH).
+    if (dto.alias !== undefined) updateData.alias = normalizarAlias(dto.alias)
+    if (typeof dto.nombre === 'string') updateData.nombre = dto.nombre.trim()
+
     const { data, error } = await supabase
       .from('stock_materiales')
       .update(updateData)
       .eq('id', id)
       .select('*, stock_rubros(nombre, icono)')
       .single()
-    if (error) throw new Error(error.message)
+    if (error) {
+      if (esNombreDuplicado(error)) {
+        const candidatos = await stockService.buscarParecidos(String(updateData.nombre ?? ''), token, id).catch(() => [])
+        throw new StockHttpError(
+          409,
+          'MATERIAL_DUPLICADO',
+          `Ya existe un material activo llamado "${updateData.nombre}". Renombralo distinto o editá el que ya está.`,
+          { candidatos },
+        )
+      }
+      throw new Error(error.message)
+    }
     return data
   },
 

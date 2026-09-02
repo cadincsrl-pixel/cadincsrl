@@ -9,16 +9,45 @@ export const CreateRubroSchema = z.object({
 export const UpdateRubroSchema = CreateRubroSchema.partial()
 
 // ── Materiales ──
-export const CreateMaterialSchema = z.object({
+//
+// `alias` = cómo se pide el material EN OBRA ("t1", "alargue", "lija 150",
+// "plástico negro"). Es lo que hace encontrable el catálogo: sin sinónimos el
+// operario no da con la fila y termina escribiendo texto libre. Se normaliza
+// (minúsculas, sin tildes) en el service antes de guardar.
+const ALIAS_FIELD = z.array(z.string().trim().min(1).max(120)).max(50)
+
+// Campos base SIN `.default()`. Los defaults viven SOLO en el schema de
+// creación a propósito: en zod v4 `.partial()` sigue aplicando el default de
+// cada campo aunque la clave no venga en el body, así que el viejo
+// `CreateMaterialSchema.partial()` hacía que un PATCH `{ nombre }` pisara
+// unidad/stock_minimo/precio_ref/obs con los valores por defecto. Con `alias`
+// eso además borraría los sinónimos en cada edición.
+const materialFields = {
   rubro_id:      z.number().int().positive(),
   nombre:        z.string().min(1),
-  unidad:        z.string().default('unid'),
-  stock_minimo:  z.number().min(0).default(0),
-  precio_ref:    z.number().min(0).default(0),
-  proveedor_id:  z.number().int().positive().nullable().optional().default(null),
-  obs:           z.string().optional().default(''),
+  unidad:        z.string(),
+  stock_minimo:  z.number().min(0),
+  precio_ref:    z.number().min(0),
+  proveedor_id:  z.number().int().positive().nullable(),
+  obs:           z.string(),
+  alias:         ALIAS_FIELD,
+}
+
+export const CreateMaterialSchema = z.object({
+  ...materialFields,
+  unidad:        materialFields.unidad.default('unid'),
+  stock_minimo:  materialFields.stock_minimo.default(0),
+  precio_ref:    materialFields.precio_ref.default(0),
+  proveedor_id:  materialFields.proveedor_id.optional().default(null),
+  obs:           materialFields.obs.optional().default(''),
+  alias:         materialFields.alias.optional().default([]),
+  // `forzar: true` saltea el chequeo de "¿no será este?" (409
+  // MATERIAL_PARECIDO). No es una columna: el service lo descarta antes de
+  // insertar.
+  forzar:        z.boolean().optional().default(false),
 })
-export const UpdateMaterialSchema = CreateMaterialSchema.partial()
+
+export const UpdateMaterialSchema = z.object(materialFields).partial()
 
 // ── Movimientos ──
 //

@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
-import { stockService } from './stock.service.js'
+import { stockService, StockHttpError } from './stock.service.js'
 import {
   CreateRubroSchema, UpdateRubroSchema,
   CreateMaterialSchema, UpdateMaterialSchema,
@@ -35,17 +35,34 @@ stock.patch('/rubros/:id', zValidator('json', UpdateRubroSchema), async (c) => {
 })
 
 // ── Materiales ──
+// Por defecto solo activos (el selector de solicitudes no debe ofrecer bajas
+// lógicas). `?incluir_inactivos=1` los suma, para el ABM.
 stock.get('/materiales', async (c) => {
   const rubro_id = c.req.query('rubro_id')
-  return c.json(await stockService.getMateriales(c.get('accessToken'), rubro_id ? Number(rubro_id) : undefined))
+  const incluirInactivos = ['1', 'true'].includes((c.req.query('incluir_inactivos') ?? '').toLowerCase())
+  return c.json(await stockService.getMateriales(
+    c.get('accessToken'),
+    rubro_id ? Number(rubro_id) : undefined,
+    incluirInactivos,
+  ))
 })
 
 stock.post('/materiales', zValidator('json', CreateMaterialSchema), async (c) => {
-  return c.json(await stockService.createMaterial(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+  try {
+    return c.json(await stockService.createMaterial(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
+  } catch (e) {
+    if (e instanceof StockHttpError) return c.json({ error: e.message, code: e.code, ...e.extra }, e.status)
+    throw e
+  }
 })
 
 stock.patch('/materiales/:id', zValidator('json', UpdateMaterialSchema), async (c) => {
-  return c.json(await stockService.updateMaterial(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+  try {
+    return c.json(await stockService.updateMaterial(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+  } catch (e) {
+    if (e instanceof StockHttpError) return c.json({ error: e.message, code: e.code, ...e.extra }, e.status)
+    throw e
+  }
 })
 
 stock.delete('/materiales/:id', async (c) => {
