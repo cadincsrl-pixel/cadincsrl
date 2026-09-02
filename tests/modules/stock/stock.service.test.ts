@@ -259,7 +259,17 @@ describe('schemas de material', () => {
     expect(CreateMaterialSchema.parse({ rubro_id: 1, nombre: 'Fratacho' })).toEqual({
       rubro_id: 1, nombre: 'Fratacho', unidad: 'unid', stock_minimo: 0,
       precio_ref: 0, proveedor_id: null, obs: '', alias: [], forzar: false,
+      // Default false: un material nace sin color y hay que tildarlo en el ABM.
+      usa_color: false,
     })
+  })
+
+  it('usa_color es seteable en alta y en PATCH', () => {
+    // Regresion: `usa_color` no estaba en `materialFields`, asi que zod lo
+    // descartaba en silencio y TODO material nuevo nacia en false para siempre,
+    // sin forma de marcarlo desde el ABM.
+    expect(CreateMaterialSchema.parse({ rubro_id: 1, nombre: 'Latex', usa_color: true }).usa_color).toBe(true)
+    expect(UpdateMaterialSchema.parse({ usa_color: true })).toEqual({ usa_color: true })
   })
 
   it('rechaza alias vacíos', () => {
