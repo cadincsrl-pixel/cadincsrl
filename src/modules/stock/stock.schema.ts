@@ -31,6 +31,11 @@ const materialFields = {
   proveedor_id:  z.number().int().positive().nullable(),
   obs:           z.string(),
   alias:         ALIAS_FIELD,
+  // El color es una eleccion real para este material (pinturas, pastina, cable
+  // unipolar, ceramicos) y el form del pedido muestra el campo "Color" solo si
+  // esto es true. Tiene que ser seteable desde el ABM: sin esto, todo material
+  // nuevo nacia en false para siempre y nunca podia llevar color.
+  usa_color:     z.boolean(),
 }
 
 export const CreateMaterialSchema = z.object({
@@ -41,6 +46,7 @@ export const CreateMaterialSchema = z.object({
   proveedor_id:  materialFields.proveedor_id.optional().default(null),
   obs:           materialFields.obs.optional().default(''),
   alias:         materialFields.alias.optional().default([]),
+  usa_color:     materialFields.usa_color.optional().default(false),
   // `forzar: true` saltea el chequeo de "¿no será este?" (409
   // MATERIAL_PARECIDO). No es una columna: el service lo descarta antes de
   // insertar.

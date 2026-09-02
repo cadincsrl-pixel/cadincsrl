@@ -8,6 +8,11 @@ const ItemSchema = z.object({
   unidad:      z.string().default('unid'),
   obs:         z.string().nullable().optional().default(null),
   material_id: z.number().int().positive().nullable().optional().default(null),
+  // Color pedido. Texto libre a propósito: la carta de colores es del proveedor y
+  // cambia. El front solo muestra el campo si el material tiene `usa_color`
+  // (ver migración 20260902s) — el backend no lo valida contra eso porque un
+  // material puede dejar de usar color y los pedidos viejos seguirían siendo válidos.
+  color:       z.string().nullable().optional().default(null),
 })
 
 export const ResolverStockClienteSchema = z.object({
@@ -31,6 +36,11 @@ const UpdateItemSchema = z.object({
   unidad:      z.string().default('unid'),
   obs:         z.string().nullable().optional().default(null),
   material_id: z.number().int().positive().nullable().optional().default(null),
+  // Color pedido. Texto libre a propósito: la carta de colores es del proveedor y
+  // cambia. El front solo muestra el campo si el material tiene `usa_color`
+  // (ver migración 20260902s) — el backend no lo valida contra eso porque un
+  // material puede dejar de usar color y los pedidos viejos seguirían siendo válidos.
+  color:       z.string().nullable().optional().default(null),
 })
 
 export const UpdateSolicitudSchema = z.object({

@@ -234,6 +234,7 @@ export const solicitudesService = {
         cantidad:     it.cantidad,
         unidad:       it.unidad,
         obs:          it.obs ?? null,
+        color:        it.color ?? null,
         estado:       'pendiente',
       }
       if (it.material_id) row.material_id = it.material_id
@@ -309,6 +310,9 @@ export const solicitudesService = {
             cantidad:    it.cantidad,
             unidad:      it.unidad,
             obs:         it.obs ?? null,
+            // sin `if`, a diferencia de material_id: hay que poder BORRAR el color
+            // de un item (mandar null lo limpia).
+            color:       it.color ?? null,
           }
           if (it.material_id) updateItem.material_id = it.material_id
           const { error: updErr } = await supabase
@@ -325,6 +329,7 @@ export const solicitudesService = {
             cantidad:     it.cantidad,
             unidad:       it.unidad,
             obs:          it.obs ?? null,
+            color:        it.color ?? null,
             estado:       'pendiente',
           }
           if (it.material_id) row.material_id = it.material_id
