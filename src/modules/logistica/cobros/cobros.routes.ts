@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso, tieneFlag } from '../../../middleware/permission.js'
 import { cobrosService } from './cobros.service.js'
-import { CreateCobroSchema } from './cobros.schema.js'
+import { CreateCobroSchema, ContraFacturaSchema } from './cobros.schema.js'
 import adjuntosRoutes from './adjuntos.routes.js'
 
 const cobros = new Hono()
@@ -66,6 +66,33 @@ cobros.patch('/:id/cobrar', async (c) => {
 cobros.patch('/:id/revertir', async (c) => {
   const data = await cobrosService.revertirCobrado(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)
   return c.json(data)
+})
+
+// Contra factura del intermediario: nº + fecha del documento y la comisión de
+// cada viaje de la factura. Permiso `logistica.actualizacion` — ya lo aplica el
+// `cobros.on(['PATCH'], '*', ...)` de arriba (no se repite acá para no pegarle
+// dos veces a `profiles` por request).
+// A propósito NO valida el estado del cobro: la contra factura llega después
+// de la factura, incluso con la plata ya cobrada.
+cobros.patch('/:id/contra-factura', zValidator('json', ContraFacturaSchema), async (c) => {
+  try {
+    const data = await cobrosService.actualizarContraFactura(
+      Number(c.req.param('id')),
+      c.req.valid('json'),
+      c.get('accessToken'),
+      c.get('user').id,
+    )
+    return c.json(data)
+  } catch (err: any) {
+    const body = (status: number) =>
+      c.json({ error: err.message, code: err.code, ...(err.detail !== undefined ? { detail: err.detail } : {}) }, status as any)
+    if (err?.code === 'COBRO_NO_EXISTE')            return body(404)
+    if (err?.code === 'EMPRESA_NO_EXISTE')          return body(404)
+    if (err?.code === 'EMPRESA_SIN_CONTRA_FACTURA') return body(409)
+    if (err?.code === 'TRAMO_NO_ES_DEL_COBRO')      return body(400)
+    if (err?.code === 'COMISION_MAYOR_QUE_VIAJE')   return body(400)
+    throw err
+  }
 })
 
 cobros.delete('/:id', async (c) => {

@@ -18,3 +18,23 @@ export const CreateCobroSchema = z.object({
 })
 
 export type CreateCobroDto = z.infer<typeof CreateCobroSchema>
+
+// Contra factura del intermediario (2026-09-02). La empresa intermediaria
+// (empresas_transportistas.contra_factura = true) emite UNA contra factura por
+// cada factura de CADINC, con su comisión. El documento (nº + fecha) vive en el
+// cobro; el importe se carga POR VIAJE en tramos.comision_intermediario porque
+// el % varía viaje a viaje. Los montos vienen CON IVA (convención del sistema).
+//
+// `monto: null` NO es "sin cambios": es un borrado explícito de la comisión de
+// ese viaje (el usuario tiene que poder corregir un monto mal cargado). Los
+// viajes que no vengan en el array quedan como estaban.
+export const ContraFacturaSchema = z.object({
+  contra_factura_nro:   z.string().trim().max(50).nullable().optional(),
+  contra_factura_fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  comisiones: z.array(z.object({
+    tramo_id: z.number().int().positive(),
+    monto:    z.number().nonnegative().nullable(),
+  })).optional().default([]),
+})
+
+export type ContraFacturaDto = z.infer<typeof ContraFacturaSchema>

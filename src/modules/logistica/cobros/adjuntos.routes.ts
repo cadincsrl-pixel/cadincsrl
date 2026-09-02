@@ -8,7 +8,10 @@ import { cobroAdjuntosService, CobroAdjError } from './adjuntos.service.js'
 const docs = new Hono()
 docs.use('*', authMiddleware)
 
-const TipoEnum = z.enum(['liquidacion', 'comprobante', 'factura'])
+// 'contra_factura': el PDF que emite la empresa intermediaria por su comisión
+// sobre la factura de CADINC (2026-09-02). El CHECK de cobros_adjuntos.tipo lo
+// admite desde la migración 20260902_contra_factura_intermediarios.
+const TipoEnum = z.enum(['liquidacion', 'comprobante', 'factura', 'contra_factura'])
 
 const UploadUrlSchema = z.object({
   tipo:           TipoEnum,

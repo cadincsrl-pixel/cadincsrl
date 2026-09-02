@@ -10,6 +10,11 @@ export const CreateEmpresaSchema = z.object({
   // 'liquido_producto': la empresa emite la liquidación y marcamos qué remitos
   // pagó. 'facturacion': CADINC emite una factura por cada viaje.
   modalidad_cobro: z.enum(['liquido_producto', 'facturacion']).default('liquido_producto'),
+  // La empresa es INTERMEDIARIA: emite una contra factura por su comisión
+  // sobre cada factura de CADINC. Esa comisión se carga por viaje
+  // (tramos.comision_intermediario) y resta del bruto antes de netear el % del
+  // chofer. Sin default acá: la columna ya tiene `default false` en la DB.
+  contra_factura: z.boolean().optional(),
 })
 
 // No usar .partial() sobre el create: arrastra los .default() y zod
@@ -22,6 +27,7 @@ export const UpdateEmpresaSchema = z.object({
   obs:    z.string().optional(),
   estado: z.enum(['activa', 'inactiva']).optional(),
   modalidad_cobro: z.enum(['liquido_producto', 'facturacion']).optional(),
+  contra_factura:  z.boolean().optional(),
 })
 
 export const CreateTarifaEmpresaSchema = z.object({
