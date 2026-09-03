@@ -11,7 +11,10 @@ docs.use('*', authMiddleware)
 // 'contra_factura': el PDF que emite la empresa intermediaria por su comisión
 // sobre la factura de CADINC (2026-09-02). El CHECK de cobros_adjuntos.tipo lo
 // admite desde la migración 20260902_contra_factura_intermediarios.
-const TipoEnum = z.enum(['liquidacion', 'comprobante', 'factura', 'contra_factura'])
+// 'retencion': los certificados de retención (IVA, Ganancias, IIBB) que la
+// empresa manda con el pago — varios por cobro. Migración 20260903. Es
+// opcional: marcarCobrado sigue exigiendo un adjunto tipo 'comprobante'.
+const TipoEnum = z.enum(['liquidacion', 'comprobante', 'factura', 'contra_factura', 'retencion'])
 
 const UploadUrlSchema = z.object({
   tipo:           TipoEnum,

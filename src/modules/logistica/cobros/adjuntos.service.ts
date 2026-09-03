@@ -14,7 +14,7 @@ export class CobroAdjError extends Error {
   }
 }
 
-export type CobroAdjTipo = 'liquidacion' | 'comprobante' | 'factura' | 'contra_factura'
+export type CobroAdjTipo = 'liquidacion' | 'comprobante' | 'factura' | 'contra_factura' | 'retencion'
 
 export interface UploadUrlDto {
   tipo: CobroAdjTipo
