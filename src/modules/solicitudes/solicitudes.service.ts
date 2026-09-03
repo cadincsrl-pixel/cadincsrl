@@ -56,6 +56,7 @@ export function mapRpcError(error: PostgrestError): HttpError {
     /FACTURA_INVALIDA/.test(msg)    ? 'FACTURA_INVALIDA' :
     /STOCK_INSUFICIENTE/.test(msg)  ? 'STOCK_INSUFICIENTE' :
     /ITEM_YA_REGISTRADO/.test(msg)  ? 'ITEM_YA_REGISTRADO' :
+    /DESPACHO_A_DEPOSITO/.test(msg) ? 'DESPACHO_A_DEPOSITO' :
     error.code || 'UNKNOWN'
 
   switch (code) {
@@ -70,6 +71,7 @@ export function mapRpcError(error: PostgrestError): HttpError {
     case 'FACTURA_INVALIDA':      return new HttpError(400, code)
     case 'STOCK_INSUFICIENTE':    return new HttpError(400, code, parseDetail(error.details))
     case 'ITEM_YA_REGISTRADO':    return new HttpError(409, code)
+    case 'DESPACHO_A_DEPOSITO':   return new HttpError(400, code)
     case '23503':                 return new HttpError(500, 'INTEGRIDAD_REFERENCIAL')
     default:                      return new HttpError(500, 'DB_ERROR', { dbMessage: msg })
   }
@@ -519,6 +521,19 @@ export const solicitudesService = {
     userId: string,
     forzarSinStock: boolean = false,
   ) {
+    // Despachar de depósito HACIA el depósito es un movimiento que no existe:
+    // el material no se mueve. Peor, es asimétrico — el despacho descuenta
+    // stock (acá abajo y en la RPC) y el recibo NO lo repone, porque el
+    // crédito al recibir solo corre para items 'comprado'
+    // (remitos-envio.service: `esDeposito && itemPrev.estado === 'comprado'`).
+    // Resultado: stock que se va y no vuelve.
+    // Caso real: pedido #436 (CC DEPOSITO), 5 items cerrados así entre el
+    // 07/08 y el 26/08. No perdimos stock sólo porque eran texto libre sin
+    // material_id — con el catálogo completo el mismo click descuenta de verdad.
+    // El depósito usa este botón para decir "esto ya lo tengo": para eso está
+    // Rechazar.
+    await this._assertDestinoNoEsDeposito(itemId, token)
+
     // Camino RPC: el evento 'despachado' lo escribe la RPC DENTRO de la TX.
     // Camino legacy: lo escribe al final del método. Sin doble escritura.
     const item = useRpcResolver()
@@ -1064,6 +1079,24 @@ export const solicitudesService = {
     }
 
     return data
+  },
+
+  // Corta el despacho de depósito cuando la obra destino ES el depósito.
+  // Ver el comentario largo en despacharItem(): el movimiento no existe
+  // físicamente y el stock que descuenta no vuelve nunca.
+  async _assertDestinoNoEsDeposito(itemId: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data } = await supabase
+      .from('solicitud_compra_item')
+      .select('solicitud_compra(obra_cod, obras(es_deposito))')
+      .eq('id', itemId)
+      .maybeSingle()
+    // Sin dato no bloqueamos: el propio despacho falla después con
+    // ITEM_NO_EXISTE / ITEM_NO_DISPONIBLE, que es el error correcto.
+    const sol = data?.solicitud_compra as { obras?: { es_deposito?: boolean } } | null | undefined
+    if (sol?.obras?.es_deposito === true) {
+      throw new HttpError(400, 'DESPACHO_A_DEPOSITO')
+    }
   },
 
   // Registra UN ítem resuelto en materiales_a_cuenta_cliente (se llama al comprar o despachar)

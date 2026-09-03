@@ -91,6 +91,16 @@ function chainable(resolved: { data: any; error: any }) {
   return obj
 }
 
+// `despacharItem` lee primero la obra destino (_assertDestinoNoEsDeposito) y
+// recién después resuelve; los dos pasos pegan a `solicitud_compra_item`, así
+// que los tests tienen que encolar las dos respuestas en orden.
+function mockGuardDestino(esDeposito: boolean) {
+  fromSolicitudesMock.mockReturnValueOnce(chainable({
+    data: { solicitud_compra: { obra_cod: 'O-1', obras: { es_deposito: esDeposito } } },
+    error: null,
+  }))
+}
+
 async function postDespachar(body: any, itemId = 10) {
   const res = await solicitudes.request(`/items/${itemId}/despachar`, {
     method: 'POST',
@@ -117,6 +127,7 @@ describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
     // el perfil ya no puede ser null: sin el flag, la ruta corta en 403 antes
     // de llegar al handler.
     state.profile = { rol: 'user', obras_scope: 'todas', permisos: { certificaciones: { resolver_items: true } } }
+    mockGuardDestino(false)
     rpcMock.mockResolvedValueOnce({ data: [{ item_id: 10 }], error: null })
     fromSolicitudesMock.mockReturnValueOnce(chainable({
       data: { id: 10, estado: 'de_deposito', solicitud_compra: { id: 1, obra_cod: 'O-1' } },
@@ -146,6 +157,7 @@ describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
       obras_scope: 'todas',
       permisos: { certificaciones: { creacion: true, resolver_items: true, forzar_despacho: true } },
     }
+    mockGuardDestino(false)
     rpcMock.mockResolvedValueOnce({ data: [{ item_id: 10 }], error: null })
     fromSolicitudesMock.mockReturnValueOnce(chainable({
       data: { id: 10, estado: 'de_deposito', solicitud_compra: { id: 1, obra_cod: 'O-1' } },
@@ -161,6 +173,7 @@ describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
 
   it('admin con forzar_sin_stock=true pasa sin tener el flag explícito', async () => {
     state.profile = { rol: 'admin', permisos: null }
+    mockGuardDestino(false)
     rpcMock.mockResolvedValueOnce({ data: [{ item_id: 10 }], error: null })
     fromSolicitudesMock.mockReturnValueOnce(chainable({
       data: { id: 10, estado: 'de_deposito', solicitud_compra: { id: 1, obra_cod: 'O-1' } },
@@ -169,5 +182,29 @@ describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
 
     const res = await postDespachar({ precio_unit: 20, forzar_sin_stock: true })
     expect(res.status).toBe(200)
+  })
+})
+
+// Despachar de depósito hacia el propio depósito descontaba stock que el
+// recibo nunca reponía (el crédito al recibir sólo corre para 'comprado').
+// Pedido #436 / CC DEPOSITO, agosto 2026.
+describe('POST /items/:itemId/despachar — destino depósito', () => {
+  it('si la obra destino es depósito devuelve 400 DESPACHO_A_DEPOSITO y NO resuelve', async () => {
+    state.profile = { rol: 'user', obras_scope: 'todas', permisos: { certificaciones: { resolver_items: true } } }
+    mockGuardDestino(true)
+
+    const res = await postDespachar({ precio_unit: 20 })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'DESPACHO_A_DEPOSITO' })
+    expect(rpcMock).not.toHaveBeenCalled()
+  })
+
+  it('ni siquiera un admin con forzar_sin_stock puede despachar al depósito', async () => {
+    state.profile = { rol: 'admin', permisos: null }
+    mockGuardDestino(true)
+
+    const res = await postDespachar({ precio_unit: 20, forzar_sin_stock: true })
+    expect(res.status).toBe(400)
+    expect(rpcMock).not.toHaveBeenCalled()
   })
 })
