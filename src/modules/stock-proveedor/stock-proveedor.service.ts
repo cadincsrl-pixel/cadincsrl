@@ -23,6 +23,7 @@ function mapRpcError(error: { message?: string; details?: string | null; code?: 
     /ITEM_NO_EN_PROVEEDOR/.test(msg)       ? 'ITEM_NO_EN_PROVEEDOR' :
     /ITEM_PROVEEDOR_DISTINTO/.test(msg)    ? 'ITEM_PROVEEDOR_DISTINTO' :
     /CANTIDAD_EXCEDE_PENDIENTE/.test(msg)  ? 'CANTIDAD_EXCEDE_PENDIENTE' :
+    /ITEM_COBRADO/.test(msg)               ? 'ITEM_COBRADO' :
     error.code || 'UNKNOWN'
   switch (code) {
     case 'SIN_ITEMS':                  return new StockProvHttpError(400, code)
@@ -31,6 +32,9 @@ function mapRpcError(error: { message?: string; details?: string | null; code?: 
     case 'ITEM_NO_EN_PROVEEDOR':        return new StockProvHttpError(409, code, error.details ?? undefined)
     case 'ITEM_PROVEEDOR_DISTINTO':     return new StockProvHttpError(400, code)
     case 'CANTIDAD_EXCEDE_PENDIENTE':   return new StockProvHttpError(409, code, error.details ?? undefined)
+    // La fila de la cuenta del cliente de ese item ya se cobró: un retiro más
+    // le pisaría cantidad y total (20260904aa). El detail trae el cobro_id.
+    case 'ITEM_COBRADO':                return new StockProvHttpError(409, code, error.details ?? undefined)
     default:                            return new StockProvHttpError(500, 'DB_ERROR', { dbMessage: msg })
   }
 }
