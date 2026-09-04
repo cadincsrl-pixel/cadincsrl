@@ -30,8 +30,10 @@ const entregas = new Hono()
 
 const ESTADOS  = ['pendiente', 'confirmada', 'vinculada', 'catalogada', 'ignorada', 'anulada', 'revisar'] as const
 const ORIGENES = ['clase', 'catalogo', 'patron', 'manual'] as const
-// Estados "vivos" de una salida: los que cuentan como herramienta en obra.
-const VIVOS = ['pendiente', 'confirmada', 'revisar'] as const
+// "En obra" = salidas CONFIRMADAS con algo sin devolver. Primero se decide si
+// es herramienta (Confirmar / No es), después si volvió: las sin revisar no se
+// devuelven (20260904be).
+const VIVOS = ['confirmada'] as const
 
 const BOOL_Q = z.enum(['1', '0', 'true', 'false']).optional()
 
@@ -43,7 +45,7 @@ const ListQuerySchema = z.object({
   origen:      z.enum(ORIGENES).optional(),
   obra_cod:    z.string().min(1).optional(),
   material_id: z.coerce.number().int().positive().optional(),
-  // Solo salidas vivas con algo todavía en obra (cantidad − devuelto > 0).
+  // Solo salidas confirmadas con algo todavía en obra (cantidad − devuelto > 0).
   en_obra:     BOOL_Q,
   q:           z.string().min(1).optional(),
   desde:       z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
