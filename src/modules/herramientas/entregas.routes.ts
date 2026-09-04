@@ -37,7 +37,7 @@ function normTxt(t: string): string {
     .trim()
 }
 
-const ESTADOS = ['pendiente', 'vinculada', 'catalogada', 'ignorada', 'anulada', 'revisar'] as const
+const ESTADOS = ['pendiente', 'confirmada', 'vinculada', 'catalogada', 'ignorada', 'anulada', 'revisar'] as const
 
 const ListQuerySchema = z.object({
   estado:   z.enum(ESTADOS).optional(),
@@ -52,10 +52,12 @@ const ListQuerySchema = z.object({
   offset:   z.coerce.number().int().min(0).default(0),
 })
 
-// Marcar el estado de una entrega. En fase 1 solo se puede archivar
-// ("no es herramienta") o desarchivar, más una nota libre.
+// Marcar el estado de una entrega. En fase 1 un humano solo puede decir
+// "sí, es herramienta y ya la vi" (confirmada), "no es herramienta" (ignorada),
+// o volverla a la bandeja (pendiente). `vinculada` y `catalogada` son de la
+// fase 2 (tocan el padrón) y `anulada` la escribe SOLO el trigger.
 const PatchSchema = z.object({
-  estado: z.enum(['pendiente', 'ignorada', 'revisar']),
+  estado: z.enum(['pendiente', 'confirmada', 'ignorada', 'revisar']),
   nota:   z.string().max(500).nullish(),
 })
 
