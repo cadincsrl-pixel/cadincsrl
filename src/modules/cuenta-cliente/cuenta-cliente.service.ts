@@ -1,15 +1,10 @@
-// Lee `materiales_a_cuenta_cliente` (MCC) — el listado de qué se le imputa
-// al cliente por cada obra. La diferencia clave vs `solicitud_compra_item`
-// es que el MCC ya tiene resueltos los joins y el `pagado_por` definido al
-// momento de la compra/retiro.
+// Cuenta corriente de obras sobre `materiales_a_cuenta_cliente` (MCC): el
+// listado de qué salió a cada obra y quién lo paga.
 //
-// El campo `pagado_por` distingue:
-// - 'cadinc': CADINC adelantó → suma a la deuda del cliente.
-// - 'cliente': el cliente pagó directo al proveedor → registro de rendición.
-//
-// El endpoint NO suma ni agrega: devuelve la lista cruda con joins. El
-// frontend calcula los totales con `useMemo` para mantener la UI reactiva
-// a filtros (por obra, por pagador, por proveedor).
+// `pagado_por` distingue quién le pagó al proveedor ('cadinc' adelantó, o
+// 'cliente' pagó directo: rendición) y `a_cargo_de` (20260904ak) de quién es
+// el gasto ('cliente' se cobra, 'cadinc' llave en mano o EPP). La vista
+// v_cuenta_corriente los combina en UN estado por renglón (20260904ap).
 //
 // Cobros con imputación (2026-07-21): cada fila MCC puede quedar vinculada a
 // UN cobro (cobro_id + monto_cobrado congelado). El registro/eliminación van
@@ -51,16 +46,6 @@ async function sha256OfBlob(blob: Blob): Promise<string> {
   return createHash('sha256').update(buf).digest('hex')
 }
 
-// Select común del MCC. `item:` trae el estado del item de la solicitud para
-// que el frontend sepa cuáles son imputables (un 'en_proveedor' con retiros
-// parciales pendientes puede crecer su precio_total → no imputable).
-const MCC_SELECT = `
-  *,
-  proveedores(nombre),
-  facturas_compra(numero, adjunto_url, fecha),
-  item:solicitud_compra_item(estado)
-`
-
 // Pagina de a 1000 (hard cap de PostgREST que NO se bypassea con .range
 // grande — CLAUDE.md §5.7). El MCC ya está en ~1000 filas totales: sin esto
 // los KPIs del frontend se truncarían en silencio.
@@ -75,9 +60,6 @@ async function fetchAllMcc(buildQuery: (from: number, to: number) => any) {
   }
   return all
 }
-
-/** Filtro de la cuenta (20260904ak): qué le cobro al cliente vs qué gastó CADINC. */
-export type ACargoDe = 'cliente' | 'cadinc' | 'todos'
 
 /**
  * Filtros de la cuenta corriente (20260904ap). Los mismos alimentan el listado
@@ -103,79 +85,6 @@ function palabras(q?: string): string[] {
 }
 
 export const cuentaClienteService = {
-  /**
-   * Filas de MCC para una obra (con joins a proveedor, factura, item).
-   * Ordenadas por `fecha_resolucion` DESC para que lo más reciente quede arriba.
-   */
-  async getByObra(obraCod: string, token: string, aCargoDe: ACargoDe = 'cliente') {
-    const supabase = createSupabaseClient(token)
-    return fetchAllMcc((from, to) => {
-      let q = supabase
-        .from('materiales_a_cuenta_cliente')
-        .select(MCC_SELECT)
-        .eq('obra_cod', obraCod)
-      if (aCargoDe !== 'todos') q = q.eq('a_cargo_de', aCargoDe)
-      return q
-        .order('fecha_resolucion', { ascending: false })
-        .order('id', { ascending: false })
-        .range(from, to)
-    })
-  },
-
-  /**
-   * Filas de MCC para una lista de obras (caso "todas las obras del usuario").
-   * Misma forma que `getByObra` pero con filtro `in`.
-   */
-  async getByObras(obraCods: string[], token: string, aCargoDe: ACargoDe = 'cliente') {
-    if (obraCods.length === 0) return []
-    const supabase = createSupabaseClient(token)
-    return fetchAllMcc((from, to) => {
-      let q = supabase
-        .from('materiales_a_cuenta_cliente')
-        .select(MCC_SELECT)
-        .in('obra_cod', obraCods)
-      if (aCargoDe !== 'todos') q = q.eq('a_cargo_de', aCargoDe)
-      return q
-        .order('fecha_resolucion', { ascending: false })
-        .order('id', { ascending: false })
-        .range(from, to)
-    })
-  },
-
-  /**
-   * Gasto de CADINC por obra, tipo (material | epp) y mes, desde la vista
-   * `v_gastos_cadinc_obra` (20260904ak). `obraCods` null = scope global.
-   */
-  async gastosCadinc(obraCods: string[] | null, token: string) {
-    const supabase = createSupabaseClient(token)
-    let q = supabase
-      .from('v_gastos_cadinc_obra')
-      .select('obra_cod, tipo, mes, renglones, total, sin_precio')
-      .order('obra_cod')
-      .order('mes', { ascending: false })
-    if (obraCods) q = q.in('obra_cod', obraCods)
-    const { data, error } = await q
-    if (error) throw new Error(error.message)
-    return data ?? []
-  },
-
-  /**
-   * Conteo de materiales "sin precio" (precio_unit=0, a tasar) por obra, en
-   * las obras dadas (null = todas, para admin). Sirve para que Alina/Nicolás
-   * vean los pendientes de tasar sin recorrer obra por obra. Devuelve
-   * [{ obra_cod, sin_precio }] ordenado de mayor a menor.
-   */
-  async pendientesDePrecio(obraCods: string[] | null, token: string) {
-    const supabase = createSupabaseClient(token)
-    // Vista agregada (una fila por obra) para no chocar con el cap de 1000 de
-    // PostgREST si crece el backlog de ítems sin tasar (CLAUDE.md §5.7).
-    const base = supabase.from('v_cuenta_cliente_pendientes').select('obra_cod, sin_precio')
-    const { data, error } = obraCods != null ? await base.in('obra_cod', obraCods) : await base
-    if (error) throw new Error(error.message)
-    return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number }>)
-      .sort((a, b) => b.sin_precio - a.sin_precio)
-  },
-
   // ── Cuenta corriente (20260904ap) ────────────────────────────────────
 
   /**
@@ -231,6 +140,23 @@ export const cuentaClienteService = {
     if (g.error) throw new Error(g.error.message)
     if (p.error) throw new Error(p.error.message)
     return { grupos: g.data ?? [], pagos: p.data ?? [] }
+  },
+
+  /**
+   * Conteo de materiales "sin precio" (precio_unit=0, a tasar) por obra, en
+   * las obras dadas (null = todas, para admin). Sirve para que Alina/Nicolás
+   * vean los pendientes de tasar sin recorrer obra por obra. Devuelve
+   * [{ obra_cod, sin_precio }] ordenado de mayor a menor.
+   */
+  async pendientesDePrecio(obraCods: string[] | null, token: string) {
+    const supabase = createSupabaseClient(token)
+    // Vista agregada (una fila por obra) para no chocar con el cap de 1000 de
+    // PostgREST si crece el backlog de ítems sin tasar (CLAUDE.md §5.7).
+    const base = supabase.from('v_cuenta_cliente_pendientes').select('obra_cod, sin_precio')
+    const { data, error } = obraCods != null ? await base.in('obra_cod', obraCods) : await base
+    if (error) throw new Error(error.message)
+    return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number }>)
+      .sort((a, b) => b.sin_precio - a.sin_precio)
   },
 
   // ── Cobros (pagos del cliente a cuenta de la obra) ───────────────────

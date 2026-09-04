@@ -1,9 +1,10 @@
-// Endpoint de lectura para el tab "Cuenta del cliente" de certificaciones.
+// Cuenta corriente de obras (pestaña "Cuenta corriente" de certificaciones).
 //
-// Pensado para la vista que necesita el user: ver qué le debe el cliente
-// (`pagado_por='cadinc'`) y qué pagó directo (`pagado_por='cliente'`) por
-// obra, agregado en KPIs y desglosado en una tabla. Los cobros pueden imputar
-// items puntuales del MCC (2026-07-21) — el registro va por RPC transaccional.
+// Una sola vista para lo que se le cobra al cliente y lo que gastó CADINC:
+// renglones paginados y resumen por grupo (20260904ap), pendientes de tasar y
+// los cobros del cliente, que pueden imputar items puntuales del MCC
+// (2026-07-21) vía RPC transaccional. El listado viejo (GET /) y el resumen de
+// gastos (GET /gastos-cadinc) se fueron en la fase 3 (20260904aq).
 
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
@@ -36,49 +37,6 @@ function handler(fn: (c: any) => Promise<any>) {
     }
   }
 }
-
-// GET /api/cuenta-cliente?obra_cod=X  (opcional)
-//   - sin `obra_cod`: devuelve MCC de TODAS las obras del usuario (scope).
-//   - con `obra_cod`: valida que el user tenga acceso y filtra.
-cuentaCliente.get('/', requirePermiso('certificaciones', 'lectura'), async (c) => {
-  const obraCod = c.req.query('obra_cod')
-  const token   = c.get('accessToken')
-  const userId  = c.get('user').id
-  // `a_cargo_de` (20260904ak): 'cliente' (default) = lo que se le cobra;
-  // 'cadinc' = gasto de CADINC (obra llave en mano o EPP); 'todos' = ambos.
-  const aCargoRaw = c.req.query('a_cargo_de') ?? 'cliente'
-  if (!['cliente', 'cadinc', 'todos'].includes(aCargoRaw)) return c.json({ error: 'a_cargo_de inválido' }, 400)
-  const aCargoDe = aCargoRaw as 'cliente' | 'cadinc' | 'todos'
-
-  if (obraCod) {
-    await validarObraDelUsuario(userId, obraCod, 'certificaciones')
-    const data = await cuentaClienteService.getByObra(obraCod, token, aCargoDe)
-    return c.json(data)
-  }
-
-  const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
-  // `null` significa scope global (admin/all): no filtramos por obras.
-  if (allowed == null) {
-    // Para evitar dump del MCC entero del proyecto, exigimos obra_cod cuando
-    // el user tiene scope global. Si más adelante se necesita "todas las
-    // obras" para admin, agregar paginación.
-    return c.json({ error: 'obra_cod es requerido' }, 400)
-  }
-  if (allowed.length === 0) return c.json([])
-
-  const data = await cuentaClienteService.getByObras(allowed, token, aCargoDe)
-  return c.json(data)
-})
-
-// GET /api/cuenta-cliente/gastos-cadinc — cuánto gastó CADINC por obra
-// (materiales de obras llave en mano + EPP en cualquier obra), por mes.
-// Lee v_gastos_cadinc_obra (20260904ak). Mismo scoping de obras que el resto.
-cuentaCliente.get('/gastos-cadinc', requirePermiso('certificaciones', 'lectura'), async (c) => {
-  const allowed = await getObrasDelUsuarioCached(c.get('user').id, 'certificaciones')
-  if (allowed != null && allowed.length === 0) return c.json([])
-  const data = await cuentaClienteService.gastosCadinc(allowed, c.get('accessToken'))
-  return c.json(data)
-})
 
 // ── Cuenta corriente (20260904ap) ─────────────────────────────────────
 // Una sola vista para lo que se le cobra al cliente y lo que gastó CADINC.
