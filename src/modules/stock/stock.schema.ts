@@ -39,7 +39,9 @@ const materialFields = {
   // Espejo de solicitud_compra_item.clase: al elegir este material en un pedido
   // la linea nace pre-tildada como herramienta. Tiene que ser seteable desde el
   // ABM o el espejo queda inerte (solo se podria marcar por SQL).
-  clase:         z.enum(['material', 'herramienta']),
+  // 'epp' (20260904ak): elemento de protección personal, costo de CADINC. Su
+  // fila en la cuenta del cliente nace con a_cargo_de='cadinc' (trigger).
+  clase:         z.enum(['material', 'herramienta', 'epp']),
 }
 
 export const CreateMaterialSchema = z.object({

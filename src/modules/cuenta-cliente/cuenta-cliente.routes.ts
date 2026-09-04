@@ -40,10 +40,15 @@ cuentaCliente.get('/', requirePermiso('certificaciones', 'lectura'), async (c) =
   const obraCod = c.req.query('obra_cod')
   const token   = c.get('accessToken')
   const userId  = c.get('user').id
+  // `a_cargo_de` (20260904ak): 'cliente' (default) = lo que se le cobra;
+  // 'cadinc' = gasto de CADINC (obra llave en mano o EPP); 'todos' = ambos.
+  const aCargoRaw = c.req.query('a_cargo_de') ?? 'cliente'
+  if (!['cliente', 'cadinc', 'todos'].includes(aCargoRaw)) return c.json({ error: 'a_cargo_de inválido' }, 400)
+  const aCargoDe = aCargoRaw as 'cliente' | 'cadinc' | 'todos'
 
   if (obraCod) {
     await validarObraDelUsuario(userId, obraCod, 'certificaciones')
-    const data = await cuentaClienteService.getByObra(obraCod, token)
+    const data = await cuentaClienteService.getByObra(obraCod, token, aCargoDe)
     return c.json(data)
   }
 
@@ -57,7 +62,17 @@ cuentaCliente.get('/', requirePermiso('certificaciones', 'lectura'), async (c) =
   }
   if (allowed.length === 0) return c.json([])
 
-  const data = await cuentaClienteService.getByObras(allowed, token)
+  const data = await cuentaClienteService.getByObras(allowed, token, aCargoDe)
+  return c.json(data)
+})
+
+// GET /api/cuenta-cliente/gastos-cadinc — cuánto gastó CADINC por obra
+// (materiales de obras llave en mano + EPP en cualquier obra), por mes.
+// Lee v_gastos_cadinc_obra (20260904ak). Mismo scoping de obras que el resto.
+cuentaCliente.get('/gastos-cadinc', requirePermiso('certificaciones', 'lectura'), async (c) => {
+  const allowed = await getObrasDelUsuarioCached(c.get('user').id, 'certificaciones')
+  if (allowed != null && allowed.length === 0) return c.json([])
+  const data = await cuentaClienteService.gastosCadinc(allowed, c.get('accessToken'))
   return c.json(data)
 })
 

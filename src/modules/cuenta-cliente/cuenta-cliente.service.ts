@@ -75,36 +75,64 @@ async function fetchAllMcc(buildQuery: (from: number, to: number) => any) {
   return all
 }
 
+/** Filtro de la cuenta (20260904ak): qué le cobro al cliente vs qué gastó CADINC. */
+export type ACargoDe = 'cliente' | 'cadinc' | 'todos'
+
 export const cuentaClienteService = {
   /**
    * Filas de MCC para una obra (con joins a proveedor, factura, item).
    * Ordenadas por `fecha_resolucion` DESC para que lo más reciente quede arriba.
    */
-  async getByObra(obraCod: string, token: string) {
+  async getByObra(obraCod: string, token: string, aCargoDe: ACargoDe = 'cliente') {
     const supabase = createSupabaseClient(token)
-    return fetchAllMcc((from, to) => supabase
-      .from('materiales_a_cuenta_cliente')
-      .select(MCC_SELECT)
-      .eq('obra_cod', obraCod)
-      .order('fecha_resolucion', { ascending: false })
-      .order('id', { ascending: false })
-      .range(from, to))
+    return fetchAllMcc((from, to) => {
+      let q = supabase
+        .from('materiales_a_cuenta_cliente')
+        .select(MCC_SELECT)
+        .eq('obra_cod', obraCod)
+      if (aCargoDe !== 'todos') q = q.eq('a_cargo_de', aCargoDe)
+      return q
+        .order('fecha_resolucion', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)
+    })
   },
 
   /**
    * Filas de MCC para una lista de obras (caso "todas las obras del usuario").
    * Misma forma que `getByObra` pero con filtro `in`.
    */
-  async getByObras(obraCods: string[], token: string) {
+  async getByObras(obraCods: string[], token: string, aCargoDe: ACargoDe = 'cliente') {
     if (obraCods.length === 0) return []
     const supabase = createSupabaseClient(token)
-    return fetchAllMcc((from, to) => supabase
-      .from('materiales_a_cuenta_cliente')
-      .select(MCC_SELECT)
-      .in('obra_cod', obraCods)
-      .order('fecha_resolucion', { ascending: false })
-      .order('id', { ascending: false })
-      .range(from, to))
+    return fetchAllMcc((from, to) => {
+      let q = supabase
+        .from('materiales_a_cuenta_cliente')
+        .select(MCC_SELECT)
+        .in('obra_cod', obraCods)
+      if (aCargoDe !== 'todos') q = q.eq('a_cargo_de', aCargoDe)
+      return q
+        .order('fecha_resolucion', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)
+    })
+  },
+
+  /**
+   * Gasto de CADINC por obra, tipo (material | epp) y mes, desde la vista
+   * `v_gastos_cadinc_obra` (20260904ak). `obraCods` null = scope global.
+   */
+  async gastosCadinc(obraCods: string[] | null, token: string) {
+    const supabase = createSupabaseClient(token)
+    let q = supabase
+      .from('v_gastos_cadinc_obra')
+      .select('obra_cod, tipo, mes, renglones, total, sin_precio')
+      .order('obra_cod')
+      .order('mes', { ascending: false })
+    if (obraCods) q = q.in('obra_cod', obraCods)
+    const { data, error } = await q
+    if (error) throw new Error(error.message)
+    return data ?? []
   },
 
   /**
