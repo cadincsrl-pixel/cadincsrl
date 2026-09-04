@@ -20,6 +20,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
 import type { CrearCobroDto, EditarCobroDto } from './cuenta-cliente.schema.js'
+import { normTxt } from '../../lib/norm-txt.js'
 
 const BUCKET_COBROS = 'cobros-docs'
 
@@ -77,6 +78,29 @@ async function fetchAllMcc(buildQuery: (from: number, to: number) => any) {
 
 /** Filtro de la cuenta (20260904ak): qué le cobro al cliente vs qué gastó CADINC. */
 export type ACargoDe = 'cliente' | 'cadinc' | 'todos'
+
+/**
+ * Filtros de la cuenta corriente (20260904ap). Los mismos alimentan el listado
+ * paginado (PostgREST sobre v_cuenta_corriente) y el resumen (RPC).
+ */
+export interface CuentaFiltro {
+  obra_cod?:     string
+  estados?:      string[]
+  tipo?:         'material' | 'epp'
+  sin_precio?:   boolean
+  proveedor_id?: number
+  origen?:       'proveedor' | 'deposito'
+  desde?:        string
+  hasta?:        string
+  q?:            string
+  archivadas?:   boolean
+}
+
+// Palabras del buscador normalizadas igual que `busq` en la vista (norm_txt):
+// sin acentos ni signos, así "#634" busca "634" y "cañería" busca "caneria".
+function palabras(q?: string): string[] {
+  return normTxt(q ?? '').split(' ').filter(Boolean)
+}
 
 export const cuentaClienteService = {
   /**
@@ -150,6 +174,63 @@ export const cuentaClienteService = {
     if (error) throw new Error(error.message)
     return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number }>)
       .sort((a, b) => b.sin_precio - a.sin_precio)
+  },
+
+  // ── Cuenta corriente (20260904ap) ────────────────────────────────────
+
+  /**
+   * Renglones de la cuenta corriente, paginados y filtrados en el server.
+   * `allowed` null = alcance global (no se filtra por obra).
+   */
+  async getRenglones(allowed: string[] | null, f: CuentaFiltro, limit: number, offset: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    let q = supabase.from('v_cuenta_corriente').select('*', { count: 'exact' })
+    if (allowed) q = q.in('obra_cod', allowed)
+    if (f.obra_cod) q = q.eq('obra_cod', f.obra_cod)
+    else if (!f.archivadas) q = q.eq('obra_archivada', false)
+    if (f.estados?.length) q = q.in('estado', f.estados)
+    if (f.tipo) q = q.eq('tipo', f.tipo)
+    if (f.sin_precio) q = q.eq('precio_unit', 0)
+    if (f.proveedor_id) q = q.eq('proveedor_id', f.proveedor_id)
+    if (f.origen) q = q.eq('origen', f.origen)
+    if (f.desde) q = q.gte('fecha_resolucion', f.desde)
+    if (f.hasta) q = q.lte('fecha_resolucion', f.hasta)
+    for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
+    const { data, error, count } = await q
+      .order('fecha_resolucion', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, offset + limit - 1)
+    if (error) throw new Error(error.message)
+    return { items: data ?? [], total: count ?? 0, limit, offset }
+  },
+
+  /**
+   * Totales del conjunto filtrado por grupo (obra | mes | proveedor) × estado
+   * × tipo, más Σ pagos por obra. A propósito NO filtra por estado ni tipo:
+   * el frontend recorta esas dos dimensiones sobre el resultado, así los chips
+   * muestran cuánto hay en cada una con los demás filtros puestos.
+   */
+  async getResumen(allowed: string[] | null, f: CuentaFiltro, grupo: 'obra' | 'mes' | 'proveedor', token: string) {
+    const supabase = createSupabaseClient(token)
+    const pal = palabras(f.q)
+    const [g, p] = await Promise.all([
+      supabase.rpc('cuenta_corriente_resumen', {
+        p_obras:        allowed,
+        p_obra_cod:     f.obra_cod ?? null,
+        p_grupo:        grupo,
+        p_sin_precio:   !!f.sin_precio,
+        p_proveedor_id: f.proveedor_id ?? null,
+        p_origen:       f.origen ?? null,
+        p_desde:        f.desde ?? null,
+        p_hasta:        f.hasta ?? null,
+        p_palabras:     pal.length ? pal : null,
+        p_archivadas:   !!f.archivadas,
+      }),
+      supabase.rpc('cuenta_corriente_pagos', { p_obras: allowed, p_obra_cod: f.obra_cod ?? null }),
+    ])
+    if (g.error) throw new Error(g.error.message)
+    if (p.error) throw new Error(p.error.message)
+    return { grupos: g.data ?? [], pagos: p.data ?? [] }
   },
 
   // ── Cobros (pagos del cliente a cuenta de la obra) ───────────────────

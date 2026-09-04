@@ -32,3 +32,30 @@ export const EditarCobroSchema = z.object({
 
 export type CrearCobroDto  = z.infer<typeof CrearCobroSchema>
 export type EditarCobroDto = z.infer<typeof EditarCobroSchema>
+
+// ── Cuenta corriente (20260904ap) ───────────────────────────────────────
+// Filtros del listado y del resumen. `estado` viene como lista separada por
+// coma; los booleanos llegan como '1'/'true'.
+const BOOL_Q = z.enum(['1', '0', 'true', 'false']).optional()
+const FECHA_Q = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+
+export const CUENTA_ESTADOS = ['a_cobrar', 'cobrado', 'pago_directo', 'gasto_cadinc'] as const
+export type CuentaEstado = typeof CUENTA_ESTADOS[number]
+
+export const CuentaCorrienteQuerySchema = z.object({
+  obra_cod:     z.string().min(1).optional(),
+  estado:       z.string().max(80).optional(),
+  tipo:         z.enum(['material', 'epp']).optional(),
+  sin_precio:   BOOL_Q,
+  proveedor_id: z.coerce.number().int().positive().optional(),
+  origen:       z.enum(['proveedor', 'deposito']).optional(),
+  desde:        FECHA_Q.optional(),
+  hasta:        FECHA_Q.optional(),
+  q:            z.string().max(200).optional(),
+  archivadas:   BOOL_Q,
+  grupo:        z.enum(['obra', 'mes', 'proveedor']).default('obra'),
+  // Hasta 1000 (cap de PostgREST): el export Excel baja de a 1000.
+  limit:        z.coerce.number().int().min(1).max(1000).default(50),
+  offset:       z.coerce.number().int().min(0).default(0),
+})
+export type CuentaCorrienteQuery = z.infer<typeof CuentaCorrienteQuerySchema>

@@ -10,7 +10,11 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { cuentaClienteService, CcHttpError } from './cuenta-cliente.service.js'
-import { CrearCobroSchema, EditarCobroSchema, UploadComprobanteCobroSchema } from './cuenta-cliente.schema.js'
+import {
+  CrearCobroSchema, EditarCobroSchema, UploadComprobanteCobroSchema,
+  CuentaCorrienteQuerySchema, CUENTA_ESTADOS, type CuentaCorrienteQuery,
+} from './cuenta-cliente.schema.js'
+import type { CuentaFiltro } from './cuenta-cliente.service.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
 const cuentaCliente = new Hono()
@@ -74,6 +78,43 @@ cuentaCliente.get('/gastos-cadinc', requirePermiso('certificaciones', 'lectura')
   if (allowed != null && allowed.length === 0) return c.json([])
   const data = await cuentaClienteService.gastosCadinc(allowed, c.get('accessToken'))
   return c.json(data)
+})
+
+// ── Cuenta corriente (20260904ap) ─────────────────────────────────────
+// Una sola vista para lo que se le cobra al cliente y lo que gastó CADINC.
+// Los dos endpoints comparten los filtros (CuentaCorrienteQuerySchema) y el
+// alcance de obras; con obra_cod se valida que el user tenga acceso.
+
+function filtroDeQuery(f: CuentaCorrienteQuery): CuentaFiltro {
+  const bool = (v?: string) => v === '1' || v === 'true'
+  const estados = (f.estado ?? '').split(',').map(s => s.trim())
+    .filter(s => (CUENTA_ESTADOS as readonly string[]).includes(s))
+  return {
+    obra_cod: f.obra_cod, estados, tipo: f.tipo, sin_precio: bool(f.sin_precio),
+    proveedor_id: f.proveedor_id, origen: f.origen, desde: f.desde, hasta: f.hasta,
+    q: f.q, archivadas: bool(f.archivadas),
+  }
+}
+
+// GET /api/cuenta-cliente/renglones — listado paginado y filtrado en el server.
+cuentaCliente.get('/renglones', requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
+  const f = c.req.valid('query')
+  const userId = c.get('user').id
+  if (f.obra_cod) await validarObraDelUsuario(userId, f.obra_cod, 'certificaciones')
+  const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
+  if (allowed != null && allowed.length === 0) return c.json({ items: [], total: 0, limit: f.limit, offset: f.offset })
+  return c.json(await cuentaClienteService.getRenglones(allowed, filtroDeQuery(f), f.limit, f.offset, c.get('accessToken')))
+})
+
+// GET /api/cuenta-cliente/resumen — totales por grupo (obra | mes | proveedor)
+// × estado × tipo del conjunto filtrado, más pagos por obra.
+cuentaCliente.get('/resumen', requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
+  const f = c.req.valid('query')
+  const userId = c.get('user').id
+  if (f.obra_cod) await validarObraDelUsuario(userId, f.obra_cod, 'certificaciones')
+  const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
+  if (allowed != null && allowed.length === 0) return c.json({ grupos: [], pagos: [] })
+  return c.json(await cuentaClienteService.getResumen(allowed, filtroDeQuery(f), f.grupo, c.get('accessToken')))
 })
 
 // GET /api/cuenta-cliente/pendientes-precio
