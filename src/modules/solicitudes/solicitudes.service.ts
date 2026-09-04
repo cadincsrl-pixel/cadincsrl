@@ -111,7 +111,7 @@ export const solicitudesService = {
       // obras aparte (que puede venir scopeada/vacía para compras/depósito, o
       // stale y sin la obra recién creada) — antes las notificaciones caían al
       // código "CC-xxx" en esos casos.
-      .select('*, obra:obras(nom), items:solicitud_compra_item(*, proveedores(nombre))')
+      .select('*, obra:obras(nom), items:solicitud_compra_item(*, es_herramienta, proveedores(nombre))')
       .order('fecha', { ascending: false })
     if (obra_cod) q = q.eq('obra_cod', obra_cod)
 
@@ -169,7 +169,7 @@ export const solicitudesService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('solicitud_compra')
-      .select('*, items:solicitud_compra_item(*, proveedores(nombre), facturas_compra(numero, adjunto_url))')
+      .select('*, items:solicitud_compra_item(*, es_herramienta, proveedores(nombre), facturas_compra(numero, adjunto_url))')
       .eq('id', id)
       .single()
     if (error) throw new Error(error.message)
@@ -725,6 +725,63 @@ export const solicitudesService = {
     return data
   },
 
+  /**
+   * Recibir en el pañol una herramienta que la obra DEVUELVE.
+   *
+   * Un renglón con `devuelve = true` es la obra entregando algo, no pidiéndolo:
+   * comprarlo o despacharlo del depósito no significa nada, y si tiene
+   * `material_id` el despacho encima DESCUENTA stock de algo que está entrando.
+   * Por eso la devolución tiene su propio camino y no reusa despachar/comprar.
+   *
+   * Cierra el renglón en un solo paso (no hay nada que comprar antes) y mueve
+   * `cantidad_enviada`, que es lo que el trigger del ledger del pañol escucha:
+   * la fila nace con `sentido = 'devolucion'` sin que este service sepa nada de
+   * `herr_entregas` (migración 20260904b).
+   */
+  async recibirDevolucion(itemId: number, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+
+    const { data: prev, error: errSel } = await supabase
+      .from('solicitud_compra_item')
+      .select('id, cantidad, cantidad_comprada, devuelve, estado')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (errSel) throw new Error(errSel.message)
+    if (!prev)  throw new HttpError(404, 'ITEM_NO_EXISTE')
+    if (!prev.devuelve) throw new HttpError(400, 'ITEM_NO_ES_DEVOLUCION')
+
+    const cantidad = Number(prev.cantidad_comprada ?? prev.cantidad)
+    const hoy = new Date().toISOString().slice(0, 10)
+
+    const { data, error } = await supabase
+      .from('solicitud_compra_item')
+      .update({
+        estado:           'enviado',
+        fecha_envio:      hoy,
+        cantidad_enviada: cantidad,
+        updated_by:       userId,
+      })
+      .eq('id', itemId)
+      .eq('estado', 'pendiente')
+      .select('*, solicitud_compra(id, obra_cod)')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data)  throw new HttpError(409, 'ITEM_YA_PROCESADO')
+
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    data.solicitud_id ?? null,
+      accion:         'devolucion_recibida',
+      estadoAnterior: 'pendiente',
+      estadoNuevo:    'enviado',
+      cantidad,
+      meta:           { recibido_en_panol: true },
+      userId,
+    })
+
+    return data
+  },
+
   async enviarItem(itemId: number, fechaEnvio: string | undefined, token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
@@ -743,10 +800,16 @@ export const solicitudesService = {
     if (!data) throw new Error('Ítem no encontrado o no está listo para enviar')
     // Consistencia con envíos parciales: el envío directo (sin remito) manda
     // todo → el acumulado queda igual a la cantidad efectiva.
-    await supabase
+    const { error: errAcum } = await supabase
       .from('solicitud_compra_item')
       .update({ cantidad_enviada: Number(data.cantidad_comprada ?? data.cantidad) })
       .eq('id', itemId)
+    // Sin esto, un fallo acá dejaba el ítem en 'enviado' con el acumulado viejo
+    // y la respuesta en 200. Es uno de los 3 escritores de `cantidad_enviada`,
+    // que además es el punto de enganche del ledger del pañol (20260904b).
+    if (errAcum) {
+      throw new Error(`Ítem marcado como enviado pero no se pudo actualizar lo enviado: ${errAcum.message}`)
+    }
     await registrarItemEvento(supabase, {
       itemId,
       solicitudId: data.solicitud_id ?? null,

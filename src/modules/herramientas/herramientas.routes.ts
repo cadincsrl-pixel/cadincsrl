@@ -6,6 +6,7 @@ import { requirePermiso } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { fotosPorHerramienta, fotosPorId } from './herramienta-fotos.routes.js'
 import marcasRoutes  from './marcas.routes.js'
+import entregasRoutes from './entregas.routes.js'
 
 const herramientas = new Hono()
 herramientas.use('*', authMiddleware)
@@ -19,6 +20,8 @@ herramientas.use('*', authMiddleware)
 herramientas.route('/', fotosPorHerramienta)
 herramientas.route('/fotos', fotosPorId)
 herramientas.route('/', marcasRoutes)
+// Salidas a obra (bandeja del pañol). Va ANTES de /:id como los demás.
+herramientas.route('/', entregasRoutes)
 
 
 // GET /api/herramientas/config

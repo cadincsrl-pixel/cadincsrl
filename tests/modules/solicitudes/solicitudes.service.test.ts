@@ -468,3 +468,61 @@ describe('clase y devuelve en el item', () => {
     expect(r.items[0]).toMatchObject({ clase: 'herramienta', devuelve: true })
   })
 })
+
+// ── recibirDevolucion: la obra devuelve una herramienta al pañol ──────────
+// Un renglón con devuelve=true es la obra ENTREGANDO algo. Comprarlo o
+// despacharlo no significa nada, y con material_id el despacho encima descuenta
+// stock de algo que está entrando. Por eso tiene camino propio.
+describe('solicitudesService.recibirDevolucion', () => {
+  it('cierra el renglón y mueve cantidad_enviada (que es lo que ve el ledger del pañol)', async () => {
+    fromMock
+      // 1) lectura previa del ítem
+      .mockReturnValueOnce(chainable({ data: { id: 7, cantidad: 2, cantidad_comprada: null, devuelve: true, estado: 'pendiente' }, error: null }))
+      // 2) el update que lo cierra
+      .mockReturnValueOnce(chainable({ data: { id: 7, estado: 'enviado', solicitud_id: 3, solicitud_compra: { id: 3, obra_cod: 'CC-016' } }, error: null }))
+
+    const out = await solicitudesService.recibirDevolucion(7, 'jwt', 'user-uuid')
+    expect(out).toMatchObject({ id: 7, estado: 'enviado' })
+
+    // El acumulado tiene que quedar en la cantidad efectiva: el trigger
+    // trg_herr_entregas_sync escucha ese delta, no el estado.
+    const update = fromMock.mock.results[1].value.update
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      estado: 'enviado', cantidad_enviada: 2,
+    }))
+  })
+
+  it('usa la cantidad COMPRADA si difiere de la pedida', async () => {
+    fromMock
+      .mockReturnValueOnce(chainable({ data: { id: 8, cantidad: 5, cantidad_comprada: 3, devuelve: true, estado: 'pendiente' }, error: null }))
+      .mockReturnValueOnce(chainable({ data: { id: 8, estado: 'enviado' }, error: null }))
+
+    await solicitudesService.recibirDevolucion(8, 'jwt', 'user-uuid')
+    expect(fromMock.mock.results[1].value.update).toHaveBeenCalledWith(
+      expect.objectContaining({ cantidad_enviada: 3 }),
+    )
+  })
+
+  it('rechaza un ítem que NO está marcado como devolución', async () => {
+    fromMock.mockReturnValueOnce(chainable({ data: { id: 9, cantidad: 1, devuelve: false, estado: 'pendiente' }, error: null }))
+    await expect(solicitudesService.recibirDevolucion(9, 'jwt', 'u')).rejects.toMatchObject({
+      status: 400, code: 'ITEM_NO_ES_DEVOLUCION',
+    })
+  })
+
+  it('rechaza recibir dos veces (el .eq(estado, pendiente) no matchea)', async () => {
+    fromMock
+      .mockReturnValueOnce(chainable({ data: { id: 10, cantidad: 1, devuelve: true, estado: 'enviado' }, error: null }))
+      .mockReturnValueOnce(chainable({ data: null, error: null }))
+    await expect(solicitudesService.recibirDevolucion(10, 'jwt', 'u')).rejects.toMatchObject({
+      status: 409, code: 'ITEM_YA_PROCESADO',
+    })
+  })
+
+  it('404 si el ítem no existe', async () => {
+    fromMock.mockReturnValueOnce(chainable({ data: null, error: null }))
+    await expect(solicitudesService.recibirDevolucion(999, 'jwt', 'u')).rejects.toMatchObject({
+      status: 404, code: 'ITEM_NO_EXISTE',
+    })
+  })
+})

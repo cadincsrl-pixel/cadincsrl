@@ -129,7 +129,11 @@ export const remitosEnvioService = {
         // Tolerancia por decimales de numeric.
         const completo = nuevaAcum >= efectiva - 0.001
 
-        const { data: updated } = await supabase
+        // `error` se capturaba y se tiraba. Un fallo del UPDATE dejaba el remito
+        // creado y el ítem sin marcar, con 201 en la respuesta: nadie se entera.
+        // `data` null SIN error sigue siendo un skip legítimo (el `.in(estado)`
+        // filtró un ítem que ya no estaba listo para enviar).
+        const { data: updated, error: errUpd } = await supabase
           .from('solicitud_compra_item')
           .update({
             cantidad_enviada: nuevaAcum,
@@ -142,6 +146,9 @@ export const remitosEnvioService = {
           .in('estado', ['comprado', 'de_deposito', 'retirado', 'de_stock_cliente'])
           .select('id')
           .maybeSingle()
+        if (errUpd) {
+          throw new Error(`No se pudo marcar el ítem #${itemId} como enviado: ${errUpd.message}`)
+        }
 
         if (updated) {
           await registrarItemEvento(supabase, {

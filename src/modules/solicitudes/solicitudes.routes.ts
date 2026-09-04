@@ -227,6 +227,15 @@ solicitudes.post('/items/:itemId/despachar',
   }),
 )
 
+// POST /items/:itemId/recibir-devolucion
+// La obra devuelve una herramienta al pañol. No pasa por comprar/despachar:
+// ver el comentario largo en solicitudesService.recibirDevolucion.
+solicitudes.post('/items/:itemId/recibir-devolucion', requireResolverItems, requireItemObraScope, itemHandler(async (c) => {
+  return solicitudesService.recibirDevolucion(
+    Number(c.req.param('itemId')), c.get('accessToken'), c.get('user').id
+  )
+}))
+
 solicitudes.post('/items/:itemId/enviar', requireResolverItems, requireItemObraScope, zValidator('json', EnviarItemSchema), itemHandler(async (c) => {
   return solicitudesService.enviarItem(
     Number(c.req.param('itemId')), c.req.valid('json').fecha_envio, c.get('accessToken'), c.get('user').id
