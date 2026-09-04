@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
@@ -45,6 +46,25 @@ stock.get('/materiales', async (c) => {
     rubro_id ? Number(rubro_id) : undefined,
     incluirInactivos,
   ))
+})
+
+// Catálogo de precios: pestaña aparte del Stock (2026-09-04). Paginado y con
+// búsqueda en el server porque el catálogo ya pasa las 1000 filas del cap.
+const CatalogoQuerySchema = z.object({
+  q:                 z.string().max(120).optional(),
+  rubro_id:          z.coerce.number().int().positive().optional(),
+  incluir_inactivos: z.enum(['1', 'true', '0', 'false']).optional(),
+  sin_precio:        z.enum(['1', 'true', '0', 'false']).optional(),
+  limit:             z.coerce.number().int().min(1).max(200).default(50),
+  offset:            z.coerce.number().int().min(0).default(0),
+})
+stock.get('/catalogo', zValidator('query', CatalogoQuerySchema), async (c) => {
+  const f = c.req.valid('query')
+  return c.json(await stockService.getCatalogo(c.get('accessToken'), {
+    q: f.q, rubro_id: f.rubro_id, limit: f.limit, offset: f.offset,
+    incluir_inactivos: f.incluir_inactivos === '1' || f.incluir_inactivos === 'true',
+    sin_precio:        f.sin_precio === '1' || f.sin_precio === 'true',
+  }))
 })
 
 stock.post('/materiales', zValidator('json', CreateMaterialSchema), async (c) => {

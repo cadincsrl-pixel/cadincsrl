@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { requirePermiso } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
+import { normTxt } from '../../lib/norm-txt.js'
 
 /**
  * Salidas de herramientas a obra — la bandeja del pañol.
@@ -22,20 +23,9 @@ import { supabase } from '../../lib/supabase.js'
  */
 const entregas = new Hono()
 
-// Espejo EXACTO de public.norm_txt() (migración 20260904a). El trigger guarda
-// `descripcion_norm` con esa función, así que el texto que se busca tiene que
-// normalizarse igual o el ilike no pega nunca. Si allá cambia, acá también:
-// usar String.normalize('NFD') acá parece equivalente y NO lo es (saca acentos
-// que el translate de SQL deja pasar).
-const NORM_FROM = 'áéíóúüñàèìòùç'
-const NORM_TO   = 'aeiouunaeiouc'
-function normTxt(t: string): string {
-  return Array.from(t.toLowerCase())
-    .map(ch => { const i = NORM_FROM.indexOf(ch); return i >= 0 ? NORM_TO[i] : ch })
-    .join('')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-}
+// La búsqueda normaliza con `normTxt` (lib/norm-txt.ts), el espejo exacto de
+// public.norm_txt(): el trigger guarda `descripcion_norm` con esa función y si
+// el texto buscado no se normaliza igual, el ilike no pega nunca.
 
 const ESTADOS = ['pendiente', 'confirmada', 'vinculada', 'catalogada', 'ignorada', 'anulada', 'revisar'] as const
 

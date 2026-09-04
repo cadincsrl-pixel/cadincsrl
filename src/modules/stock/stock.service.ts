@@ -1,5 +1,6 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { normTxt } from '../../lib/norm-txt.js'
 import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto } from './stock.schema.js'
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -142,28 +143,55 @@ export const stockService = {
   // selector de la solicitud. `incluirInactivos` es para el ABM.
   async getMateriales(token: string, rubro_id?: number, incluirInactivos = false) {
     const supabase = createSupabaseClient(token)
+    // PostgREST recorta cada respuesta a 1000 filas y el cliente no lo puede
+    // subir (CLAUDE.md §5.7). El catálogo pasó esa marca el 2026-09-04 (1001
+    // filas, 997 activas): sin paginar, el ABM y el selector de los pedidos
+    // perdían filas en silencio. Se trae por páginas hasta que una venga corta.
     // `select('*')` ya trae `alias` (columna de la tabla desde 20260902c).
-    // Intentar con proveedores, fallback sin
-    let q = supabase
-      .from('stock_materiales')
-      .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
-      .order('nombre')
-    if (!incluirInactivos) q = q.eq('activo', true)
-    if (rubro_id) q = q.eq('rubro_id', rubro_id)
-    let { data, error } = await q
-    if (error) {
-      // Fallback sin proveedores (columna puede no existir aún)
-      let q2 = supabase
+    const PAGE = 1000
+    const out: Record<string, unknown>[] = []
+    for (let from = 0; ; from += PAGE) {
+      let q = supabase
         .from('stock_materiales')
-        .select('*, stock_rubros(nombre, icono)')
+        .select('*, stock_rubros(nombre, icono), proveedores(id, nombre)')
         .order('nombre')
-      if (!incluirInactivos) q2 = q2.eq('activo', true)
-      if (rubro_id) q2 = q2.eq('rubro_id', rubro_id)
-      const res = await q2
-      if (res.error) throw new Error(res.error.message)
-      data = res.data
+        .order('id')
+        .range(from, from + PAGE - 1)
+      if (!incluirInactivos) q = q.eq('activo', true)
+      if (rubro_id) q = q.eq('rubro_id', rubro_id)
+      const { data, error } = await q
+      if (error) throw new Error(error.message)
+      out.push(...(data ?? []))
+      if (!data || data.length < PAGE) break
     }
-    return data
+    return out
+  },
+
+  /**
+   * Catálogo de precios: pestaña aparte del Stock (2026-09-04). Lee
+   * `v_catalogo_materiales` (20260904v): rubro, precio de referencia con su
+   * fecha, y la última compra real del material (precio, proveedor, fecha,
+   * pedido). Paginado en el server por el mismo techo de 1000 filas. La
+   * búsqueda va sobre `busq` = nombre + sinónimos + rubro normalizados con
+   * `norm_txt()`, así que acá se normaliza igual y cada palabra tiene que estar.
+   */
+  async getCatalogo(
+    token: string,
+    f: { q?: string; rubro_id?: number; incluir_inactivos?: boolean; sin_precio?: boolean; limit: number; offset: number },
+  ) {
+    const supabase = createSupabaseClient(token)
+    let q = supabase
+      .from('v_catalogo_materiales')
+      .select('*', { count: 'exact' })
+      .order('nombre')
+      .order('id')
+    if (!f.incluir_inactivos) q = q.eq('activo', true)
+    if (f.rubro_id) q = q.eq('rubro_id', f.rubro_id)
+    if (f.sin_precio) q = q.eq('precio_ref', 0)
+    for (const w of normTxt(f.q ?? '').split(' ').filter(Boolean)) q = q.ilike('busq', `%${w}%`)
+    const { data, error, count } = await q.range(f.offset, f.offset + f.limit - 1)
+    if (error) throw new Error(error.message)
+    return { items: data ?? [], total: count ?? 0 }
   },
 
   /**
