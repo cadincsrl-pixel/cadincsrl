@@ -98,6 +98,10 @@ export const remitosEnvioService = {
         .from('obras').select('es_deposito').eq('cod', dto.obra_cod).maybeSingle()
       const esDeposito = obraDest?.es_deposito === true
 
+      // Ítems cuyo UPDATE falló. Antes el error se descartaba en silencio y el
+      // endpoint devolvía 201 con el ítem sin marcar: nadie se enteraba.
+      const fallidos: string[] = []
+
       for (const entrada of dto.enviar_items) {
         const itemId = typeof entrada === 'number' ? entrada : entrada.item_id
 
@@ -146,8 +150,14 @@ export const remitosEnvioService = {
           .in('estado', ['comprado', 'de_deposito', 'retirado', 'de_stock_cliente'])
           .select('id')
           .maybeSingle()
+        // NO se corta el loop: el remito y todos sus renglones ya se insertaron
+        // arriba y no hay transacción que los revierta, así que tirar acá dejaba
+        // parte de los ítems marcados y parte no. Se anotan los que fallaron y se
+        // reporta DESPUÉS de procesar todos, para que el fallo de uno no arrastre
+        // a los demás.
         if (errUpd) {
-          throw new Error(`No se pudo marcar el ítem #${itemId} como enviado: ${errUpd.message}`)
+          fallidos.push(`#${itemId}: ${errUpd.message}`)
+          continue
         }
 
         if (updated) {
@@ -190,6 +200,15 @@ export const remitosEnvioService = {
             created_by:        userId,
           })
         }
+      }
+
+      // El remito quedó creado igual (es lo correcto: los renglones existen y el
+      // papel ya se puede imprimir), pero el llamador tiene que enterarse de que
+      // esos ítems no quedaron marcados como enviados.
+      if (fallidos.length > 0) {
+        throw new Error(
+          `El remito ${remito.numero} se creó, pero ${fallidos.length} ítem(s) no se pudieron marcar como enviados: ${fallidos.join(' · ')}`,
+        )
       }
     }
 

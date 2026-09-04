@@ -1003,7 +1003,7 @@ export const solicitudesService = {
     // 1) Validar que esté enviado y determinar el estado previo.
     const { data: item, error: selErr } = await supabase
       .from('solicitud_compra_item')
-      .select('id, estado, proveedor_id')
+      .select('id, estado, proveedor_id, devuelve')
       .eq('id', itemId)
       .maybeSingle()
     if (selErr) throw new Error(selErr.message)
@@ -1027,7 +1027,16 @@ export const solicitudesService = {
       .order('id', { ascending: false })
       .limit(1)
       .maybeSingle()
-    const estadoPrevio = ev?.estado_nuevo ?? (item.proveedor_id != null ? 'comprado' : 'de_deposito')
+    // Una DEVOLUCIÓN no tiene estado de resolución previo: recibirDevolucion
+    // cierra el renglón de 'pendiente' a 'enviado' en un solo paso, y su evento
+    // ('devolucion_recibida', estadoNuevo 'enviado') nunca matchea RESUELTOS.
+    // Sin este corte caía al fallback y la devolución terminaba en 'de_deposito',
+    // que significa lo OPUESTO: un despacho del pañol hacia la obra. Y desde ahí
+    // la UI ofrecía "Enviar + Remito", o sea volver a mandar a la obra la
+    // herramienta que la obra acababa de devolver.
+    const estadoPrevio = item.devuelve
+      ? 'pendiente'
+      : (ev?.estado_nuevo ?? (item.proveedor_id != null ? 'comprado' : 'de_deposito'))
 
     // 2) Desvincular del remito y borrar el remito si queda vacío.
     const { data: reItems } = await supabase
@@ -1054,7 +1063,12 @@ export const solicitudesService = {
     // completo de nuevo).
     const { data, error } = await supabase
       .from('solicitud_compra_item')
-      .update({ estado: estadoPrevio, fecha_envio: null, cantidad_enviada: 0 })
+      // `remito_envio_id` se limpia acá: los renglones del remito se borraron
+      // arriba, así que dejarlo apuntando era un puntero rancio (13 ítems en
+      // prod apuntaban a un remito que ya no los contenía). El ledger del pañol
+      // lo lee para sellar el RM-NNNN, así que un puntero viejo le colgaba a la
+      // entrega el remito equivocado.
+      .update({ estado: estadoPrevio, fecha_envio: null, cantidad_enviada: 0, remito_envio_id: null })
       .eq('id', itemId)
       .eq('estado', 'enviado')
       .select('*, solicitud_compra(id, obra_cod)')

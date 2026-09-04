@@ -96,7 +96,11 @@ entregas.get('/entregas/stats', requirePermiso('herramientas', 'lectura'), async
   const [pendientes, revisar, obras, faltantes] = await Promise.all([
     supabase.from('herr_entregas').select('id', { count: 'exact', head: true }).eq('estado', 'pendiente'),
     supabase.from('herr_entregas').select('id', { count: 'exact', head: true }).eq('estado', 'revisar'),
-    supabase.from('herr_entregas').select('obra_cod').neq('estado', 'anulada'),
+    // Vista agregada, no filas crudas: traer una fila por entrega para contarlas
+    // en JS chocaba contra el techo de 1000 de PostgREST (§5.7) apenas el ledger
+    // pasara ese tamaño, y el recorte es silencioso. La vista devuelve una fila
+    // por obra (~31), así que no puede recortarse.
+    supabase.from('v_herr_entregas_obras').select('cod, n, n_pendientes').order('n', { ascending: false }),
     // Si esta vista tiene filas, el `exception when others` del trigger se tragó
     // un error y hay herramientas que salieron sin quedar registradas. Es el
     // antídoto de esa red: se pinta en rojo en la pantalla.
@@ -106,19 +110,14 @@ entregas.get('/entregas/stats', requirePermiso('herramientas', 'lectura'), async
   // La lista de obras va acá y no se deriva en el cliente: el listado viene
   // paginado, así que armarla con las filas de la página dejaba fuera del
   // filtro a toda obra que no cayera en la página que estás mirando.
-  const conteo = new Map<string, number>()
-  for (const r of (obras.data ?? []) as { obra_cod: string | null }[]) {
-    if (r.obra_cod) conteo.set(r.obra_cod, (conteo.get(r.obra_cod) ?? 0) + 1)
-  }
+  const lista = (obras.data ?? []) as { cod: string; n: number; n_pendientes: number }[]
 
   return c.json({
     pendientes: pendientes.count ?? 0,
     revisar:    revisar.count ?? 0,
-    obras:      conteo.size,
+    obras:      lista.length,
     faltantes:  faltantes.count ?? 0,
-    obras_lista: [...conteo.entries()]
-      .map(([cod, n]) => ({ cod, n }))
-      .sort((a, b) => b.n - a.n),
+    obras_lista: lista,
   })
 })
 
@@ -138,7 +137,12 @@ entregas.patch(
       .from('herr_entregas')
       .update({
         estado:       dto.estado,
-        nota:         dto.nota ?? null,
+        // `nota` SOLO se escribe si el body la manda explícitamente. Escribirla
+        // siempre borraba la nota del trigger, que es el único rastro de por qué
+        // una fila quedó en 'revisar' ("el renglón volvió a pendiente después de
+        // haber salido") o por qué se anuló. El auditMiddleware loguea el request,
+        // no el valor anterior: una vez pisada, se perdía para siempre.
+        ...(dto.nota !== undefined ? { nota: dto.nota } : {}),
         resuelto_por: c.get('user').id,
         resuelto_el:  new Date().toISOString(),
         updated_by:   c.get('user').id,
