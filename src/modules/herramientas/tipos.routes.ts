@@ -36,6 +36,8 @@ const EditarSchema = z.object({
   obs:    z.string().max(500).nullish(),
 }).refine(d => Object.keys(d).length > 0, { message: 'Nada para cambiar' })
 
+const FusionarSchema = z.object({ destino_id: z.number().int().positive() })
+
 const ListQuerySchema = z.object({
   q:         z.string().max(120).optional(),
   inactivos: z.enum(['1', '0', 'true', 'false']).optional(),
@@ -197,6 +199,29 @@ tipos.patch('/tipos/:id', requirePermiso('herramientas', 'actualizacion'), zVali
   }
 
   return c.json(await leerTipo(id))
+})
+
+// POST /api/herramientas/tipos/:id/fusionar { destino_id } — el tipo :id se
+// funde en destino_id y queda de baja: sus renglones de pedido, sus salidas y
+// retornos del pañol y sus sinónimos pasan al destino (RPC transaccional
+// `fusionar_tipo_herramienta`). Reescribe historia, por eso pide `eliminacion`
+// y no `actualizacion` como el resto del catálogo.
+tipos.post('/tipos/:id/fusionar', requirePermiso('herramientas', 'eliminacion'), zValidator('json', FusionarSchema), async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
+  const { destino_id } = c.req.valid('json')
+  if (destino_id === id) return c.json({ error: 'FUSION_MISMO_TIPO' }, 400)
+
+  const { data, error } = await supabase.rpc('fusionar_tipo_herramienta', {
+    p_origen: id, p_destino: destino_id, p_user_id: c.get('user').id,
+  })
+  if (error) {
+    const code = error.message.match(/ORIGEN_NO_ES_TIPO|DESTINO_NO_ES_TIPO|DESTINO_DE_BAJA|FUSION_MISMO_TIPO/)?.[0]
+    if (code === 'ORIGEN_NO_ES_TIPO' || code === 'DESTINO_NO_ES_TIPO') return c.json({ error: code }, 404)
+    if (code) return c.json({ error: code }, 409)
+    return c.json({ error: error.message }, 500)
+  }
+  return c.json({ ...(data as Record<string, unknown>), tipo: await leerTipo(destino_id) })
 })
 
 export default tipos
