@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase.js'
 import { fotosPorHerramienta, fotosPorId } from './herramienta-fotos.routes.js'
 import marcasRoutes  from './marcas.routes.js'
 import entregasRoutes from './entregas.routes.js'
+import tiposRoutes    from './tipos.routes.js'
 
 const herramientas = new Hono()
 herramientas.use('*', authMiddleware)
@@ -22,6 +23,8 @@ herramientas.route('/fotos', fotosPorId)
 herramientas.route('/', marcasRoutes)
 // Salidas a obra (bandeja del pañol). Va ANTES de /:id como los demás.
 herramientas.route('/', entregasRoutes)
+// Catálogo de tipos de herramienta (pestaña Catálogo). También antes de /:id.
+herramientas.route('/', tiposRoutes)
 
 
 // GET /api/herramientas/config
