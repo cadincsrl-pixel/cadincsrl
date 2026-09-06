@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { fotosPorHerramienta, fotosPorId } from './herramienta-fotos.routes.js'
 import marcasRoutes  from './marcas.routes.js'
@@ -318,7 +318,7 @@ herramientas.post('/movimientos/lote', requirePermiso('herramientas', 'actualiza
 // POST /api/herramientas/config/tipos
 // La tabla `herr_tipos` no tiene columnas de auditoría (created_by /
 // updated_by) — antes el insert las incluía y rechazaba con 400.
-herramientas.post('/config/tipos', requirePermiso('herramientas', 'creacion'), async (c) => {
+herramientas.post('/config/tipos', requirePermiso('herramientas', 'creacion'), requireTab('herramientas', 'parametros'), async (c) => {
   const body = await c.req.json()
   const { data, error } = await supabase
     .from('herr_tipos')
@@ -329,7 +329,7 @@ herramientas.post('/config/tipos', requirePermiso('herramientas', 'creacion'), a
 })
 
 // PATCH /api/herramientas/config/tipos/:id
-herramientas.patch('/config/tipos/:id', requirePermiso('herramientas', 'actualizacion'), async (c) => {
+herramientas.patch('/config/tipos/:id', requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', 'parametros'), async (c) => {
   const id   = Number(c.req.param('id'))
   const body = await c.req.json()
   const { data, error } = await supabase
@@ -341,7 +341,7 @@ herramientas.patch('/config/tipos/:id', requirePermiso('herramientas', 'actualiz
 })
 
 // DELETE /api/herramientas/config/tipos/:id
-herramientas.delete('/config/tipos/:id', requirePermiso('herramientas', 'eliminacion'), async (c) => {
+herramientas.delete('/config/tipos/:id', requirePermiso('herramientas', 'eliminacion'), requireTab('herramientas', 'parametros'), async (c) => {
   const id = Number(c.req.param('id'))
   const { error } = await supabase.from('herr_tipos').delete().eq('id', id)
   if (error) return c.json({ error: error.message }, 500)
@@ -350,7 +350,7 @@ herramientas.delete('/config/tipos/:id', requirePermiso('herramientas', 'elimina
 
 // PATCH /api/herramientas/config/mov-tipos/:key
 // `herr_mov_tipos` tampoco tiene columnas de auditoría.
-herramientas.patch('/config/mov-tipos/:key', requirePermiso('herramientas', 'actualizacion'), async (c) => {
+herramientas.patch('/config/mov-tipos/:key', requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', 'parametros'), async (c) => {
   const key  = c.req.param('key')
   const body = await c.req.json()
   const { data, error } = await supabase

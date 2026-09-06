@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { normTxt } from '../../lib/norm-txt.js'
 
@@ -85,7 +85,7 @@ const bool = (v?: string) => v === '1' || v === 'true'
 // GET /api/herramientas/entregas
 entregas.get(
   '/entregas',
-  requirePermiso('herramientas', 'lectura'),
+  requirePermiso('herramientas', 'lectura'), requireTab('herramientas', ['salidas', 'retornos']),
   zValidator('query', ListQuerySchema),
   async (c) => {
     const q = c.req.valid('query')
@@ -121,7 +121,7 @@ entregas.get(
 )
 
 // GET /api/herramientas/entregas/stats
-entregas.get('/entregas/stats', requirePermiso('herramientas', 'lectura'), async (c) => {
+entregas.get('/entregas/stats', requirePermiso('herramientas', 'lectura'), requireTab('herramientas', ['salidas', 'retornos']), async (c) => {
   const [pendientes, revisar, obras, faltantes] = await Promise.all([
     supabase.from('herr_entregas').select('id', { count: 'exact', head: true }).eq('estado', 'pendiente'),
     supabase.from('herr_entregas').select('id', { count: 'exact', head: true }).eq('estado', 'revisar'),
@@ -149,7 +149,7 @@ entregas.get('/entregas/stats', requirePermiso('herramientas', 'lectura'), async
 // Va ANTES de /entregas/:id: si no, "bulk" matchea como id.
 entregas.patch(
   '/entregas/bulk',
-  requirePermiso('herramientas', 'actualizacion'),
+  requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', ['salidas', 'retornos']),
   zValidator('json', BulkSchema),
   async (c) => {
     const dto = c.req.valid('json')
@@ -173,7 +173,7 @@ entregas.patch(
 // PATCH /api/herramientas/entregas/:id
 entregas.patch(
   '/entregas/:id',
-  requirePermiso('herramientas', 'actualizacion'),
+  requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', ['salidas', 'retornos']),
   zValidator('json', PatchSchema),
   async (c) => {
     const id  = Number(c.req.param('id'))
@@ -209,7 +209,7 @@ entregas.patch(
 // y rechaza devolver más de lo que sigue en obra.
 entregas.post(
   '/entregas/retornos',
-  requirePermiso('herramientas', 'actualizacion'),
+  requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', ['salidas', 'retornos']),
   zValidator('json', RetornoSchema),
   async (c) => {
     const dto = c.req.valid('json')

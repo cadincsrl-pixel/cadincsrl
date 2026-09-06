@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
+import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { documentosService, PersonalDocError } from './documentos.service.js'
 import { supabase as supabaseAdmin } from '../../lib/supabase.js'
 
@@ -48,7 +48,7 @@ function handle<T>(fn: (c: any) => Promise<T>) {
 // PII (DNI/alta_temprana/telegramas): además de lectura, exige ver_pii.
 docs.get(
   '/:leg/documentos',
-  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  requirePermiso('tarja', 'lectura'),
   requireFlag('tarja', 'ver_pii', true),
   handle(c => documentosService.listByLeg(c.req.param('leg'), c.get('accessToken'))),
 )
@@ -60,7 +60,7 @@ docs.get(
 // individuales. Service role evita el cap de PostgREST si la tabla crece.
 docs.get(
   '/documentos/resumen',
-  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  requirePermiso('tarja', 'lectura'),
   async (c) => {
     const { data, error } = await supabaseAdmin
       .rpc('legs_con_documento')
@@ -77,7 +77,7 @@ docs.get(
 // POST /api/personal/:leg/documentos/upload-url — genera signed upload URL
 docs.post(
   '/:leg/documentos/upload-url',
-  requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
+  requirePermiso('tarja', 'creacion'),
   requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UploadUrlSchema),
   handle(c => documentosService.generarUploadUrl(c.req.param('leg'), c.req.valid('json'))),
@@ -86,7 +86,7 @@ docs.post(
 // POST /api/personal/:leg/documentos — registra un doc tras upload
 docs.post(
   '/:leg/documentos',
-  requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
+  requirePermiso('tarja', 'creacion'),
   requireFlag('tarja', 'ver_pii', true),
   zValidator('json', RegistrarSchema),
   handle(c => documentosService.registrar(
@@ -101,7 +101,7 @@ docs.post(
 // PII (descarga del documento real): además de lectura, exige ver_pii.
 docs.get(
   '/:leg/documentos/:id/signed-url',
-  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  requirePermiso('tarja', 'lectura'),
   requireFlag('tarja', 'ver_pii', true),
   handle(c => documentosService.signedUrl(
     c.req.param('leg'),
@@ -113,7 +113,7 @@ docs.get(
 // DELETE /api/personal/:leg/documentos/:id — soft delete
 docs.delete(
   '/:leg/documentos/:id',
-  requirePermisoOr([{ modulo: 'personal', accion: 'eliminacion' }, { modulo: 'tarja', accion: 'eliminacion' }]),
+  requirePermiso('tarja', 'eliminacion'),
   requireFlag('tarja', 'ver_pii', true),
   handle(c => documentosService.softDelete(
     c.req.param('leg'),

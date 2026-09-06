@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso } from '../../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../../middleware/permission.js
 import { lugaresService } from './lugares.service.js'
 import {
   CreateLugarSchema, UpdateLugarSchema, CreateRutaSchema, UpdateRutaSchema,
@@ -10,6 +10,8 @@ import {
 
 const lugares = new Hono()
 lugares.use('*', authMiddleware)
+// Guardia por tab (2026-09-06): la tab de la pantalla también vale en la API. Solo mutaciones: canteras/depósitos/rutas los leen Tramos, Facturación, Liquidaciones y Áridos.
+lugares.on(['POST', 'PATCH', 'PUT', 'DELETE'], '*', requireTab('logistica', 'lugares'))
 lugares.on(['GET'],            '*', requirePermiso('logistica', 'lectura'))
 lugares.on(['POST'],           '*', requirePermiso('logistica', 'creacion'))
 lugares.on(['PATCH', 'PUT'],   '*', requirePermiso('logistica', 'actualizacion'))

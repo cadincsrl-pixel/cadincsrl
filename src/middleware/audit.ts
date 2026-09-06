@@ -64,6 +64,7 @@ export const VERBOS: Record<string, string> = {
   'upload-url': 'subir adjunto', 'upload-comprobante': 'subir adjunto', 'comprobante-upload-url': 'subir adjunto',
   remito: 'adjuntar remito', orden: 'reordenar', bulk: 'confirmar en bloque', lote: 'cargar en lote',
   aumento: 'aumento general', chat: 'consultar', entrada: 'entrada', salida: 'salida',
+  aplicar: 'aplicar a sus usuarios',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
@@ -73,7 +74,7 @@ export const ENTIDADES: Record<string, string> = {
   tarifas: 'tarifa de obra', categorias: 'categoría', 'cat-obra': 'categoría por obra',
   personal: 'trabajador', 'personal/documentos': 'documento de trabajador',
   prestamos: 'préstamo', ropa: 'ropa', 'ropa/categorias': 'categoría de ropa', 'ropa/entregas': 'entrega de ropa',
-  obras: 'obra', usuarios: 'usuario', 'usuarios/obras': 'obras del usuario', me: 'mi perfil',
+  obras: 'obra', usuarios: 'usuario', 'usuarios/obras': 'obras del usuario', 'usuarios/roles': 'rol', me: 'mi perfil',
   contratistas: 'contratista', 'contratistas/cert': 'certificación de contratista',
   'contratistas/presupuestos': 'presupuesto de contratista', 'contratistas/asig': 'asignación de contratista',
   // Compras y stock

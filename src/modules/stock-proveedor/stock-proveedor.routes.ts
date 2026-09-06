@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../middleware/permission.js
 import { getObrasDelUsuarioCached, validarObraDelUsuario, validarObraDeRegistro, sinObras } from '../../lib/obras-usuario.js'
 import { stockProveedorService, StockProvHttpError } from './stock-proveedor.service.js'
 import {
@@ -13,6 +13,9 @@ import {
 const stockProv = new Hono()
 
 stockProv.use('*', authMiddleware)
+// Guardia por tab (2026-09-06): la tab de la pantalla también vale en la API. Solicitudes también lee el stock en proveedor de sus ítems.
+stockProv.on(['GET'], '*', requireTab('certificaciones', ['stock-proveedor', 'solicitudes']))
+stockProv.on(['POST', 'PATCH', 'PUT', 'DELETE'], '*', requireTab('certificaciones', 'stock-proveedor'))
 stockProv.on(['GET'],          '*', requirePermiso('certificaciones', 'lectura'))
 stockProv.on(['POST'],         '*', requirePermiso('certificaciones', 'creacion'))
 

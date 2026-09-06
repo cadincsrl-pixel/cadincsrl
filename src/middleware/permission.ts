@@ -112,6 +112,30 @@ export function requireFlag(
 }
 
 /**
+ * Exige que el usuario tenga (al menos una de) las tabs indicadas en
+ * `permisos.<modulo>.tabs`. Lista ausente o vacía = todas las tabs, igual
+ * que lo entiende la UI (useTabsPermitidos). Admin bypasea. Hasta el
+ * 2026-09-06 las tabs eran solo de pantalla: con logistica.lectura
+ * alcanzaba para leer rentabilidad, liquidaciones y cobros por API.
+ */
+export function requireTab(modulo: string, tab: string | string[]) {
+  const tabs = Array.isArray(tab) ? tab : [tab]
+  return createMiddleware(async (c, next) => {
+    const profile = await fetchPermisos(c.get('user').id)
+    if (!profile) throw new HTTPException(403, { message: 'Sin perfil' })
+    if (estaInactivo(profile)) throw new HTTPException(403, { message: MSG_INACTIVO })
+    if (profile.rol === 'admin') return next()
+    const permisos = profile.permisos as Record<string, { tabs?: unknown }> | null
+    const configuradas = permisos?.[modulo]?.tabs
+    if (!Array.isArray(configuradas) || configuradas.length === 0) return next()
+    if (!tabs.some(t => configuradas.includes(t))) {
+      return c.json({ error: 'SIN_TAB', detail: { modulo, tabs } }, 403)
+    }
+    return next()
+  })
+}
+
+/**
  * Chequeo inline (no-middleware) de un flag de permisos. Para handlers que
  * no rechazan sino que degradan la respuesta (ej.: GET /contratistas devuelve
  * el catálogo sin dni/cuil/cbu si el usuario tiene `ver_pii=false`).

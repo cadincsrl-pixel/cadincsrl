@@ -17,14 +17,14 @@ export const MODULOS = [
   'certificaciones',
   'herramientas',
   'caja',
-  'ropa',
-  'prestamos',
-  'configuracion',
   'flota',
   'alquiler',
   'aridos',
   'admin',
 ] as const
+// 2026-09-06: `ropa`, `prestamos` y `configuracion` salieron del catálogo.
+// Ningún endpoint los exigía (todo va por tarja.*) y en la UI son tabs de
+// tarja; como módulos solo desalineaban `modulos[]` con `permisos`.
 
 export type Modulo = (typeof MODULOS)[number]
 
@@ -39,4 +39,17 @@ export const MODULO_SET = new Set<string>(MODULOS)
 
 export function esModuloValido(x: string | null | undefined): x is Modulo {
   return !!x && MODULO_SET.has(x)
+}
+
+/**
+ * `profiles.modulos` se deriva de `permisos`: los módulos con lectura. La
+ * pantalla ya no lo manda (era una segunda fuente de verdad que gateaba
+ * páginas y el selector mientras el backend leía `permisos`). Espejo de
+ * `public.modulos_de_permisos()` en la base.
+ */
+export function modulosDePermisos(permisos: Record<string, unknown> | null | undefined): string[] {
+  return Object.entries(permisos ?? {})
+    .filter(([, v]) => !!v && typeof v === 'object' && (v as Record<string, unknown>).lectura === true)
+    .map(([k]) => k)
+    .sort()
 }

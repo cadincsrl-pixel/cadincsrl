@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../middleware/permission.js
 import { getObrasDelUsuarioCached, validarObraDelUsuario, validarObraDeRegistro, sinObras } from '../../lib/obras-usuario.js'
 import { stockClienteService, StockClienteHttpError } from './stock-cliente.service.js'
 import {
@@ -14,6 +14,9 @@ import {
 const stockCliente = new Hono()
 
 stockCliente.use('*', authMiddleware)
+// Guardia por tab (2026-09-06): la tab de la pantalla también vale en la API. Solicitudes lee el saldo del cliente al resolver un ítem.
+stockCliente.on(['GET'], '*', requireTab('certificaciones', ['stock-cliente', 'solicitudes']))
+stockCliente.on(['POST', 'PATCH', 'PUT', 'DELETE'], '*', requireTab('certificaciones', 'stock-cliente'))
 stockCliente.on(['GET'],  '*', requirePermiso('certificaciones', 'lectura'))
 stockCliente.on(['POST'], '*', requirePermiso('certificaciones', 'creacion'))
 

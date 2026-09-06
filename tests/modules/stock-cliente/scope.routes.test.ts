@@ -22,6 +22,7 @@ vi.mock('../../../src/middleware/auth.js', () => ({
 }))
 vi.mock('../../../src/middleware/permission.js', () => ({
   requirePermiso: () => async (_c: any, next: any) => next(),
+  requireTab:     () => async (_c: any, next: any) => next(),
 }))
 vi.mock('../../../src/lib/obras-usuario.js', () => ({
   getObrasDelUsuarioCached: async () => estado.allowed,

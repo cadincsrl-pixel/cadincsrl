@@ -1,13 +1,15 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso, tieneFlag } from '../../../middleware/permission.js'
+import { requirePermiso, tieneFlag, requireTab } from '../../../middleware/permission.js
 import { cobrosService } from './cobros.service.js'
 import { CreateCobroSchema, ContraFacturaSchema } from './cobros.schema.js'
 import adjuntosRoutes from './adjuntos.routes.js'
 
 const cobros = new Hono()
 cobros.use('*', authMiddleware)
+// Guardia por tab (2026-09-06): la tab de la pantalla también vale en la API.
+cobros.use('*', requireTab('logistica', 'facturacion'))
 cobros.on(['GET'],    '*', requirePermiso('logistica', 'lectura'))
 cobros.on(['POST'],   '*', requirePermiso('logistica', 'creacion'))
 cobros.on(['PATCH'],  '*', requirePermiso('logistica', 'actualizacion'))

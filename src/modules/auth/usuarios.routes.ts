@@ -4,7 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { supabase } from '../../lib/supabase.js'
 import { invalidarCacheObrasUsuario } from '../../lib/obras-usuario.js'
-import { ModuloSchema } from '../../lib/modulos.js'
+import { ModuloSchema, modulosDePermisos } from '../../lib/modulos.js'
 import { createClient } from '@supabase/supabase-js'
 
 const usuarios = new Hono()
@@ -115,16 +115,21 @@ const RolBaseSchema = z.enum([
 ]).nullable()
 const ObrasScopeSchema = z.enum(['todas', 'asignadas'])
 
+// `modulos` y `tipo_usuario` se aceptan y se IGNORAN (clientes viejos):
+// modulos se deriva de permisos y tipo_usuario murió con los roles editables.
+const RolKeySchema = z.string().regex(/^[a-z0-9_]+$/).nullable()
 const CreateUsuarioSchema = z.object({
-  email:        z.string().email(),
-  password:     z.string().min(6, 'Mínimo 6 caracteres'),
-  nombre:       z.string().min(1),
-  rol:          z.enum(['admin', 'operador']),
-  modulos:      z.array(z.string()),
-  permisos:     PermisosSchema.optional(),
-  tipo_usuario: z.string().nullable().optional(), // legacy
-  rol_base:     RolBaseSchema.optional(),
-  obras_scope:  ObrasScopeSchema.optional(),
+  email:         z.string().email(),
+  password:      z.string().min(6, 'Mínimo 6 caracteres'),
+  nombre:        z.string().min(1),
+  rol:           z.enum(['admin', 'operador']),
+  modulos:       z.array(z.string()).optional(),
+  permisos:      PermisosSchema.optional(),
+  tipo_usuario:  z.string().nullable().optional(),
+  rol_base:      RolBaseSchema.optional(),
+  obras_scope:   ObrasScopeSchema.optional(),
+  rol_key:       RolKeySchema.optional(),
+  personalizado: z.boolean().optional(),
 })
 
 usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
@@ -142,12 +147,15 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
   }
   if (!authData.user) return c.json({ error: 'No se pudo crear el usuario' }, 500)
 
-  const updateData: any = {
-    nombre:       body.nombre,
-    rol:          body.rol,
-    modulos:      body.modulos,
-    permisos:     body.permisos ?? {},
-    tipo_usuario: body.tipo_usuario ?? null,
+  const permisosIniciales = body.permisos ?? {}
+  const updateData: Record<string, unknown> = {
+    nombre:        body.nombre,
+    rol:           body.rol,
+    modulos:       modulosDePermisos(permisosIniciales),
+    permisos:      permisosIniciales,
+    tipo_usuario:  null,
+    rol_key:       body.rol_key ?? null,
+    personalizado: body.personalizado ?? body.rol_key == null,
   }
   if (body.rol_base !== undefined)    updateData.rol_base    = body.rol_base
   if (body.obras_scope !== undefined) updateData.obras_scope = body.obras_scope
@@ -192,12 +200,14 @@ const UpdateSchema = z.object({
   nombre:       z.string().min(1).optional(),
   email:        z.string().email().optional(),
   rol:          z.enum(['admin', 'operador']).optional(),
-  modulos:      z.array(z.string()).optional(),
+  modulos:      z.array(z.string()).optional(),   // ignorado: se deriva de permisos
   activo:       z.boolean().optional(),
   permisos:     PermisosSchema.optional(),
-  tipo_usuario: z.string().nullable().optional(), // legacy
+  tipo_usuario: z.string().nullable().optional(), // ignorado (legacy)
   rol_base:     RolBaseSchema.optional(),
   obras_scope:  ObrasScopeSchema.optional(),
+  rol_key:      RolKeySchema.optional(),
+  personalizado: z.boolean().optional(),
 })
 
 // Cuenta admins activos. Se usa para evitar lockout total cuando el
@@ -214,7 +224,11 @@ async function countAdminsActivos(): Promise<number> {
 
 usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
   const id  = c.req.param('id')
-  const { email, ...profileDto } = c.req.valid('json')
+  const { email, modulos: _modulosIgnorados, tipo_usuario: _tipoIgnorado, ...profileDto } = c.req.valid('json') as
+    Record<string, unknown> & { email?: string; modulos?: unknown; tipo_usuario?: unknown; permisos?: Record<string, unknown>; rol?: string; activo?: boolean }
+  void _modulosIgnorados; void _tipoIgnorado
+  // Una sola fuente de verdad: modulos sale de permisos, nunca del cliente.
+  if (profileDto.permisos !== undefined) profileDto.modulos = modulosDePermisos(profileDto.permisos)
   const callerId = c.get('user').id
 
   // Lockout protection: si la operación pasa el rol de admin a operador
@@ -434,6 +448,98 @@ usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
   invalidarCacheObrasUsuario(id)
 
   return c.json({ success: true, count: new Set(obras).size })
+})
+
+// ── Roles (plantillas editables) ─────────────────────────────────────────
+//
+// `roles` es la plantilla; `profiles.permisos` sigue siendo lo efectivo. Al
+// editar un rol no cambia nadie hasta que el admin lo aplica
+// (POST /roles/:key/aplicar), y solo a los usuarios sin ajustes propios.
+
+const RolBodySchema = z.object({
+  label:               z.string().min(1).max(60),
+  descripcion:         z.string().max(500).optional(),
+  permisos:            PermisosSchema,
+  obras_scope_default: ObrasScopeSchema.optional(),
+  rol_base:            RolBaseSchema.optional(),
+  orden:               z.number().int().optional(),
+  activo:              z.boolean().optional(),
+})
+const CreateRolSchema = RolBodySchema.extend({ key: z.string().regex(/^[a-z0-9_]{2,40}$/) })
+const UpdateRolSchema = RolBodySchema.partial()
+
+async function rolesConConteo(keys?: string[]) {
+  let q = supabase.from('roles').select('*').order('orden').order('key')
+  if (keys) q = q.in('key', keys)
+  const { data: roles, error } = await q
+  if (error) throw new Error(error.message)
+  const { data: perfiles, error: errP } = await supabase
+    .from('profiles').select('rol_key, personalizado').eq('rol', 'operador').not('rol_key', 'is', null)
+  if (errP) throw new Error(errP.message)
+  const conteo = new Map<string, { usuarios: number; personalizados: number }>()
+  for (const p of perfiles ?? []) {
+    const k = p.rol_key as string
+    const c = conteo.get(k) ?? { usuarios: 0, personalizados: 0 }
+    c.usuarios += 1
+    if (p.personalizado) c.personalizados += 1
+    conteo.set(k, c)
+  }
+  return (roles ?? []).map(r => ({ ...r, ...(conteo.get(r.key) ?? { usuarios: 0, personalizados: 0 }) }))
+}
+
+usuarios.get('/roles', async (c) => {
+  return c.json(await rolesConConteo())
+})
+
+usuarios.post('/roles', zValidator('json', CreateRolSchema), async (c) => {
+  const body = c.req.valid('json')
+  const { error } = await supabase.from('roles').insert({
+    key: body.key, label: body.label, descripcion: body.descripcion ?? '', permisos: body.permisos,
+    obras_scope_default: body.obras_scope_default ?? 'todas', rol_base: body.rol_base ?? null,
+    orden: body.orden ?? 99, activo: body.activo ?? true, updated_by: c.get('user').id,
+  })
+  if (error) {
+    if (error.code === '23505') return c.json({ error: 'ROL_DUPLICADO' }, 409)
+    return c.json({ error: error.message }, 500)
+  }
+  const [rol] = await rolesConConteo([body.key])
+  return c.json(rol, 201)
+})
+
+usuarios.patch('/roles/:key', zValidator('json', UpdateRolSchema), async (c) => {
+  const key = c.req.param('key')
+  const body = c.req.valid('json')
+  const cambios: Record<string, unknown> = { ...body, updated_at: new Date().toISOString(), updated_by: c.get('user').id }
+  const { data, error } = await supabase.from('roles').update(cambios).eq('key', key).select('key').maybeSingle()
+  if (error) return c.json({ error: error.message }, 500)
+  if (!data) return c.json({ error: 'ROL_NO_EXISTE' }, 404)
+  const [rol] = await rolesConConteo([key])
+  return c.json(rol)
+})
+
+usuarios.delete('/roles/:key', async (c) => {
+  const key = c.req.param('key')
+  const { count, error: errC } = await supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('rol_key', key)
+  if (errC) return c.json({ error: errC.message }, 500)
+  if ((count ?? 0) > 0) return c.json({ error: 'ROL_EN_USO', detail: { usuarios: count } }, 409)
+  const { data, error } = await supabase.from('roles').delete().eq('key', key).select('key').maybeSingle()
+  if (error) return c.json({ error: error.message }, 500)
+  if (!data) return c.json({ error: 'ROL_NO_EXISTE' }, 404)
+  return c.body(null, 204)
+})
+
+// Copia los permisos del rol a sus usuarios sin ajustes propios (RPC con
+// historial). Los personalizados no se tocan: el admin los revisa a mano.
+usuarios.post('/roles/:key/aplicar', async (c) => {
+  const key = c.req.param('key')
+  const { data, error } = await supabase.rpc('aplicar_rol', { p_key: key, p_user_id: c.get('user').id })
+  if (error) {
+    if (error.message.includes('ROL_NO_EXISTE')) return c.json({ error: 'ROL_NO_EXISTE' }, 404)
+    return c.json({ error: error.message }, 500)
+  }
+  const filas = (data ?? []) as Array<{ id: string; nombre: string }>
+  for (const f of filas) invalidarCacheObrasUsuario(f.id)
+  return c.json({ aplicados: filas.length, usuarios: filas.map(f => f.nombre) })
 })
 
 export default usuarios

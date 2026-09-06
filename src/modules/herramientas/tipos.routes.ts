@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { normTxt } from '../../lib/norm-txt.js'
 
@@ -124,7 +124,7 @@ tipos.get('/tipos/:id/entregas', requirePermiso('herramientas', 'lectura'), asyn
 })
 
 // POST /api/herramientas/tipos
-tipos.post('/tipos', requirePermiso('herramientas', 'actualizacion'), zValidator('json', CrearSchema), async (c) => {
+tipos.post('/tipos', requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', 'catalogo'), zValidator('json', CrearSchema), async (c) => {
   const dto = c.req.valid('json')
   const nombre = dto.nombre.trim()
   const alias = limpiarAlias(dto.alias, nombre)
@@ -154,7 +154,7 @@ tipos.post('/tipos', requirePermiso('herramientas', 'actualizacion'), zValidator
 // Renombrar propaga a los renglones de pedido y al pañol que todavía llevan el
 // nombre viejo (igual que hicieron las migraciones a mano), así "Salidas a
 // obra" y los pedidos viejos muestran el nombre nuevo.
-tipos.patch('/tipos/:id', requirePermiso('herramientas', 'actualizacion'), zValidator('json', EditarSchema), async (c) => {
+tipos.patch('/tipos/:id', requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', 'catalogo'), zValidator('json', EditarSchema), async (c) => {
   const id = Number(c.req.param('id'))
   if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
   const dto = c.req.valid('json')
@@ -206,7 +206,7 @@ tipos.patch('/tipos/:id', requirePermiso('herramientas', 'actualizacion'), zVali
 // retornos del pañol y sus sinónimos pasan al destino (RPC transaccional
 // `fusionar_tipo_herramienta`). Reescribe historia, por eso pide `eliminacion`
 // y no `actualizacion` como el resto del catálogo.
-tipos.post('/tipos/:id/fusionar', requirePermiso('herramientas', 'eliminacion'), zValidator('json', FusionarSchema), async (c) => {
+tipos.post('/tipos/:id/fusionar', requirePermiso('herramientas', 'eliminacion'), requireTab('herramientas', 'catalogo'), zValidator('json', FusionarSchema), async (c) => {
   const id = Number(c.req.param('id'))
   if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
   const { destino_id } = c.req.valid('json')

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
+import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { personalService } from './personal.service.js'
 import { CreatePersonalSchema, UpdatePersonalSchema } from './personal.schema.js'
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
@@ -95,7 +95,7 @@ async function filtrarLegsPermitidos(
 
 personal.get(
   '/',
-  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  requirePermiso('tarja', 'lectura'),
   async (c) => {
     const token = c.get('accessToken')
     const userId = c.get('user').id
@@ -126,7 +126,7 @@ personal.get(
 
 personal.get(
   '/:leg',
-  requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]),
+  requirePermiso('tarja', 'lectura'),
   async (c) => {
     const leg = c.req.param('leg')
     const token = c.get('accessToken')
@@ -145,7 +145,7 @@ personal.get(
 
 personal.post(
   '/',
-  requirePermisoOr([{ modulo: 'personal', accion: 'creacion' }, { modulo: 'tarja', accion: 'creacion' }]),
+  requirePermiso('tarja', 'creacion'),
   requireFlag('tarja', 'ver_pii', true),
   zValidator('json', CreatePersonalSchema),
   async (c) => {
@@ -159,7 +159,7 @@ personal.post(
 
 personal.patch(
   '/:leg',
-  requirePermisoOr([{ modulo: 'personal', accion: 'actualizacion' }, { modulo: 'tarja', accion: 'actualizacion' }]),
+  requirePermiso('tarja', 'actualizacion'),
   requireFlag('tarja', 'ver_pii', true),
   zValidator('json', UpdatePersonalSchema),
   async (c) => {
@@ -174,7 +174,7 @@ personal.patch(
 
 personal.delete(
   '/:leg',
-  requirePermisoOr([{ modulo: 'personal', accion: 'eliminacion' }, { modulo: 'tarja', accion: 'eliminacion' }]),
+  requirePermiso('tarja', 'eliminacion'),
   requireFlag('tarja', 'ver_pii', true),
   async (c) => {
     const leg = c.req.param('leg')

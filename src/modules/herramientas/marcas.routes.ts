@@ -17,7 +17,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 
 const marcas = new Hono()
@@ -55,7 +55,7 @@ marcas.get('/marcas', requirePermiso('herramientas', 'lectura'), async (c) => {
 })
 
 // POST /api/herramientas/marcas
-marcas.post('/marcas', requirePermiso('herramientas', 'creacion'), zValidator('json', MarcaCreateSchema), async (c) => {
+marcas.post('/marcas', requirePermiso('herramientas', 'creacion'), requireTab('herramientas', 'parametros'), zValidator('json', MarcaCreateSchema), async (c) => {
   const dto    = c.req.valid('json')
   const userId = c.get('user').id
 
@@ -70,7 +70,7 @@ marcas.post('/marcas', requirePermiso('herramientas', 'creacion'), zValidator('j
 })
 
 // PATCH /api/herramientas/marcas/:id
-marcas.patch('/marcas/:id', requirePermiso('herramientas', 'actualizacion'), zValidator('json', MarcaUpdateSchema), async (c) => {
+marcas.patch('/marcas/:id', requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', 'parametros'), zValidator('json', MarcaUpdateSchema), async (c) => {
   const id     = Number(c.req.param('id'))
   const dto    = c.req.valid('json')
   const userId = c.get('user').id
@@ -88,7 +88,7 @@ marcas.patch('/marcas/:id', requirePermiso('herramientas', 'actualizacion'), zVa
 })
 
 // DELETE /api/herramientas/marcas/:id — soft delete
-marcas.delete('/marcas/:id', requirePermiso('herramientas', 'eliminacion'), async (c) => {
+marcas.delete('/marcas/:id', requirePermiso('herramientas', 'eliminacion'), requireTab('herramientas', 'parametros'), async (c) => {
   const id     = Number(c.req.param('id'))
   const userId = c.get('user').id
   if (!Number.isFinite(id)) return c.json({ error: 'id inválido' }, 400)
@@ -103,7 +103,7 @@ marcas.delete('/marcas/:id', requirePermiso('herramientas', 'eliminacion'), asyn
 })
 
 // POST /api/herramientas/marcas/:id/modelos
-marcas.post('/marcas/:id/modelos', requirePermiso('herramientas', 'creacion'), zValidator('json', ModeloCreateSchema), async (c) => {
+marcas.post('/marcas/:id/modelos', requirePermiso('herramientas', 'creacion'), requireTab('herramientas', 'parametros'), zValidator('json', ModeloCreateSchema), async (c) => {
   const marcaId = Number(c.req.param('id'))
   const dto     = c.req.valid('json')
   const userId  = c.get('user').id
@@ -120,7 +120,7 @@ marcas.post('/marcas/:id/modelos', requirePermiso('herramientas', 'creacion'), z
 })
 
 // PATCH /api/herramientas/modelos/:id
-marcas.patch('/modelos/:id', requirePermiso('herramientas', 'actualizacion'), zValidator('json', ModeloUpdateSchema), async (c) => {
+marcas.patch('/modelos/:id', requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', 'parametros'), zValidator('json', ModeloUpdateSchema), async (c) => {
   const id     = Number(c.req.param('id'))
   const dto    = c.req.valid('json')
   const userId = c.get('user').id
@@ -138,7 +138,7 @@ marcas.patch('/modelos/:id', requirePermiso('herramientas', 'actualizacion'), zV
 })
 
 // DELETE /api/herramientas/modelos/:id — soft delete
-marcas.delete('/modelos/:id', requirePermiso('herramientas', 'eliminacion'), async (c) => {
+marcas.delete('/modelos/:id', requirePermiso('herramientas', 'eliminacion'), requireTab('herramientas', 'parametros'), async (c) => {
   const id     = Number(c.req.param('id'))
   const userId = c.get('user').id
   if (!Number.isFinite(id)) return c.json({ error: 'id inválido' }, 400)

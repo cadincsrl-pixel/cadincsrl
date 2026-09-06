@@ -10,7 +10,7 @@ auth.get('/profile', async (c) => {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, nombre, rol, modulos, activo, permisos, rol_base, tipo_usuario, obras_scope')
+    .select('id, nombre, rol, modulos, activo, permisos, rol_base, tipo_usuario, obras_scope, rol_key, personalizado')
     .eq('id', userId)
     .single()
 

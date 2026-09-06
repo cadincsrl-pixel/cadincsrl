@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso } from '../../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../../middleware/permission.js
 import { gastosService, HttpError } from './gastos.service.js'
 import {
   CreateGastoSchema, UpdateGastoSchema, RechazarGastoSchema, AprobarLoteSchema,
@@ -16,6 +16,8 @@ import {
 const gastos = new Hono()
 
 gastos.use('*', authMiddleware)
+// Guardia por tab (2026-09-06): la tab de la pantalla también vale en la API. Solo mutaciones: los listados los usan Liquidaciones (reintegros) y la campana.
+gastos.on(['POST', 'PATCH', 'PUT', 'DELETE'], '*', requireTab('logistica', 'gastos'))
 gastos.on(['GET'],           '*', requirePermiso('logistica', 'lectura'))
 gastos.on(['POST'],          '*', requirePermiso('logistica', 'creacion'))
 gastos.on(['PATCH', 'PUT'],  '*', requirePermiso('logistica', 'actualizacion'))

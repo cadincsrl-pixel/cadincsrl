@@ -1,13 +1,15 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso } from '../../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../../middleware/permission.js
 import { liquidacionesService, LiqHttpError } from './liquidaciones.service.js'
 import { CreateLiquidacionSchema, UpdateLiquidacionSchema, AnularLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, CreateEstadiaSchema, UpdateEstadiaSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
 import adjuntosRoutes from './adjuntos.routes.js'
 
 const liquidaciones = new Hono()
 liquidaciones.use('*', authMiddleware)
+// Guardia por tab (2026-09-06): la tab de la pantalla también vale en la API.
+liquidaciones.use('*', requireTab('logistica', 'liquidaciones'))
 liquidaciones.on(['GET'],            '*', requirePermiso('logistica', 'lectura'))
 liquidaciones.on(['POST'],           '*', requirePermiso('logistica', 'creacion'))
 liquidaciones.on(['PATCH', 'PUT'],   '*', requirePermiso('logistica', 'actualizacion'))

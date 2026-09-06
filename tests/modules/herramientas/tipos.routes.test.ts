@@ -24,6 +24,7 @@ const { estado } = vi.hoisted(() => ({
 vi.mock('../../../src/middleware/permission.js', () => ({
   requirePermiso:   () => async (_c: any, next: any) => next(),
   requirePermisoOr: () => async (_c: any, next: any) => next(),
+  requireTab:       () => async (_c: any, next: any) => next(),
 }))
 
 // Cliente Supabase de mentira: stock_materiales y v_herr_tipos leen de

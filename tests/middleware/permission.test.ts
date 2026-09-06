@@ -18,7 +18,8 @@ vi.mock('../../src/lib/supabase.js', () => ({
   createSupabaseClient: () => ({}),
 }))
 
-import { requirePermiso, requirePermisoOr, requireFlag, tieneFlag, esCapataz } from '../../src/middleware/permission.js'
+import { requirePermiso, requirePermisoOr, requireFlag, requireTab, tieneFlag, esCapataz } from '../../src/middleware/permission.js'
+import { modulosDePermisos } from '../../src/lib/modulos.js'
 
 type Vars = { Variables: { user: { id: string } } }
 function crearApp() {
@@ -28,6 +29,8 @@ function crearApp() {
   app.get('/permiso-or', requirePermisoOr([{ modulo: 'personal', accion: 'lectura' }, { modulo: 'tarja', accion: 'lectura' }]), (c) => c.json({ ok: true }))
   app.get('/flag', requireFlag('tarja', 'ver_pii'), (c) => c.json({ ok: true }))
   app.get('/flag-default-true', requireFlag('tarja', 'ver_costos', true, true), (c) => c.json({ ok: true }))
+  app.get('/tab', requireTab('logistica', 'rentabilidad'), (c) => c.json({ ok: true }))
+  app.get('/tab-varias', requireTab('certificaciones', ['stock-cliente', 'solicitudes']), (c) => c.json({ ok: true }))
   app.onError((err, c) => err instanceof HTTPException ? c.json({ error: err.message }, err.status) : c.json({ error: 'boom' }, 500))
   return app
 }
@@ -100,5 +103,41 @@ describe('perfil activo', () => {
     expect(await esCapataz('u-1')).toBe(true)
     estado.perfil = { rol: 'admin', rol_base: 'capataz', permisos: null, activo: true }
     expect(await esCapataz('u-1')).toBe(false)
+  })
+})
+
+describe('requireTab', () => {
+  it('sin tabs configuradas (ausente o vacía) pasa; con lista, exige la tab', async () => {
+    const app = crearApp()
+    estado.perfil = operador({ logistica: { lectura: true } })
+    expect((await app.request('/tab')).status).toBe(200)
+    estado.perfil = operador({ logistica: { lectura: true, tabs: [] } })
+    expect((await app.request('/tab')).status).toBe(200)
+    estado.perfil = operador({ logistica: { lectura: true, tabs: ['viajes', 'gastos'] } })
+    const res = await app.request('/tab')
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'SIN_TAB', detail: { modulo: 'logistica', tabs: ['rentabilidad'] } })
+    estado.perfil = operador({ logistica: { lectura: true, tabs: ['rentabilidad'] } })
+    expect((await app.request('/tab')).status).toBe(200)
+  })
+
+  it('con varias tabs alcanza una; admin bypasea; inactivo no', async () => {
+    const app = crearApp()
+    estado.perfil = operador({ certificaciones: { lectura: true, tabs: ['solicitudes'] } })
+    expect((await app.request('/tab-varias')).status).toBe(200)
+    estado.perfil = operador({ certificaciones: { lectura: true, tabs: ['stock'] } })
+    expect((await app.request('/tab-varias')).status).toBe(403)
+    estado.perfil = { rol: 'admin', rol_base: null, permisos: null, activo: true }
+    expect((await app.request('/tab')).status).toBe(200)
+    estado.perfil = operador({ logistica: { lectura: true } }, false)
+    expect((await app.request('/tab')).status).toBe(403)
+  })
+})
+
+describe('modulosDePermisos', () => {
+  it('son los módulos con lectura, ordenados', () => {
+    expect(modulosDePermisos({ tarja: { lectura: true }, herramientas: {}, certificaciones: { lectura: true, creacion: true }, caja: { lectura: false } }))
+      .toEqual(['certificaciones', 'tarja'])
+    expect(modulosDePermisos(null)).toEqual([])
   })
 })
