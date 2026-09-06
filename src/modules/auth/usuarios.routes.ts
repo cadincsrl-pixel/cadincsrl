@@ -22,11 +22,11 @@ usuarios.use('*', authMiddleware)
 usuarios.use('*', async (c, next) => {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('rol')
+    .select('rol, activo')
     .eq('id', c.get('user').id)
     .single()
 
-  if (profile?.rol !== 'admin') {
+  if (profile?.rol !== 'admin' || profile.activo === false) {
     return c.json({ error: 'Sin permisos' }, 403)
   }
   await next()
@@ -51,18 +51,6 @@ usuarios.get('/', async (c) => {
   }))
 
   return c.json(result)
-})
-
-// ── GET /api/usuarios/modulos ──
-usuarios.get('/modulos', async (c) => {
-  const { data, error } = await supabase
-    .from('modulos')
-    .select('*')
-    .eq('activo', true)
-    .order('orden')
-
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json(data)
 })
 
 // ── POST /api/usuarios — crear usuario ──
@@ -175,6 +163,26 @@ usuarios.post('/', zValidator('json', CreateUsuarioSchema), async (c) => {
     console.error('[POST /usuarios] profile update failed for', authData.user.id, error.message)
     return c.json({ error: error.message }, 500)
   }
+
+  // Los permisos iniciales también quedan en el historial (antes solo el
+  // PATCH escribía; el alta no dejaba rastro de con qué permisos nació).
+  const { error: errHist } = await supabase.from('profiles_permisos_history').insert({
+    profile_id:       authData.user.id,
+    changed_by:       c.get('user').id,
+    rol_old:          null,
+    rol_new:          data.rol,
+    modulos_old:      null,
+    modulos_new:      data.modulos,
+    permisos_old:     null,
+    permisos_new:     data.permisos,
+    tipo_usuario_old: null,
+    tipo_usuario_new: data.tipo_usuario,
+    rol_base_old:     null,
+    rol_base_new:     data.rol_base ?? null,
+    obras_scope_old:  null,
+    obras_scope_new:  data.obras_scope ?? null,
+  })
+  if (errHist) console.error('[POST /usuarios] history insert failed for', authData.user.id, errHist.message)
 
   return c.json(data, 201)
 })
@@ -296,6 +304,17 @@ usuarios.patch('/:id', zValidator('json', UpdateSchema), async (c) => {
       }
     }
 
+    // Desactivar también corta la sesión. Los guards del backend ya rechazan
+    // a un perfil con activo=false, pero sin el ban el usuario podía seguir
+    // renovando su token; con el ban, Supabase Auth deja de emitirle tokens.
+    // Reactivar levanta el ban.
+    if (profileDto.activo !== undefined) {
+      const { error: errBan } = await supabaseAdmin.auth.admin.updateUserById(id, {
+        ban_duration: profileDto.activo ? 'none' : '876000h',
+      })
+      if (errBan) console.error('[usuarios.patch] ban/unban failed for', id, errBan.message)
+    }
+
     // Invalidar cache de obras del user en TODA actualización de perfil.
     invalidarCacheObrasUsuario(id)
 
@@ -355,37 +374,32 @@ usuarios.delete('/:id', async (c) => {
 
 // ── GET /api/usuarios/:id/obras — obras asignadas al usuario ──
 //
-// Devuelve TODAS las rows del usuario (cualquier módulo). El frontend
-// agrupa por `modulo` para mostrar "obras de tarja", "obras de
-// certificaciones", etc. Filas con `modulo=NULL` aplican a todos los
-// módulos donde el perfil tenga `obras_scope='asignadas'`.
+// Una sola lista por usuario. La usan todos los módulos donde el perfil
+// tenga alcance 'asignadas' (global o por override `permisos.<modulo>.obras_scope`).
+// La columna `usuario_obras.modulo` se eliminó en permisos v3 (2026-05-18);
+// este endpoint la siguió pidiendo hasta el 2026-09-06 y por eso el editor
+// de obras mostraba siempre 0 obras y no podía guardar.
 usuarios.get('/:id/obras', async (c) => {
   const id = c.req.param('id')
   const { data, error } = await supabase
     .from('usuario_obras')
-    .select('obra_cod, modulo, obras(cod, nom, dir)')
+    .select('obra_cod, obras(cod, nom, dir)')
     .eq('user_id', id)
-    .order('modulo', { nullsFirst: true })
     .order('obra_cod')
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data ?? [])
 })
 
 // ── PUT /api/usuarios/:id/obras — reemplaza el set de obras asignadas ──
-//
-// Body opcional `modulo` (string | null). El reemplazo es POR MÓDULO:
-//   - { obras: [...], modulo: 'tarja' }      → reemplaza solo las rows de tarja
-//   - { obras: [...], modulo: null }         → reemplaza solo las rows globales (legacy)
-//   - { obras: [...] } (sin modulo)          → modo legacy: borra TODAS las rows
-//                                              del user e inserta las nuevas como modulo=null
+// `modulo` se acepta y se ignora para no romper clientes viejos.
 const UpdateObrasSchema = z.object({
   obras:  z.array(z.string().min(1)),
-  modulo: ModuloKeySchema.nullable().optional(),
+  modulo: z.string().nullable().optional(),
 })
 
 usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
   const id = c.req.param('id')
-  const { obras, modulo } = c.req.valid('json')
+  const { obras } = c.req.valid('json')
   const userId = c.get('user').id
 
   // Validar que el usuario destino exista.
@@ -406,26 +420,12 @@ usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
     }
   }
 
-  // Reemplazo atómico, scoped al módulo si fue pasado.
-  // Para `modulo === undefined` (legacy) borramos TODAS las rows del user
-  // y reinsertamos como modulo=null (compat con clientes viejos).
-  let del = supabase.from('usuario_obras').delete().eq('user_id', id)
-  if (modulo !== undefined) {
-    del = modulo === null
-      ? del.is('modulo', null)
-      : del.eq('modulo', modulo)
-  }
-  const { error: errDel } = await del
+  // Reemplazo del set completo.
+  const { error: errDel } = await supabase.from('usuario_obras').delete().eq('user_id', id)
   if (errDel) return c.json({ error: errDel.message }, 500)
 
   if (obras.length > 0) {
-    const moduloPersist = modulo === undefined ? null : modulo
-    const rows = obras.map(cod => ({
-      user_id:    id,
-      obra_cod:   cod,
-      created_by: userId,
-      modulo:     moduloPersist,
-    }))
+    const rows = [...new Set(obras)].map(cod => ({ user_id: id, obra_cod: cod, created_by: userId }))
     const { error: errIns } = await supabase.from('usuario_obras').insert(rows)
     if (errIns) return c.json({ error: errIns.message }, 500)
   }
@@ -433,7 +433,7 @@ usuarios.put('/:id/obras', zValidator('json', UpdateObrasSchema), async (c) => {
   // Refrescar cache para que los próximos requests del user vean los cambios.
   invalidarCacheObrasUsuario(id)
 
-  return c.json({ success: true, count: obras.length, modulo: modulo ?? null })
+  return c.json({ success: true, count: new Set(obras).size })
 })
 
 export default usuarios

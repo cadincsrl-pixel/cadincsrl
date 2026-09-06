@@ -53,7 +53,7 @@ async function validarScopeCert(c: Context, id: number): Promise<void> {
 // Default true por back-compat con perfiles que no tienen el flag seteado.
 contratistas.get('/', requirePermiso('tarja', 'lectura'), async (c) => {
   const token = c.get('accessToken')
-  const verPii = await tieneFlag(c.get('user').id, 'tarja', 'ver_pii', true)
+  const verPii = await tieneFlag(c.get('user').id, 'tarja', 'ver_pii', false)
   const data = await contratistasService.getAll(token)
   return c.json(verPii ? data : data.map(sinPii))
 })
@@ -62,7 +62,7 @@ contratistas.get('/:id', requirePermiso('tarja', 'lectura'), async (c) => {
   const id = Number(c.req.param('id'))
   if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
   const token = c.get('accessToken')
-  const verPii = await tieneFlag(c.get('user').id, 'tarja', 'ver_pii', true)
+  const verPii = await tieneFlag(c.get('user').id, 'tarja', 'ver_pii', false)
   const data = await contratistasService.getById(id, token)
   return c.json(verPii ? data : sinPii(data))
 })

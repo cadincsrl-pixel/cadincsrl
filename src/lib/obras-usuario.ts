@@ -14,16 +14,20 @@ import { MODULO_SET as MODULOS_VALIDOS } from './modulos.js'
  *
  * 1) Resolución del scope efectivo:
  *    - rol='admin'                                            → null (ve todo)
+ *    - permisos.<modulo>.obras_scope (si se pasó `modulo`)    → manda sobre el global
  *    - profiles.obras_scope = 'todas'                         → null (ve todo)
  *    - profiles.obras_scope = 'asignadas'                     → filtra
  *    - sin nada seteado → fallback legacy por tipo_usuario
  *
+ *    El override por módulo lo escribe el wizard (y el addon "cargar horas
+ *    propias"); entre permisos v3 (2026-05-18) y el 2026-09-06 se aceptaba
+ *    pero no se leía, así que un depósito con `tarja: 'asignadas'` veía la
+ *    tarja de todas las obras.
+ *
  * 2) Cuando el scope efectivo es 'asignadas':
  *    - Lee `usuario_obras` filtrando por user_id y devuelve los obra_cod.
- *    - El override por módulo + la columna `usuario_obras.modulo` se
- *      eliminaron en la migración Permisos v3 (2026-05-18). El parámetro
- *      `modulo` se acepta pero solo se usa para defense-in-depth (validación
- *      del nombre) — no cambia el resultado.
+ *      Es UNA lista por usuario (la columna `usuario_obras.modulo` se
+ *      eliminó en v3): el módulo solo decide si la lista aplica o no.
  *
  * 3) Endpoints que listan deben aplicar `.in('obra_cod', codes)` cuando el
  *    resultado NO es null. Endpoints que mutan deben rechazar `obra_cod`
@@ -47,16 +51,12 @@ export async function getObrasDelUsuario(
   userId: string,
   modulo?: string,
 ): Promise<string[] | null> {
-  // Defensa en profundidad: validamos el nombre del módulo aunque ya no
-  // afecte la query (la columna usuario_obras.modulo se eliminó). Útil para
-  // detectar callers con typos y mantener el contrato.
-  if (modulo && !MODULOS_VALIDOS.has(modulo)) {
-    // typo o módulo inexistente: lo tratamos como no pasado.
-  }
+  // Un módulo con typo o inexistente se trata como no pasado.
+  const moduloValido = modulo && MODULOS_VALIDOS.has(modulo) ? modulo : undefined
 
   const { data: profile, error: errProf } = await supabaseAdmin
     .from('profiles')
-    .select('rol, tipo_usuario, obras_scope')
+    .select('rol, tipo_usuario, obras_scope, permisos')
     .eq('id', userId)
     .maybeSingle()
   if (errProf) throw new Error(errProf.message)
@@ -64,10 +64,13 @@ export async function getObrasDelUsuario(
 
   if (profile.rol === 'admin') return null
 
-  // 1) Scope efectivo: solo el global del profile (v3 eliminó overrides).
-  const scopeGlobal = profile.obras_scope as 'todas' | 'asignadas' | null | undefined
+  // 1) Scope efectivo: el override del módulo manda; si no, el global.
+  const esScope = (v: unknown): v is 'todas' | 'asignadas' => v === 'todas' || v === 'asignadas'
+  const permisos = (profile.permisos ?? {}) as Record<string, { obras_scope?: unknown } | null | undefined>
+  const override = moduloValido ? permisos[moduloValido]?.obras_scope : undefined
+  const scopeGlobal = profile.obras_scope
   const scopeEfectivo: 'todas' | 'asignadas' | null =
-    scopeGlobal === 'todas' || scopeGlobal === 'asignadas' ? scopeGlobal : null
+    esScope(override) ? override : esScope(scopeGlobal) ? scopeGlobal : null
 
   if (scopeEfectivo === 'todas') return null
 

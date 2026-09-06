@@ -7,11 +7,22 @@ export type Accion = 'lectura' | 'creacion' | 'actualizacion' | 'eliminacion'
 async function fetchPermisos(userId: string) {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('rol, rol_base, permisos')
+    .select('rol, rol_base, permisos, activo')
     .eq('id', userId)
     .single()
   return profile
 }
+
+/**
+ * Un perfil desactivado no tiene ningún permiso, aunque su JWT siga vivo:
+ * hasta el 2026-09-06 solo `GET /api/me/profile` miraba `activo`, así que
+ * la app no cargaba pero la API seguía respondiendo con el token. Va antes
+ * del bypass de admin a propósito.
+ */
+function estaInactivo(profile: { activo?: boolean | null } | null): boolean {
+  return !!profile && profile.activo === false
+}
+const MSG_INACTIVO = 'Usuario inactivo'
 
 /**
  * Devuelve true si el usuario es capataz puro (rol_base='capataz'). Útil
@@ -20,7 +31,7 @@ async function fetchPermisos(userId: string) {
  */
 export async function esCapataz(userId: string): Promise<boolean> {
   const profile = await fetchPermisos(userId)
-  if (!profile) return false
+  if (!profile || estaInactivo(profile)) return false
   if (profile.rol === 'admin') return false
   return profile.rol_base === 'capataz'
 }
@@ -29,6 +40,7 @@ export function requirePermiso(modulo: string, accion: Accion) {
   return createMiddleware(async (c, next) => {
     const profile = await fetchPermisos(c.get('user').id)
     if (!profile) throw new HTTPException(403, { message: 'Sin perfil' })
+    if (estaInactivo(profile)) throw new HTTPException(403, { message: MSG_INACTIVO })
     if (profile.rol === 'admin') return next()
 
     const permisos = profile.permisos as Record<string, Record<string, boolean>> | null
@@ -46,6 +58,7 @@ export function requirePermisoOr(combos: Array<{ modulo: string; accion: Accion 
   return createMiddleware(async (c, next) => {
     const profile = await fetchPermisos(c.get('user').id)
     if (!profile) throw new HTTPException(403, { message: 'Sin perfil' })
+    if (estaInactivo(profile)) throw new HTTPException(403, { message: MSG_INACTIVO })
     if (profile.rol === 'admin') return next()
 
     const permisos = profile.permisos as Record<string, Record<string, boolean>> | null
@@ -82,6 +95,7 @@ export function requireFlag(
   return createMiddleware(async (c, next) => {
     const profile = await fetchPermisos(c.get('user').id)
     if (!profile) throw new HTTPException(403, { message: 'Sin perfil' })
+    if (estaInactivo(profile)) throw new HTTPException(403, { message: MSG_INACTIVO })
     if (profile.rol === 'admin') return next()
 
     const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
@@ -110,7 +124,7 @@ export async function tieneFlag(
   defaultActual: boolean = false,
 ): Promise<boolean> {
   const profile = await fetchPermisos(userId)
-  if (!profile) return false
+  if (!profile || estaInactivo(profile)) return false
   if (profile.rol === 'admin') return true
   const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
   const v = permisos?.[modulo]?.[flag]

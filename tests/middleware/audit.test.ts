@@ -25,7 +25,7 @@ vi.mock('../../src/lib/supabase.js', () => ({
 
 import {
   auditMiddleware, parseRoute, formatearBody, esId, extraerId, viernesDe,
-  resumirLoteTarja, flushAuditoriaPendiente,
+  resumirLoteTarja, resumirPermisos, flushAuditoriaPendiente,
 } from '../../src/middleware/audit.js'
 
 type Vars = { Variables: { user: { id: string } } }
@@ -210,6 +210,18 @@ describe('helpers', () => {
     expect(formatearBody({ url: largo, obs: largo, password: 'no' })).toBe(`obs=${largo}`)
     expect(formatearBody({ obs: 'y'.repeat(400) }).length).toBe('obs='.length + 300)
   })
+  it('el JSON de permisos de un usuario queda legible en el detalle', () => {
+    const permisos = {
+      tarja: { lectura: true, creacion: true, actualizacion: true, eliminacion: false, tabs: ['tarja'], ver_pii: false },
+      certificaciones: { lectura: true, creacion: true, tabs: [] },
+      basura: 'no es objeto',
+    }
+    expect(resumirPermisos(permisos)).toBe('tarja[LCA tabs=tarja ver_pii=false] · certificaciones[LC tabs=(todas)]')
+    expect(formatearBody({ rol: 'operador', permisos, modulos: ['tarja', 'certificaciones'] }))
+      .toBe('rol=operador · permisos=tarja[LCA tabs=tarja ver_pii=false] · certificaciones[LC tabs=(todas)] · modulos=[2] tarja, certificaciones')
+    expect(resumirPermisos({})).toBe('{}')
+  })
+
   it('extraerId busca el id donde lo devuelva el handler', () => {
     expect(extraerId({ id: 5 })).toBe('5')
     expect(extraerId({ data: { id: 6 } })).toBe('6')

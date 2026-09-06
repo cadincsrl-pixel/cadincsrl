@@ -265,6 +265,8 @@ export function formatearBody(body: unknown): string {
       val = String(v)
     } else if (Array.isArray(v)) {
       val = resumirArray(v)
+    } else if (k === 'permisos' && typeof v === 'object') {
+      val = resumirPermisos(v as Record<string, unknown>)
     } else {
       continue
     }
@@ -272,6 +274,30 @@ export function formatearBody(body: unknown): string {
   }
   const out = partes.join(' · ')
   return out.length > MAX_DETALLE ? out.slice(0, MAX_DETALLE - 3) + '...' : out
+}
+
+const ACCIONES_CRUD = ['lectura', 'creacion', 'actualizacion', 'eliminacion'] as const
+const LETRAS_CRUD = ['L', 'C', 'A', 'E'] as const
+
+/**
+ * "tarja[LCA tabs=tarja ver_pii=false] · certificaciones[LC]": el JSON de
+ * permisos de un usuario en una línea. Sin esto, el PATCH de un usuario
+ * quedaba en el log sin qué permisos se le dieron (los objetos se descartan).
+ */
+export function resumirPermisos(permisos: Record<string, unknown>): string {
+  const partes: string[] = []
+  for (const [mod, v] of Object.entries(permisos)) {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue
+    const p = v as Record<string, unknown>
+    const crud = ACCIONES_CRUD.map((a, i) => (p[a] === true ? LETRAS_CRUD[i] ?? '' : '')).join('')
+    const tabs = Array.isArray(p.tabs) ? ` tabs=${p.tabs.length ? p.tabs.join('/') : '(todas)'}` : ''
+    const flags = Object.entries(p)
+      .filter(([k]) => !(ACCIONES_CRUD as readonly string[]).includes(k) && k !== 'tabs')
+      .map(([k, val]) => `${k}=${typeof val === 'object' ? JSON.stringify(val) : String(val)}`)
+      .join(',')
+    partes.push(`${mod}[${crud}${tabs}${flags ? ` ${flags}` : ''}]`)
+  }
+  return partes.length ? partes.join(' · ') : '{}'
 }
 
 /** Id del registro creado, según cómo lo devuelva el handler. */
