@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
-import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
+import { getObrasDelUsuarioCached, validarObraDelUsuario, validarObraDeRegistro, sinObras } from '../../lib/obras-usuario.js'
 import { remitosEnvioService } from './remitos-envio.service.js'
 import { CreateRemitoEnvioSchema } from './remitos-envio.schema.js'
 
@@ -46,12 +46,20 @@ async function requireRemitoObraScope(c: any, next: any) {
   await next()
 }
 
+// Lectura con alcance por obra (2026-09-06): el POST ya lo tenía
+// (requireRemitoObraScope); el listado y el detalle devolvían remitos de
+// cualquier obra a un usuario con scope 'asignadas'.
 remitosEnvio.get('/', async (c) => {
-  const obra_cod = c.req.query('obra_cod')
-  return c.json(await remitosEnvioService.getAll(c.get('accessToken'), obra_cod || undefined))
+  const userId = c.get('user').id
+  const obra_cod = c.req.query('obra_cod') || undefined
+  if (obra_cod) await validarObraDelUsuario(userId, obra_cod, 'certificaciones')
+  const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
+  if (sinObras(allowed)) return c.json([])
+  return c.json(await remitosEnvioService.getAll(c.get('accessToken'), obra_cod, allowed))
 })
 
 remitosEnvio.get('/:id', async (c) => {
+  await validarObraDeRegistro(c.get('user').id, 'certificaciones', 'remitos_envio', Number(c.req.param('id')))
   return c.json(await remitosEnvioService.getById(Number(c.req.param('id')), c.get('accessToken')))
 })
 

@@ -93,7 +93,8 @@ async function registrarEntradaItem(
 export const stockClienteService = {
   // Saldo por material (vista v_stock_cliente). `obra_cod` es el filtro que
   // responde "¿qué le queda pendiente en depósito a la obra X?".
-  async list(dto: ListStockClienteDto, token: string) {
+  // `allowed`: obras del usuario (null = todas). Lo resuelve la ruta.
+  async list(dto: ListStockClienteDto, token: string, allowed?: string[] | null) {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('v_stock_cliente')
@@ -102,6 +103,7 @@ export const stockClienteService = {
       .order('obra_cod')
       .order('descripcion')
     if (dto.obra_cod) q = q.eq('obra_cod', dto.obra_cod)
+    if (allowed) q = q.in('obra_cod', allowed)
     const { data, error } = await q
     if (error) throw new Error(error.message)
     // Con saldo 0 el material ya se consumió entero: por default no ensucia

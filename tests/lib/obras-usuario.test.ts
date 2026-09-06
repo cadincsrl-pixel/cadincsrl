@@ -8,7 +8,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 type Perfil = { rol: string; tipo_usuario: string | null; obras_scope: string | null; permisos: Record<string, unknown> | null }
 const { estado } = vi.hoisted(() => ({
-  estado: { perfil: null as Perfil | null, obras: [] as Array<{ obra_cod: string }>, consultas: [] as string[] },
+  estado: {
+    perfil: null as Perfil | null,
+    obras: [] as Array<{ obra_cod: string }>,
+    consultas: [] as string[],
+    // filas por tabla para validarObraDeRegistro (maybeSingle)
+    filas: {} as Record<string, unknown>,
+  },
 }))
 
 // Cliente de mentira: cada tabla devuelve su resultado fijo, sea que se
@@ -18,7 +24,9 @@ vi.mock('../../src/lib/supabase.js', () => {
     estado.consultas.push(tabla)
     const resultado = tabla === 'profiles'
       ? { data: estado.perfil, error: null }
-      : { data: estado.obras, error: null }
+      : tabla === 'usuario_obras'
+        ? { data: estado.obras, error: null }
+        : { data: estado.filas[tabla] ?? null, error: null }
     const b: Record<string, unknown> = {}
     for (const m of ['select', 'eq', 'order', 'in']) b[m] = () => b
     b.maybeSingle = async () => resultado
@@ -28,7 +36,8 @@ vi.mock('../../src/lib/supabase.js', () => {
   return { supabase: { from: builder }, createSupabaseClient: () => ({}) }
 })
 
-import { getObrasDelUsuario, getObrasDelUsuarioCached, invalidarCacheObrasUsuario } from '../../src/lib/obras-usuario.js'
+import { getObrasDelUsuario, getObrasDelUsuarioCached, invalidarCacheObrasUsuario, validarObraDeRegistro, sinObras } from '../../src/lib/obras-usuario.js'
+import { HTTPException } from 'hono/http-exception'
 
 const perfil = (obras_scope: string | null, permisos: Record<string, unknown> | null = null, rol = 'operador'): Perfil =>
   ({ rol, tipo_usuario: null, obras_scope, permisos })
@@ -78,5 +87,47 @@ describe('getObrasDelUsuario', () => {
     invalidarCacheObrasUsuario('u-1')
     await getObrasDelUsuarioCached('u-1', 'tarja')
     expect(estado.consultas.length).toBeGreaterThan(antes)
+  })
+})
+
+describe('validarObraDeRegistro', () => {
+  beforeEach(() => {
+    estado.perfil = perfil('asignadas')
+    estado.obras = [{ obra_cod: 'CC-001' }]
+    estado.filas = {}
+    invalidarCacheObrasUsuario('u-1')
+  })
+
+  async function codigo(p: Promise<unknown>): Promise<number | 'ok'> {
+    try { await p; return 'ok' } catch (e) { return e instanceof HTTPException ? e.status : 500 }
+  }
+
+  it('pasa si la fila es de una obra del usuario, 403 si no, 404 si no existe', async () => {
+    estado.filas = { cert_materiales: { obra_cod: 'CC-001' } }
+    expect(await codigo(validarObraDeRegistro('u-1', 'certificaciones', 'cert_materiales', 5))).toBe('ok')
+    estado.filas = { cert_materiales: { obra_cod: 'CC-009' } }
+    expect(await codigo(validarObraDeRegistro('u-1', 'certificaciones', 'cert_materiales', 5))).toBe(403)
+    estado.filas = {}
+    expect(await codigo(validarObraDeRegistro('u-1', 'certificaciones', 'cert_materiales', 5))).toBe(404)
+  })
+
+  it('viaSolicitud lee la obra de la solicitud del ítem', async () => {
+    estado.filas = { solicitud_compra_item: { solicitud_compra: { obra_cod: 'CC-001' } } }
+    expect(await codigo(validarObraDeRegistro('u-1', 'certificaciones', 'solicitud_compra_item', 3396, { viaSolicitud: true }))).toBe('ok')
+    estado.filas = { solicitud_compra_item: { solicitud_compra: { obra_cod: 'CC-025' } } }
+    expect(await codigo(validarObraDeRegistro('u-1', 'certificaciones', 'solicitud_compra_item', 3396, { viaSolicitud: true }))).toBe(403)
+  })
+
+  it('con scope "todas" o admin no consulta la tabla', async () => {
+    estado.perfil = perfil('todas')
+    const antes = estado.consultas.length
+    expect(await codigo(validarObraDeRegistro('u-1', 'certificaciones', 'cert_materiales', 5))).toBe('ok')
+    expect(estado.consultas.slice(antes)).not.toContain('cert_materiales')
+  })
+
+  it('sinObras solo es true con alcance y lista vacía', () => {
+    expect(sinObras(null)).toBe(false)
+    expect(sinObras([])).toBe(true)
+    expect(sinObras(['CC-001'])).toBe(false)
   })
 })

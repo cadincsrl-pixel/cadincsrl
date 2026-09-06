@@ -4,7 +4,8 @@ import type { CreateRemitoEnvioDto } from './remitos-envio.schema.js'
 
 export const remitosEnvioService = {
 
-  async getAll(token: string, obra_cod?: string) {
+  // `allowed`: obras del usuario (null = todas). Lo resuelve la ruta.
+  async getAll(token: string, obra_cod?: string, allowed?: string[] | null) {
     const supabase = createSupabaseClient(token)
     // PostgREST capea cada respuesta a 1000 filas y el recorte es silencioso
     // (mismo patrón que tramos, arreglado el 30/07). Hay ~460 remitos creciendo
@@ -20,6 +21,7 @@ export const remitosEnvioService = {
         .order('id', { ascending: false })
         .range(desde, desde + PAGINA - 1)
       if (obra_cod) q = q.eq('obra_cod', obra_cod)
+      if (allowed) q = q.in('obra_cod', allowed)
       const { data, error } = await q
       if (error) throw new Error(error.message)
       todos.push(...(data ?? []))

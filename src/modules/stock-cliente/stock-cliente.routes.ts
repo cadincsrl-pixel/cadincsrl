@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
+import { getObrasDelUsuarioCached, validarObraDelUsuario, validarObraDeRegistro, sinObras } from '../../lib/obras-usuario.js'
 import { stockClienteService, StockClienteHttpError } from './stock-cliente.service.js'
 import {
   ListStockClienteSchema,
@@ -16,6 +17,10 @@ stockCliente.use('*', authMiddleware)
 stockCliente.on(['GET'],  '*', requirePermiso('certificaciones', 'lectura'))
 stockCliente.on(['POST'], '*', requirePermiso('certificaciones', 'creacion'))
 
+// Alcance por obra (2026-09-06): el material del cliente es de SU obra.
+// Antes cualquier usuario del módulo listaba y movía stock de cualquier obra.
+const MODULO = 'certificaciones'
+
 function handle(err: unknown, c: any) {
   if (err instanceof StockClienteHttpError) {
     const body: Record<string, unknown> = { error: err.code }
@@ -28,7 +33,12 @@ function handle(err: unknown, c: any) {
 // ── Saldo por material (filtrable por obra) ──
 stockCliente.get('/', zValidator('query', ListStockClienteSchema), async (c) => {
   try {
-    const data = await stockClienteService.list(c.req.valid('query'), c.get('accessToken'))
+    const dto = c.req.valid('query')
+    const userId = c.get('user').id
+    if (dto.obra_cod) await validarObraDelUsuario(userId, dto.obra_cod, MODULO)
+    const allowed = await getObrasDelUsuarioCached(userId, MODULO)
+    if (sinObras(allowed)) return c.json([])
+    const data = await stockClienteService.list(dto, c.get('accessToken'), allowed)
     return c.json(data)
   } catch (err) { return handle(err, c) }
 })
@@ -36,6 +46,7 @@ stockCliente.get('/', zValidator('query', ListStockClienteSchema), async (c) => 
 // ── Movimientos de un material (entregas y consumos) ──
 stockCliente.get('/items/:itemId/movimientos', async (c) => {
   try {
+    await validarObraDeRegistro(c.get('user').id, MODULO, 'stock_cliente_items', Number(c.req.param('itemId')))
     const data = await stockClienteService.getMovimientos(Number(c.req.param('itemId')), c.get('accessToken'))
     return c.json(data)
   } catch (err) { return handle(err, c) }
@@ -44,6 +55,7 @@ stockCliente.get('/items/:itemId/movimientos', async (c) => {
 // ── Entrega del cliente (entrada al ledger) ──
 stockCliente.post('/entrada', zValidator('json', EntradaStockClienteSchema), async (c) => {
   try {
+    await validarObraDelUsuario(c.get('user').id, c.req.valid('json').obra_cod, MODULO)
     const data = await stockClienteService.entrada(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
     return c.json(data, 201)
   } catch (err) { return handle(err, c) }
@@ -63,6 +75,7 @@ stockCliente.post(
   }),
   async (c) => {
     try {
+      await validarObraDelUsuario(c.get('user').id, c.req.valid('json').obra_cod, MODULO)
       const data = await stockClienteService.entradaLote(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
       return c.json(data, 201)
     } catch (err) { return handle(err, c) }
@@ -72,6 +85,7 @@ stockCliente.post(
 // ── Salida manual (consumo sin solicitud / ajuste / devolución) ──
 stockCliente.post('/salida', zValidator('json', SalidaStockClienteSchema), async (c) => {
   try {
+    await validarObraDeRegistro(c.get('user').id, MODULO, 'stock_cliente_items', c.req.valid('json').item_id)
     const data = await stockClienteService.salida(c.req.valid('json'), c.get('accessToken'), c.get('user').id)
     return c.json(data, 201)
   } catch (err) { return handle(err, c) }

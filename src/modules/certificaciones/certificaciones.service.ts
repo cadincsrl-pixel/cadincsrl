@@ -4,10 +4,12 @@ import type { CreateMaterialDto, UpdateMaterialDto, CreateAdicionalDto, UpdateAd
 export const certificacionesService = {
 
   // ── Materiales ────────────────────────────────────────
-  async getMateriales(token: string, obra_cod?: string) {
+  // `allowed`: obras del usuario (null = todas). Lo resuelve la ruta.
+  async getMateriales(token: string, obra_cod?: string, allowed?: string[] | null) {
     const supabase = createSupabaseClient(token)
     let q = supabase.from('cert_materiales').select('*').order('fecha', { ascending: false })
     if (obra_cod) q = q.eq('obra_cod', obra_cod)
+    if (allowed) q = q.in('obra_cod', allowed)
     const { data, error } = await q
     if (error) throw new Error(error.message)
     return data
@@ -44,10 +46,11 @@ export const certificacionesService = {
   },
 
   // ── Adicionales ───────────────────────────────────────
-  async getAdicionales(token: string, obra_cod?: string) {
+  async getAdicionales(token: string, obra_cod?: string, allowed?: string[] | null) {
     const supabase = createSupabaseClient(token)
     let q = supabase.from('cert_adicionales').select('*').order('fecha', { ascending: false })
     if (obra_cod) q = q.eq('obra_cod', obra_cod)
+    if (allowed) q = q.in('obra_cod', allowed)
     const { data, error } = await q
     if (error) throw new Error(error.message)
     return data

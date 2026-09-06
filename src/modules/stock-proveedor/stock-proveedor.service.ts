@@ -89,11 +89,13 @@ export const stockProveedorService = {
 
   // Listado del stock pendiente, agrupado por proveedor.
   // La vista v_stock_proveedor calcula cantidad_pendiente = entradas - salidas.
-  async list(dto: ListStockDto, token: string) {
+  // `allowed`: obras del usuario (null = todas). Lo resuelve la ruta.
+  async list(dto: ListStockDto, token: string, allowed?: string[] | null) {
     const sb = createSupabaseClient(token)
     let q = sb.from('v_stock_proveedor').select('*')
     if (dto.proveedor_id) q = q.eq('proveedor_id', dto.proveedor_id)
     if (dto.obra_cod)     q = q.eq('obra_cod', dto.obra_cod)
+    if (allowed)          q = q.in('obra_cod', allowed)
     if (!dto.incluir_retirados) q = q.eq('estado', 'en_proveedor').gt('cantidad_pendiente', 0)
     q = q.order('proveedor_id').order('fecha_compra', { ascending: false })
     const { data, error } = await q
@@ -115,11 +117,12 @@ export const stockProveedorService = {
   },
 
   // Listar remitos de retiro (paginable). Filtros opcionales por proveedor/obra.
-  async listRemitos(filtros: { proveedor_id?: number; obra_cod?: string }, token: string) {
+  async listRemitos(filtros: { proveedor_id?: number; obra_cod?: string }, token: string, allowed?: string[] | null) {
     const sb = createSupabaseClient(token)
     let q = sb.from('remitos_retiro_proveedor').select('*, items:remitos_retiro_proveedor_item(*)')
     if (filtros.proveedor_id) q = q.eq('proveedor_id', filtros.proveedor_id)
     if (filtros.obra_cod)     q = q.eq('obra_cod', filtros.obra_cod)
+    if (allowed)              q = q.in('obra_cod', allowed)
     q = q.order('fecha', { ascending: false }).order('id', { ascending: false })
     const { data, error } = await q
     if (error) throw new Error(error.message)

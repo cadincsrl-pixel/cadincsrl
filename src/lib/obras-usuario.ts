@@ -149,3 +149,43 @@ export async function validarObraDelUsuario(
     throw new HTTPException(403, { message: 'OBRA_SIN_ACCESO' })
   }
 }
+
+/**
+ * Valida el alcance por obra de un registro que ya existe (PATCH/DELETE por
+ * id, movimientos de un ítem, comprobante de un remito): busca su `obra_cod`
+ * y aplica la misma regla que validarObraDelUsuario.
+ *
+ * - `viaSolicitud`: la tabla no tiene obra_cod propio sino `solicitud_id`
+ *   (solicitud_compra_item): se lee `solicitud_compra(obra_cod)`.
+ * - Admin / scope 'todas' → no consulta nada.
+ * - Registro inexistente → 404 `NO_EXISTE` (el handler no llega a ejecutarse).
+ */
+export async function validarObraDeRegistro(
+  userId: string,
+  modulo: string,
+  tabla: string,
+  id: number | string,
+  opts: { viaSolicitud?: boolean } = {},
+): Promise<void> {
+  const allowed = await getObrasDelUsuarioCached(userId, modulo)
+  if (allowed == null) return
+  const { data, error } = await supabaseAdmin
+    .from(tabla)
+    .select(opts.viaSolicitud ? 'solicitud_compra(obra_cod)' : 'obra_cod')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!data) throw new HTTPException(404, { message: 'NO_EXISTE' })
+  const fila = data as Record<string, unknown>
+  const obraCod = opts.viaSolicitud
+    ? (fila.solicitud_compra as { obra_cod?: string } | null | undefined)?.obra_cod
+    : (fila.obra_cod as string | null | undefined)
+  if (!obraCod || !allowed.includes(obraCod)) {
+    throw new HTTPException(403, { message: 'OBRA_SIN_ACCESO' })
+  }
+}
+
+/** true si el usuario tiene alcance por obras pero ninguna obra asignada: los listados devuelven vacío sin consultar. */
+export function sinObras(allowed: string[] | null): boolean {
+  return allowed != null && allowed.length === 0
+}
