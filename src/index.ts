@@ -6,7 +6,7 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from './middleware/auth.js'
-import { auditMiddleware } from './middleware/audit.js'
+import { auditMiddleware, flushAuditoriaPendiente } from './middleware/audit.js'
 
 
 import categoriasRoutes from './modules/categorias/categorias.routes.js'
@@ -162,3 +162,12 @@ const port = Number(process.env.PORT) || 3001
 console.log(`🚀 tarjaobra-backend corriendo en puerto ${port}`)
 
 serve({ fetch: app.fetch, port })
+// Al apagarse (deploy en Render = SIGTERM), escribir la auditoría de tarja
+// que quedó acumulada en memoria; si tarda más de 3 s, salir igual.
+for (const senal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(senal, () => {
+    const salir = () => process.exit(0)
+    setTimeout(salir, 3000).unref()
+    flushAuditoriaPendiente().then(salir, salir)
+  })
+}

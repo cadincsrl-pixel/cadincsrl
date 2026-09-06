@@ -20,24 +20,24 @@ admin.use('*', async (c, next) => {
 })
 
 admin.get('/audit', async (c) => {
-  const user_id = c.req.query('user_id')
-  const modulo = c.req.query('modulo')
-  const accion = c.req.query('accion')
-  const q = c.req.query('q')
-  const desde = c.req.query('desde')
-  const hasta = c.req.query('hasta')
-  const limit = c.req.query('limit')
-
-  const data = await auditService.getAll(c.get('accessToken'), {
-    user_id: user_id || undefined,
-    modulo: modulo || undefined,
-    accion: accion || undefined,
-    q: q || undefined,
-    desde: desde || undefined,
-    hasta: hasta || undefined,
-    limit: limit ? Number(limit) : undefined,
+  const num = (v: string | undefined) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : undefined
+  }
+  const { items, total } = await auditService.getAll({
+    user_id: c.req.query('user_id') || undefined,
+    modulo:  c.req.query('modulo') || undefined,
+    accion:  c.req.query('accion') || undefined,
+    q:       c.req.query('q') || undefined,
+    desde:   c.req.query('desde') || undefined,
+    hasta:   c.req.query('hasta') || undefined,
+    excluir: (c.req.query('excluir') ?? '').split(',').map(s => s.trim()).filter(Boolean),
+    limit:   num(c.req.query('limit')),
+    offset:  num(c.req.query('offset')),
   })
-  return c.json(data)
+  // Paginado: `total` es el conteo con los mismos filtros, para que la
+  // pantalla pueda decir "1–500 de 12.345" y pedir la página siguiente.
+  return c.json({ items, total })
 })
 
 export default admin
