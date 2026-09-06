@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso, requireTab } from '../../../middleware/permission.js
+import { requirePermiso, requireTab } from '../../../middleware/permission.js'
 import { liquidacionesService, LiqHttpError } from './liquidaciones.service.js'
 import { CreateLiquidacionSchema, UpdateLiquidacionSchema, AnularLiquidacionSchema, CreateAdelantoSchema, UpdateAdelantoSchema, CreateEstadiaSchema, UpdateEstadiaSchema, UploadComprobanteAdelantoSchema } from './liquidaciones.schema.js'
 import adjuntosRoutes from './adjuntos.routes.js'

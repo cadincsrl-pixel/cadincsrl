@@ -9,7 +9,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireTab } from '../../middleware/permission.js
+import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { cuentaClienteService, CcHttpError } from './cuenta-cliente.service.js'
 import {
   CrearCobroSchema, EditarCobroSchema, UploadComprobanteCobroSchema,

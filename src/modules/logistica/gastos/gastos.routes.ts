@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso, requireTab } from '../../../middleware/permission.js
+import { requirePermiso, requireTab } from '../../../middleware/permission.js'
 import { gastosService, HttpError } from './gastos.service.js'
 import {
   CreateGastoSchema, UpdateGastoSchema, RechazarGastoSchema, AprobarLoteSchema,

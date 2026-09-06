@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso, requireTab } from '../../../middleware/permission.js
+import { requirePermiso, requireTab } from '../../../middleware/permission.js'
 import { lugaresService } from './lugares.service.js'
 import {
   CreateLugarSchema, UpdateLugarSchema, CreateRutaSchema, UpdateRutaSchema,

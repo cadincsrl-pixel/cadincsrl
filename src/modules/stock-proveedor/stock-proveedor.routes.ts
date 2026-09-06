@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireTab } from '../../middleware/permission.js
+import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario, validarObraDeRegistro, sinObras } from '../../lib/obras-usuario.js'
 import { stockProveedorService, StockProvHttpError } from './stock-proveedor.service.js'
 import {
