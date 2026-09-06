@@ -1,6 +1,18 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import { normTxt } from '../../lib/norm-txt.js'
+
+export interface MaterialCompra {
+  material_id: number; item_id: number; solicitud_id: number; obra_cod: string; obra_nom: string | null
+  descripcion: string; color: string | null; cantidad: number; unidad: string; precio_unit: number
+  proveedor_id: number | null; proveedor_nombre: string | null; fecha: string | null; pagado_por: string
+  factura_id: number | null; factura_numero: string | null; estado: string
+}
+export interface MaterialCompraProveedor {
+  proveedor_id: number | null; proveedor: string; ultimo_precio: number; ultima_fecha: string | null
+  compras: number; minimo: number; maximo: number
+}
+export interface MaterialComprasResumen { compras: MaterialCompra[]; por_proveedor: MaterialCompraProveedor[] }
 import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto } from './stock.schema.js'
 
 /** Estados de precio que calcula `v_catalogo_materiales` (20260904z), más 'sin_precio' como agrupador. */
@@ -223,6 +235,42 @@ export const stockService = {
       contar(), contar('sin_precio'), contar('tasar'), contar('desactualizado'), contar('al_dia'),
     ])
     return { total, sin_precio, tasar, desactualizado, al_dia }
+  },
+
+  /**
+   * Historial de compras de un material (v_material_compras, 20260906f): una
+   * fila por compra real, de la más nueva a la más vieja, y el resumen por
+   * proveedor (último precio, cuántas veces, mínimo y máximo). Es lo que le
+   * falta al catálogo: `precio_ref` es uno solo y la vista de última compra
+   * solo muestra la más reciente.
+   */
+  async getMaterialCompras(materialId: number, token: string): Promise<MaterialComprasResumen> {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('v_material_compras')
+      .select('*')
+      .eq('material_id', materialId)
+      .order('fecha', { ascending: false, nullsFirst: false })
+      .order('item_id', { ascending: false })
+      .limit(300)
+    if (error) throw new Error(error.message)
+    const compras = (data ?? []) as MaterialCompra[]
+
+    const porProv = new Map<string, MaterialCompraProveedor>()
+    for (const c of compras) {
+      const nombre = c.proveedor_nombre ?? 'Sin proveedor'
+      const cur = porProv.get(nombre)
+      const precio = Number(c.precio_unit)
+      if (!cur) {
+        porProv.set(nombre, { proveedor_id: c.proveedor_id, proveedor: nombre, ultimo_precio: precio, ultima_fecha: c.fecha, compras: 1, minimo: precio, maximo: precio })
+      } else {
+        cur.compras += 1
+        cur.minimo = Math.min(cur.minimo, precio)
+        cur.maximo = Math.max(cur.maximo, precio)
+      }
+    }
+    const por_proveedor = [...porProv.values()].sort((a, b) => (b.ultima_fecha ?? '').localeCompare(a.ultima_fecha ?? ''))
+    return { compras, por_proveedor }
   },
 
   /**

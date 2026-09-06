@@ -68,6 +68,12 @@ stock.get('/catalogo', zValidator('query', CatalogoQuerySchema), async (c) => {
 stock.get('/catalogo/stats', async (c) => {
   return c.json(await stockService.getCatalogoStats(c.get('accessToken')))
 })
+// GET /api/stock/catalogo/:id/compras — historial de compras del material (por compra y por proveedor).
+stock.get('/catalogo/:id/compras', async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
+  return c.json(await stockService.getMaterialCompras(id, c.get('accessToken')))
+})
 
 stock.post('/materiales', zValidator('json', CreateMaterialSchema), async (c) => {
   try {
