@@ -3,6 +3,8 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
+import { ensureNoAfectaSemanasCerradas, hoyArgentinaISO } from '../../lib/semanas.js'
+import { createSupabaseClient } from '../../lib/supabase.js'
 import { categoriasService } from './categorias.service.js'
 import { CreateCategoriaSchema, UpdateCategoriaSchema } from './categorias.schema.js'
 
@@ -64,6 +66,11 @@ categorias.patch(
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
     const userId = c.get('user').id
+    // Un precio global con vigencia pasada recalcula semanas cerradas de
+    // TODAS las obras (incidente 2026-06-26): 409 salvo confirmación.
+    if (dto.vh !== undefined) {
+      await ensureNoAfectaSemanasCerradas(createSupabaseClient(token), null, dto.desde ?? hoyArgentinaISO(), dto.confirmar_historico)
+    }
     const data = await categoriasService.update(id, dto, token, userId)
     return c.json(data)
   },

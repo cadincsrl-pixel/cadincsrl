@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
+import { ensureNoAfectaSemanasCerradas, hoyArgentinaISO } from '../../lib/semanas.js'
 import { tarifasService } from './tarifas.service.js'
 import { CreateTarifaSchema } from './tarifas.schema.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
@@ -58,6 +59,9 @@ tarifas.put(
     const token = c.get('accessToken')
     const userId = c.get('user').id
     await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
+    // Una tarifa con vigencia pasada recalcula semanas ya cerradas/pagadas
+    // (incidente del 2026-06-26): 409 salvo confirmación explícita.
+    await ensureNoAfectaSemanasCerradas(createSupabaseClient(token), dto.obra_cod, dto.desde ?? hoyArgentinaISO(), dto.confirmar_historico)
     const data = await tarifasService.upsert(dto, token, userId)
     return c.json(data)
   },

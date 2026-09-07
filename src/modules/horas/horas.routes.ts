@@ -7,6 +7,7 @@ import { calcularCostoObra, viernesISO } from './costo-obra.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
 import { supabase, createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
+import { ensureSemanasAbiertas, viernesEntre } from '../../lib/semanas.js'
 
 const horas = new Hono()
 
@@ -231,10 +232,20 @@ horas.delete('/:obraCod/semana',
   const hasta = c.req.query('hasta')
   const leg = c.req.query('leg')
   if (!desde || !hasta) return c.json({ error: 'Faltan parámetros desde/hasta' }, 400)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta) || hasta < desde) {
+    return c.json({ error: 'Rango de fechas inválido' }, 400)
+  }
   const token = c.get('accessToken')
   const userId = c.get('user').id
   await validarObraDelUsuario(userId, obraCod, 'tarja')
   const supabase = createSupabaseClient(token)
+
+  // Candado de cierre (2026-09-06): hasta hoy "Limpiar semana" y "Quitar"
+  // borraban horas de semanas ya pagadas sin pasar por el chequeo que sí
+  // tenía el upsert. Y las hs extras de esos legajos quedaban vivas: el
+  // legajo desaparecía de la grilla pero seguía sumando en costos y recibos.
+  const semKeys = [...new Set(viernesEntre(viernesISO(desde), viernesISO(hasta)))]
+  await ensureSemanasAbiertas(supabase, obraCod, semKeys, 'horas')
 
   let q = supabase
     .from('horas')
@@ -242,11 +253,19 @@ horas.delete('/:obraCod/semana',
     .eq('obra_cod', obraCod)
     .gte('fecha', desde)
     .lte('fecha', hasta)
-
   if (leg) q = q.eq('leg', leg)
-
   const { error } = await q
   if (error) return c.json({ error: error.message }, 500)
+
+  let qx = supabase
+    .from('tarja_hs_extras')
+    .delete()
+    .eq('obra_cod', obraCod)
+    .in('sem_key', semKeys)
+  if (leg) qx = qx.eq('leg', leg)
+  const { error: errX } = await qx
+  if (errX) return c.json({ error: errX.message }, 500)
+
   return c.json({ success: true })
   },
 )

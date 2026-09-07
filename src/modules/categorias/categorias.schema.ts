@@ -17,6 +17,8 @@ export const UpdateCategoriaSchema = z.object({
   // Vigencia de la nueva versión de precio (YYYY-MM-DD, viernes de semana).
   // Solo aplica si viene `vh`; sin `desde`, el service usa hoy.
   desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // true = el usuario ya confirmó que el precio recalcula semanas cerradas.
+  confirmar_historico: z.boolean().optional(),
 })
 
 export type Categoria = z.infer<typeof CategoriaSchema>

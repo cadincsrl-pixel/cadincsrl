@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
+import { ensureNoAfectaSemanasCerradas } from '../../lib/semanas.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
@@ -62,6 +63,7 @@ const UpsertSchema = z.object({
   leg: z.string().min(1),
   cat_id: z.number().int().positive(),
   desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  confirmar_historico: z.boolean().optional(),
 })
 
 // PUT /api/cat-obra — asignar categoría a un trabajador en una obra+semana.
@@ -76,6 +78,8 @@ catObra.put(
     const userId = c.get('user').id
     await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
     const supabase = createSupabaseClient(c.get('accessToken'))
+    // Cambiar la categoría con vigencia pasada recalcula semanas cerradas.
+    await ensureNoAfectaSemanasCerradas(supabase, dto.obra_cod, dto.desde, dto.confirmar_historico)
 
     // Buscar si ya existe un registro para esta combinación
     const { data: existing } = await supabase

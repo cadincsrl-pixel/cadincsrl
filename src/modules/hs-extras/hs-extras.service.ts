@@ -1,4 +1,5 @@
 import { HTTPException } from 'hono/http-exception'
+import { ensureSemanasAbiertas as ensureSemanasAbiertasLib } from '../../lib/semanas.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type { UpsertHsExtraDto, UpsertHsExtrasLoteDto } from './hs-extras.schema.js'
 
@@ -11,42 +12,19 @@ async function ensureSemanaAbierta(
   obraCod: string,
   semKey: string,
 ) {
-  const { data, error } = await supabase
-    .from('cierres')
-    .select('estado')
-    .eq('obra_cod', obraCod)
-    .eq('sem_key', semKey)
-    .maybeSingle()
-
-  if (error) throw new Error(error.message)
-  if (data?.estado === 'cerrado') {
-    throw new HTTPException(409, {
-      message: 'Semana cerrada, no se puede modificar horas extras',
-    })
-  }
+  await ensureSemanasAbiertasLib(supabase, obraCod, [semKey], 'horas extras')
 }
 
 // Verifica cierre de múltiples (obra_cod, sem_key). Si alguno está cerrado, lanza 409.
+// Desde el 2026-09-06 la regla vive en lib/semanas.ts: sin fila en
+// `cierres`, una semana cuyo jueves ya pasó también está cerrada.
 async function ensureSemanasAbiertas(
   supabase: SupabaseClient,
   obraCod: string,
   semKeys: string[],
 ) {
   if (semKeys.length === 0) return
-  const unicos = Array.from(new Set(semKeys))
-  const { data, error } = await supabase
-    .from('cierres')
-    .select('sem_key, estado')
-    .eq('obra_cod', obraCod)
-    .in('sem_key', unicos)
-
-  if (error) throw new Error(error.message)
-  const cerrado = data?.find((r) => r.estado === 'cerrado')
-  if (cerrado) {
-    throw new HTTPException(409, {
-      message: 'Semana cerrada, no se puede modificar horas extras',
-    })
-  }
+  await ensureSemanasAbiertasLib(supabase, obraCod, semKeys, 'horas extras')
 }
 
 async function fetchById(supabase: SupabaseClient, id: number) {

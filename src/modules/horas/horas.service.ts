@@ -1,7 +1,7 @@
-import { HTTPException } from 'hono/http-exception'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type { UpsertHoraDto, UpsertHorasLoteDto } from './horas.schema.js'
 import { viernesISO } from './costo-obra.js'
+import { ensureSemanasAbiertas as ensureSemanasAbiertasLib } from '../../lib/semanas.js'
 
 type SupabaseClient = ReturnType<typeof createSupabaseClient>
 
@@ -10,6 +10,8 @@ type SupabaseClient = ReturnType<typeof createSupabaseClient>
 // pagadas en silencio. Con humanos por la web nunca pasó; con clientes de
 // API (bot de WhatsApp) es un agujero real. Mismo criterio que hs-extras:
 // estado 'cerrado' en cierres → 409.
+// Desde el 2026-09-06 la regla vive en lib/semanas.ts: sin fila en
+// `cierres`, una semana cuyo jueves ya pasó también está cerrada.
 async function ensureSemanasAbiertas(
   supabase: SupabaseClient,
   obraCod: string,
@@ -17,18 +19,7 @@ async function ensureSemanasAbiertas(
 ) {
   const semKeys = [...new Set(fechas.map(viernesISO))]
   if (semKeys.length === 0) return
-  const { data, error } = await supabase
-    .from('cierres')
-    .select('sem_key, estado')
-    .eq('obra_cod', obraCod)
-    .in('sem_key', semKeys)
-  if (error) throw new Error(error.message)
-  const cerrada = (data ?? []).find(c => c.estado === 'cerrado')
-  if (cerrada) {
-    throw new HTTPException(409, {
-      message: `SEMANA_CERRADA: la semana ${cerrada.sem_key} de ${obraCod} está cerrada — reabrila antes de modificar horas`,
-    })
-  }
+  await ensureSemanasAbiertasLib(supabase, obraCod, semKeys, 'horas')
 }
 
 export const horasService = {
