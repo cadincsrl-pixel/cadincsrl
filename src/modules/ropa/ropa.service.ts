@@ -1,7 +1,32 @@
+import { HTTPException } from 'hono/http-exception'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type {
   CreateCategoriaDto, UpdateCategoriaDto, CreateEntregaDto, CreateEntregasLoteDto,
 } from './ropa.schema.js'
+
+/** Hoy en hora Argentina (UTC−3). Mismo helper que usa gastos de logística. */
+function hoyAR(): string {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+}
+
+/**
+ * Una entrega con fecha futura NUNCA vence: el vencimiento se calcula sumándole
+ * los meses de la categoría, así que queda todavía más adelante y la prenda
+ * figura "al día" para siempre, invisible en el filtro de vencidos.
+ *
+ * Pasó de verdad: 9 entregas de la carga inicial quedaron con 10/12/2026 cuando
+ * se habían cargado el 10/04/2026 (mes mal tipeado). Tres legajos llevan cinco
+ * meses figurando al día. El front también lo bloquea (`max` en el input), esto
+ * es el candado real.
+ */
+function exigirFechaNoFutura(fecha: string): void {
+  const hoy = hoyAR()
+  if (fecha > hoy) {
+    throw new HTTPException(400, {
+      message: `No se puede registrar una entrega con fecha futura (${fecha}). Hoy es ${hoy}.`,
+    })
+  }
+}
 
 export const ropaService = {
 
@@ -50,6 +75,7 @@ export const ropaService = {
   // ── Entregas ──
 
   async createEntrega(dto: CreateEntregaDto, token: string, userId: string) {
+    exigirFechaNoFutura(dto.fecha_entrega)
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('ropa_entregas')
@@ -67,6 +93,7 @@ export const ropaService = {
   },
 
   async createEntregasLote(dto: CreateEntregasLoteDto, token: string, userId: string) {
+    exigirFechaNoFutura(dto.fecha_entrega)
     const supabase = createSupabaseClient(token)
     const filas = [...new Set(dto.categoria_ids)].map(categoria_id => ({
       leg:           dto.leg,
