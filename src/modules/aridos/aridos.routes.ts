@@ -6,6 +6,7 @@ import { aridosService } from './aridos.service.js'
 import { buildEntidadDocsRoutes } from '../documentos/entidad-docs.routes.js'
 import { buildServiciosRoutes } from '../servicios/servicios.routes.js'
 import { choferesAridosService, ChoferAridosError } from './aridos-choferes.service.js'
+import { gastosAridosService, GastoAridosError } from './aridos-gastos.service.js'
 import { z as zc } from 'zod'
 import {
   CreateMaterialSchema, UpdateMaterialSchema,
@@ -105,6 +106,100 @@ aridos.delete('/chofer-dias/:id',
 // Lo que hay que pagar en un mes (YYYY-MM)
 aridos.get('/chofer-pago/:mes',
   chofer(c => choferesAridosService.pagoMes(c.req.param('mes'), c.get('accessToken'))))
+
+// ── Gastos del área (combustible, taller, VTV, seguro…) ───────
+// Sin workflow de aprobación a propósito: los carga quien tiene los
+// comprobantes y el dueño lee el resultado. Ver el encabezado del servicio.
+const CargaSchema = zc.object({
+  litros:           zc.number().positive(),
+  odometro_km:      zc.number().int().min(0).nullable().optional(),
+  tipo_combustible: zc.enum(['gasoil', 'nafta']).optional(),
+  tanque_lleno:     zc.boolean().optional(),
+  obs:              zc.string().trim().nullable().optional(),
+})
+const CrearGastoSchema = zc.object({
+  fecha:            zc.string().regex(FECHA_RE),
+  categoria_id:     zc.number().int().positive(),
+  unidad_id:        zc.number().int().positive().nullable().optional(),
+  monto:            zc.number().positive(),
+  descripcion:      zc.string().trim().nullable().optional(),
+  proveedor:        zc.string().trim().nullable().optional(),
+  metodo_pago:      zc.enum(['efectivo','transferencia','tarjeta','cheque','cta_cte','otro']).nullable().optional(),
+  comprobante_nro:  zc.string().trim().nullable().optional(),
+  comprobante_path: zc.string().trim().nullable().optional(),
+  obs:              zc.string().trim().nullable().optional(),
+  carga:            CargaSchema.nullable().optional(),
+})
+const EditarGastoSchema = CrearGastoSchema.partial().omit({ carga: true })
+const ImportarGastosSchema = zc.object({
+  dry_run: zc.boolean().optional(),
+  filas:   zc.array(CrearGastoSchema).min(1).max(500),
+})
+const UploadComprobanteSchema = zc.object({
+  content_type: zc.enum(['image/jpeg','image/png','image/webp','application/pdf']),
+})
+
+function gasto<T>(fn: (c: any) => Promise<T>) {
+  return async (c: any) => {
+    try { return c.json(await fn(c)) } catch (err) {
+      if (err instanceof GastoAridosError) {
+        const body: Record<string, unknown> = { error: err.code }
+        if (err.detail !== undefined) body.detail = err.detail
+        return c.json(body, err.status as any)
+      }
+      return c.json({ error: (err as Error).message ?? 'UNKNOWN' }, 500)
+    }
+  }
+}
+
+// Estas rutas van ANTES de /gastos/:id: si no, "categorias" o "resultado"
+// entran como si fueran un id y el Number() los vuelve NaN.
+aridos.get('/gastos/categorias', gasto(c => gastosAridosService.categorias(c.get('accessToken'))))
+
+aridos.get('/gastos/resultado',
+  gasto(c => gastosAridosService.resultado(c.get('accessToken'), c.req.query('mes'))))
+
+aridos.get('/gastos/por-categoria',
+  gasto(c => gastosAridosService.gastosPorCategoria(c.get('accessToken'), c.req.query('mes'))))
+
+aridos.get('/gastos/combustible', gasto(c => gastosAridosService.cargasCombustible(
+  c.get('accessToken'),
+  c.req.query('unidad_id') ? Number(c.req.query('unidad_id')) : undefined,
+  c.req.query('desde'), c.req.query('hasta'))))
+
+aridos.post('/gastos/upload-comprobante', zValidator('json', UploadComprobanteSchema),
+  gasto(c => gastosAridosService.firmarUpload(c.req.valid('json').content_type)))
+
+// El Excel del mes entra entero acá. Con dry_run:true valida sin escribir.
+aridos.post('/gastos/importar', zValidator('json', ImportarGastosSchema), gasto(c => {
+  const { filas, dry_run } = c.req.valid('json')
+  return gastosAridosService.importar(filas, { dry_run }, c.get('accessToken'), c.get('user').id)
+}))
+
+aridos.get('/gastos', gasto(c => gastosAridosService.list({
+  desde:        c.req.query('desde'),
+  hasta:        c.req.query('hasta'),
+  mes:          c.req.query('mes'),
+  unidad_id:    c.req.query('unidad_id')    ? Number(c.req.query('unidad_id'))    : undefined,
+  categoria_id: c.req.query('categoria_id') ? Number(c.req.query('categoria_id')) : undefined,
+  sin_unidad:   c.req.query('sin_unidad') === 'true',
+  limit:        c.req.query('limit')  ? Number(c.req.query('limit'))  : undefined,
+  offset:       c.req.query('offset') ? Number(c.req.query('offset')) : undefined,
+}, c.get('accessToken'))))
+
+aridos.get('/gastos/:id', gasto(c => gastosAridosService.getById(Number(c.req.param('id')), c.get('accessToken'))))
+
+aridos.get('/gastos/:id/comprobante-url',
+  gasto(c => gastosAridosService.comprobanteUrl(Number(c.req.param('id')), c.get('accessToken'))))
+
+aridos.post('/gastos', zValidator('json', CrearGastoSchema),
+  gasto(c => gastosAridosService.create(c.req.valid('json'), c.get('accessToken'), c.get('user').id)))
+
+aridos.patch('/gastos/:id', zValidator('json', EditarGastoSchema),
+  gasto(c => gastosAridosService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id)))
+
+aridos.delete('/gastos/:id',
+  gasto(c => gastosAridosService.softDelete(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id)))
 
 // ── Materiales ────────────────────────────────────────────────
 aridos.get('/materiales', async (c) => {
