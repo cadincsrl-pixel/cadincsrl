@@ -152,11 +152,17 @@ export const cuentaClienteService = {
     const supabase = createSupabaseClient(token)
     // Vista agregada (una fila por obra) para no chocar con el cap de 1000 de
     // PostgREST si crece el backlog de ítems sin tasar (CLAUDE.md §5.7).
-    const base = supabase.from('v_cuenta_cliente_pendientes').select('obra_cod, sin_precio')
+    // Se trae `obra_archivada` y NO se filtra: la alerta muestra las dos cosas.
+    // Esconder las archivadas perdería trabajo real (hoy 148 renglones en 7
+    // obras cerradas), y el chip de una archivada SÍ lleva a sus renglones,
+    // porque con `obra_cod` puesto `getRenglones()` saltea el filtro. Lo que
+    // faltaba era que el front pudiera distinguirlas y decirlo.
+    const base = supabase.from('v_cuenta_cliente_pendientes').select('obra_cod, sin_precio, obra_archivada')
     const { data, error } = obraCods != null ? await base.in('obra_cod', obraCods) : await base
     if (error) throw new Error(error.message)
-    return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number }>)
-      .sort((a, b) => b.sin_precio - a.sin_precio)
+    return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number; obra_archivada: boolean }>)
+      // Las vivas primero: son las accionables. Dentro de cada grupo, por volumen.
+      .sort((a, b) => Number(a.obra_archivada) - Number(b.obra_archivada) || b.sin_precio - a.sin_precio)
   },
 
   // ── Cobros (pagos del cliente a cuenta de la obra) ───────────────────
