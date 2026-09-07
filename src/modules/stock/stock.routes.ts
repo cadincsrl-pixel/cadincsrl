@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import { stockService, StockHttpError, CATALOGO_ESTADOS } from './stock.service.js'
 import {
@@ -75,7 +75,25 @@ stock.get('/catalogo/:id/compras', async (c) => {
   return c.json(await stockService.getMaterialCompras(id, c.get('accessToken')))
 })
 
-stock.post('/materiales', zValidator('json', CreateMaterialSchema), async (c) => {
+// GET /api/stock/materiales/parecidos?nombre=… — los candidatos del "¿no será
+// este?" ANTES de intentar el alta. El modal del pedido los muestra en vivo
+// mientras se tipea el nombre; es la misma búsqueda que dispara el 409.
+const ParecidosQuerySchema = z.object({
+  nombre:     z.string().trim().min(2).max(160),
+  excluir_id: z.coerce.number().int().positive().optional(),
+})
+stock.get('/materiales/parecidos', zValidator('query', ParecidosQuerySchema), async (c) => {
+  const { nombre, excluir_id } = c.req.valid('query')
+  return c.json(await stockService.buscarParecidos(nombre, c.get('accessToken'), excluir_id))
+})
+
+// Sumar filas al catálogo no es lo mismo que cargar un pedido (2026-09-07):
+// además de `creacion` hace falta `actualizacion` y la pestaña Catálogo. Los
+// jefes de obra (tabs: solicitudes) piden en texto libre y el depósito
+// cataloga. Un nombre que es solo un código responde 400 NOMBRE_ES_CODIGO.
+stock.post('/materiales',
+  requirePermiso('certificaciones', 'actualizacion'), requireTab('certificaciones', 'catalogo'),
+  zValidator('json', CreateMaterialSchema), async (c) => {
   try {
     return c.json(await stockService.createMaterial(c.req.valid('json'), c.get('accessToken'), c.get('user').id), 201)
   } catch (e) {

@@ -27,6 +27,7 @@ vi.mock('../../../src/middleware/auth.js', () => ({
 vi.mock('../../../src/middleware/permission.js', () => ({
   requirePermiso:   () => async (_c: any, next: any) => next(),
   requirePermisoOr: () => async (_c: any, next: any) => next(),
+  requireTab:       () => async (_c: any, next: any) => next(),
 }))
 
 vi.mock('../../../src/lib/supabase.js', () => {
@@ -81,6 +82,23 @@ describe('GET /materiales', () => {
   })
 })
 
+describe('GET /materiales/parecidos', () => {
+  it('devuelve los candidatos del "¿no será este?" sin crear nada', async () => {
+    estado.materiales = [{ id: 122, nombre: 'Esmalte sintético x 4lts', unidad: 'lt', alias: ['cod 7055'] }]
+    const res  = await stock.request('/materiales/parecidos?nombre=' + encodeURIComponent('pintura cod7055 x 4l'))
+    const body = await res.json() as any
+    expect(res.status).toBe(200)
+    expect(body).toHaveLength(1)
+    expect(body[0]).toMatchObject({ id: 122, motivo: 'codigo', por_codigo: true })
+    expect(estado.ultimoInsert).toBeNull()
+  })
+
+  it('rechaza un nombre de menos de 2 caracteres', async () => {
+    const res = await stock.request('/materiales/parecidos?nombre=a')
+    expect(res.status).toBe(400)
+  })
+})
+
 describe('POST /materiales', () => {
   it('devuelve 409 MATERIAL_PARECIDO con los candidatos', async () => {
     estado.materiales = [{ id: 7, nombre: 'Lija al agua N°150', unidad: 'unid', alias: [] }]
@@ -93,8 +111,17 @@ describe('POST /materiales', () => {
     expect(body.candidatos).toHaveLength(1)
     expect(body.candidatos[0]).toEqual({
       id: 7, nombre: 'Lija al agua N°150', unidad: 'unid',
-      sim: expect.any(Number), por_alias: false,
+      sim: expect.any(Number), por_alias: false, por_codigo: false,
+      palabras: expect.any(Number), precision: expect.any(Number), motivo: 'nombre',
     })
+  })
+
+  it('devuelve 400 NOMBRE_ES_CODIGO si el nombre es solo un código', async () => {
+    const res  = await stock.request('/materiales', json({ rubro_id: 1, nombre: 'cod 7055' }))
+    const body = await res.json() as any
+    expect(res.status).toBe(400)
+    expect(body.code).toBe('NOMBRE_ES_CODIGO')
+    expect(estado.ultimoInsert).toBeNull()
   })
 
   it('con forzar:true crea igual (201) y guarda alias normalizados', async () => {

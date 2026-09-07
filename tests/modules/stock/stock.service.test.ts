@@ -52,6 +52,7 @@ vi.mock('../../../src/lib/supabase.js', () => {
 import {
   stockService, StockHttpError,
   normMaterial, trigramas, similitud, normalizarAlias,
+  tokensMaterial, formasCodigo, esNombreSoloCodigo,
 } from '../../../src/modules/stock/stock.service.js'
 import { CreateMaterialSchema, UpdateMaterialSchema } from '../../../src/modules/stock/stock.schema.js'
 
@@ -130,7 +131,81 @@ describe('normalizarAlias', () => {
 })
 
 // ── buscarParecidos ─────────────────────────────────────────────────────
+describe('tokensMaterial / formasCodigo / esNombreSoloCodigo', () => {
+  it('tokensMaterial deja las palabras con contenido y saca conectores y "cod"', () => {
+    expect(tokensMaterial('pintura cod7055 x 4l')).toEqual(['pintura', 'cod7055', '4l'])
+    expect(tokensMaterial('Pintura de látex blanca')).toEqual(['pintura', 'latex', 'blanca'])
+    expect(tokensMaterial('Caño PVC 40mm')).toEqual(['cano', 'pvc', '40mm'])
+  })
+
+  it('formasCodigo pega tokens adyacentes y solo toma formas con 4+ dígitos', () => {
+    expect(formasCodigo('cod 7055')).toEqual(new Set(['7055', 'cod7055']))
+    expect([...formasCodigo('pintura cod7055 x 4l')]).toContain('cod7055')
+    expect([...formasCodigo('SW 7005')]).toEqual(expect.arrayContaining(['7005', 'sw7005']))
+    // medidas, no códigos
+    expect(formasCodigo('Aguarrás x 5lts')).toEqual(new Set())
+    expect(formasCodigo('Térmica 1x25A Sica')).toEqual(new Set())
+  })
+
+  it('esNombreSoloCodigo rechaza códigos, medidas y marcas de 2 letras', () => {
+    for (const n of ['7055', 'cod 7055', 'SW 7005', 'EZ9F34125', '3M 175', 'N°150', 'art. 45611'])
+      expect(esNombreSoloCodigo(n), n).toBe(true)
+    for (const n of ['Esmalte sintético x 4lts', 'Latex 7067', 'Cal', 'Cinta aisladora 3M Super 33+'])
+      expect(esNombreSoloCodigo(n), n).toBe(false)
+  })
+})
+
 describe('buscarParecidos', () => {
+  it('encuentra por código pegado ("cod7055" ↔ alias "cod 7055") y lo marca como codigo', async () => {
+    estado.materiales = [
+      material(122, 'Esmalte sintético x 4lts', ['cod 7055']),
+      material(355, 'Pintura asfáltica x 4lts'),
+    ]
+    const r = await stockService.buscarParecidos('pintura cod7055 x 4l', TOKEN)
+    expect(r[0].id).toBe(122)
+    expect(r[0].motivo).toBe('codigo')
+    expect(r[0].por_codigo).toBe(true)
+  })
+
+  it('encuentra por palabras compartidas aunque los trigramas no lleguen', async () => {
+    estado.materiales = [
+      material(112, 'Latex interior x 20lts', ['pintura latex interior']),
+      material(30,  'Cemento Portland x 50kg'),
+    ]
+    const r = await stockService.buscarParecidos('pintura de latex blanca', TOKEN)
+    expect(r.map(c => c.id)).toEqual([112])
+    expect(r[0].motivo).toBe('palabras')
+    expect(r[0].sim).toBeLessThan(0.45)
+    expect(r[0].palabras).toBeCloseTo(2 / 3, 2)
+  })
+
+  it('entre los que comparten palabras, gana el nombre más limpio', async () => {
+    estado.materiales = [
+      material(1157, 'Pintura p/ pisos Alba látex acrílico mate grafito x 20lts'),
+      material(112,  'Latex interior x 20lts', ['pintura latex interior']),
+    ]
+    const r = await stockService.buscarParecidos('pintura de latex blanca', TOKEN)
+    expect(r.map(c => c.id)).toEqual([112, 1157])
+    expect(r[0].precision).toBeGreaterThan(r[1].precision)
+  })
+
+  it('una sola palabra suelta no alcanza cuando el buscado tiene dos o más', async () => {
+    estado.materiales = [material(1325, 'Calefón eléctrico'), material(668, 'Cartel "Peligro eléctrico"')]
+    expect(await stockService.buscarParecidos('rotormartillo electrico', TOKEN)).toEqual([])
+  })
+
+  it('con una sola palabra buscada alcanza que aparezca', async () => {
+    estado.materiales = [material(772, 'Yeso x 25kg'), material(948, 'Yeso x kg (suelto)'), material(1, 'Arena gruesa')]
+    const r = await stockService.buscarParecidos('yeso', TOKEN)
+    expect(r.map(c => c.id).sort()).toEqual([772, 948])
+  })
+
+  it('las medidas no cuentan como código compartido', async () => {
+    estado.materiales = [material(1553, 'Aguarrás x 5lts', ['aguarras 5 lts'])]
+    expect(await stockService.buscarParecidos('pintura x 5lts', TOKEN)).toEqual([])
+  })
+
+
   it('encuentra por alias exacto aunque el nombre no se parezca', async () => {
     estado.materiales = [
       material(1, 'Tornillo T1 autoperforante', ['t1']),
@@ -192,6 +267,16 @@ describe('createMaterial', () => {
     expect(estado.ultimoInsert).toBeNull() // no llegó a insertar
   })
 
+  it('rechaza con 400 NOMBRE_ES_CODIGO un nombre que es solo un código, antes de buscar', async () => {
+    estado.materiales = [material(122, 'Esmalte sintético x 4lts', ['cod 7055'])]
+    const dto = CreateMaterialSchema.parse({ rubro_id: 1, nombre: 'cod 7055', forzar: true })
+    const err = await stockService.createMaterial(dto, TOKEN, USER).catch(e => e)
+    expect(err).toBeInstanceOf(StockHttpError)
+    expect(err.status).toBe(400)
+    expect(err.code).toBe('NOMBRE_ES_CODIGO')
+    expect(estado.ultimoInsert).toBeNull()
+  })
+
   it('con forzar:true saltea el chequeo e inserta', async () => {
     estado.materiales = [material(7, 'Lija al agua N°150')]
     const dto = CreateMaterialSchema.parse({ rubro_id: 1, nombre: 'Lija al agua N°180', forzar: true })
@@ -231,6 +316,13 @@ describe('updateMaterial', () => {
   it('normaliza los alias que vienen en el body', async () => {
     await stockService.updateMaterial(5, UpdateMaterialSchema.parse({ alias: ['Taco 8', 'TARUGO'] }), TOKEN, USER)
     expect(estado.ultimoUpdate.alias).toEqual(['taco 8', 'tarugo'])
+  })
+
+  it('no deja renombrar a un nombre que es solo un código', async () => {
+    const err = await stockService.updateMaterial(7, { nombre: 'SW 7005' }, TOKEN, USER).catch(e => e)
+    expect(err).toBeInstanceOf(StockHttpError)
+    expect(err.code).toBe('NOMBRE_ES_CODIGO')
+    expect(estado.ultimoUpdate).toBeNull()
   })
 
   it('no toca alias si no vino en el body', async () => {

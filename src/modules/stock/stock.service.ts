@@ -88,6 +88,16 @@ export function similitud(a: string, b: string): number {
   return comunes / (ta.size + tb.size - comunes)
 }
 
+/**
+ * Por qué un material aparece como "¿no será este?" (de más fuerte a más débil):
+ *   alias    → el nombre buscado ES uno de sus sinónimos.
+ *   codigo   → comparten un código de proveedor ("cod7055" ↔ alias "cod 7055").
+ *   nombre   → los nombres se parecen por trigramas (> UMBRAL_PARECIDO).
+ *   palabras → comparten las palabras con contenido ("pintura de latex blanca"
+ *              ↔ "Latex interior x 20lts" + alias "pintura latex").
+ */
+export type MotivoParecido = 'alias' | 'codigo' | 'nombre' | 'palabras'
+
 export type MaterialCandidato = {
   id: number
   nombre: string
@@ -96,6 +106,65 @@ export type MaterialCandidato = {
   sim: number
   /** true si el nombre buscado coincide EXACTO con uno de sus alias. */
   por_alias: boolean
+  /** true si comparten un código de proveedor (ver `formasCodigo`). */
+  por_codigo: boolean
+  /** Qué parte de las palabras con contenido del buscado aparece en nombre+alias (0..1). */
+  palabras: number
+  /**
+   * Qué parte del NOMBRE del candidato son esas palabras (0..1). Ordena entre
+   * los que comparten palabras: "Latex interior x 20lts" (2 de 3) va antes que
+   * "Pintura p/ pisos Alba látex acrílico mate grafito x 20lts" (2 de 8).
+   */
+  precision: number
+  motivo: MotivoParecido
+}
+
+// Conectores y palabras que no dicen QUÉ es el material. No cuentan como
+// coincidencia entre nombres ni como "palabra" al decidir si un nombre es
+// solo un código.
+const PALABRAS_VACIAS = new Set([
+  'de', 'del', 'la', 'el', 'los', 'las', 'un', 'una', 'y', 'o', 'en', 'a', 'con', 'sin', 'para', 'por', 'x',
+  'cod', 'codigo', 'cdg', 'art', 'articulo', 'ref', 'referencia', 'nro', 'num', 'numero', 'n', 'no',
+  'sku', 'item', 'mod', 'modelo', 'marca',
+])
+
+function partirEnTokens(texto: string): string[] {
+  return normMaterial(texto).split(/[^\p{L}\p{Nd}]+/u).filter(Boolean)
+}
+
+/**
+ * Palabras con contenido de un nombre: 3+ letras o con dígitos ("4l", "40mm"),
+ * sin conectores ni "cod"/"art". Es lo que se compara para el motivo 'palabras'.
+ */
+export function tokensMaterial(texto: string): string[] {
+  return partirEnTokens(texto).filter(t => !PALABRAS_VACIAS.has(t) && (t.length >= 3 || /\p{Nd}/u.test(t)))
+}
+
+/**
+ * Formas en que puede aparecer un código de proveedor en un texto: cada token
+ * y cada 2 o 3 tokens adyacentes pegados, si tienen 4+ dígitos. Así "cod7055",
+ * "cod 7055" y "pintura cod 7055 x 4l" comparten la forma "cod7055" (y "7055"),
+ * mientras que "5lts" o "1x25" no cuentan como código (son medidas).
+ */
+export function formasCodigo(texto: string): Set<string> {
+  const toks = partirEnTokens(texto)
+  const out = new Set<string>()
+  for (let i = 0; i < toks.length; i++) {
+    for (let largo = 1; largo <= 3 && i + largo <= toks.length; largo++) {
+      const forma = toks.slice(i, i + largo).join('')
+      if ((forma.match(/\p{Nd}/gu) ?? []).length >= 4) out.add(forma)
+    }
+  }
+  return out
+}
+
+/**
+ * true si el nombre no dice qué es el material: solo códigos, medidas o
+ * conectores ("7055", "cod 7055", "SW 7005", "EZ9F34125", "3M 175"). Un
+ * nombre así no se puede buscar ni cotizar; el código va como sinónimo.
+ */
+export function esNombreSoloCodigo(nombre: string): boolean {
+  return !partirEnTokens(nombre).some(t => !PALABRAS_VACIAS.has(t) && /^\p{L}{3,}$/u.test(t))
 }
 
 type FilaMaterialLite = {
@@ -106,7 +175,11 @@ type FilaMaterialLite = {
 }
 
 const UMBRAL_PARECIDO = 0.45
+/** Parte de las palabras con contenido del buscado que tienen que aparecer en nombre+alias. */
+const UMBRAL_PALABRAS = 0.5
 const MAX_CANDIDATOS  = 5
+/** Orden de los candidatos: primero la señal más fuerte. */
+const PESO_MOTIVO: Record<MotivoParecido, number> = { alias: 4, codigo: 3, nombre: 2, palabras: 1 }
 const PAGINA          = 1000 // tope duro de PostgREST: paginamos, no pedimos de más
 
 /** Normaliza una lista de alias: normalizados, sin vacíos y sin repetidos. */
@@ -123,6 +196,20 @@ export function normalizarAlias(alias: readonly string[] | null | undefined): st
 /** ¿El error de Postgres es la violación del único parcial sobre el nombre? */
 function esNombreDuplicado(error: PostgrestError): boolean {
   return error.code === '23505' && /nombre|unique/i.test(`${error.message} ${error.details ?? ''}`)
+}
+
+/**
+ * 400 NOMBRE_ES_CODIGO. Sosa (depósito) dio de alta desde el pedido "pintura
+ * cod7055 x 4l" y compañía: un catálogo con códigos de proveedor como nombre
+ * no se puede buscar ni cotizar. El código va como sinónimo de la fila real.
+ */
+function exigirNombreConPalabras(nombre: string): void {
+  if (!esNombreSoloCodigo(nombre)) return
+  throw new StockHttpError(
+    400,
+    'NOMBRE_ES_CODIGO',
+    `"${nombre}" es solo un código o una medida. Poné qué es el material (ej.: "Esmalte sintético x 4lts") y dejá el código como sinónimo.`,
+  )
 }
 
 export const stockService = {
@@ -274,16 +361,21 @@ export const stockService = {
   },
 
   /**
-   * Materiales activos parecidos a `nombre`, para el "¿no será este?" del alta.
-   * Matchea por alias exacto (el sinónimo con el que se pide en obra) o por
-   * similitud de trigramas > 0.45 contra el nombre. Los de alias van primero:
-   * son la señal más fuerte aunque el nombre técnico no se parezca en nada
-   * ("t1" → "Tornillo T1 autoperforante").
+   * Materiales activos parecidos a `nombre`, para el "¿no será este?" del alta
+   * (el 409 del candado y la lista en vivo del modal del pedido). Cuatro
+   * señales, ver `MotivoParecido`: alias exacto, código de proveedor
+   * compartido, trigramas > 0.45 contra el nombre, y palabras con contenido
+   * compartidas (al menos 2, o 1 si el buscado tiene una sola). Las dos
+   * últimas se sumaron el 2026-09-07: con trigramas solos, "pintura de latex
+   * blanca" daba 0.18 contra "Latex interior x 20lts" y el candado no saltaba.
    */
   async buscarParecidos(nombre: string, token: string, excluirId?: number): Promise<MaterialCandidato[]> {
     const supabase = createSupabaseClient(token)
     const buscado  = normMaterial(nombre)
     if (!buscado) return []
+    const palabrasBuscadas = tokensMaterial(buscado)
+    const codigosBuscados  = formasCodigo(buscado)
+    const minimoPalabras   = Math.min(2, palabrasBuscadas.length)
 
     const filas: FilaMaterialLite[] = []
     // Paginado explícito: PostgREST corta en 1000 filas por response y el
@@ -301,17 +393,42 @@ export const stockService = {
       if (data.length < PAGINA) break
     }
 
-    return filas
-      .filter(f => f.id !== excluirId)
-      .map<MaterialCandidato>(f => ({
-        id:        f.id,
-        nombre:    f.nombre,
-        unidad:    f.unidad,
-        sim:       Math.round(similitud(buscado, f.nombre) * 1000) / 1000,
-        por_alias: (f.alias ?? []).some(a => normMaterial(a) === buscado),
-      }))
-      .filter(c => c.por_alias || c.sim > UMBRAL_PARECIDO)
-      .sort((a, b) => Number(b.por_alias) - Number(a.por_alias) || b.sim - a.sim)
+    const candidatos: MaterialCandidato[] = []
+    for (const f of filas) {
+      if (f.id === excluirId) continue
+      const alias = f.alias ?? []
+      const blob  = normMaterial(`${f.nombre} ${alias.join(' ')}`)
+      const coinciden = palabrasBuscadas.filter(t => blob.includes(t)).length
+      const palabras  = palabrasBuscadas.length ? coinciden / palabrasBuscadas.length : 0
+      const precision = Math.min(1, coinciden / Math.max(1, tokensMaterial(f.nombre).length))
+      const sim       = Math.round(similitud(buscado, f.nombre) * 1000) / 1000
+      const por_alias = alias.some(a => normMaterial(a) === buscado)
+      const por_codigo = codigosBuscados.size > 0 &&
+        [f.nombre, ...alias].some(t => [...formasCodigo(t)].some(c => codigosBuscados.has(c)))
+
+      const motivo: MotivoParecido | null =
+        por_alias ? 'alias'
+        : por_codigo ? 'codigo'
+        : sim > UMBRAL_PARECIDO ? 'nombre'
+        : (coinciden >= minimoPalabras && palabras >= UMBRAL_PALABRAS) ? 'palabras'
+        : null
+      if (!motivo) continue
+      candidatos.push({
+        id: f.id, nombre: f.nombre, unidad: f.unidad,
+        sim, por_alias, por_codigo,
+        palabras: Math.round(palabras * 100) / 100, precision: Math.round(precision * 100) / 100, motivo,
+      })
+    }
+
+    // Los que se parecen por nombre van por similitud; los que solo comparten
+    // palabras, por cuántas comparten y qué tan "limpio" es el nombre del
+    // candidato (así la fila genérica de la familia gana a la de un modelo).
+    return candidatos
+      .sort((a, b) =>
+        PESO_MOTIVO[b.motivo] - PESO_MOTIVO[a.motivo]
+        || (a.motivo === 'palabras' ? (b.palabras - a.palabras || b.precision - a.precision) : 0)
+        || b.sim - a.sim
+        || a.nombre.length - b.nombre.length)
       .slice(0, MAX_CANDIDATOS)
   },
 
@@ -319,6 +436,7 @@ export const stockService = {
     const supabase = createSupabaseClient(token)
     const { forzar, alias, nombre, ...campos } = dto
     const nombreLimpio = nombre.trim()
+    exigirNombreConPalabras(nombreLimpio)
 
     // Antes de sumar una fila más al catálogo, ofrecer las que ya existen.
     // `forzar: true` es el "no, es otro material" del usuario.
@@ -372,7 +490,10 @@ export const stockService = {
     // `alias` solo se toca si vino en el body (el schema de update no tiene
     // defaults justamente para no pisarlo con `[]` en cada PATCH).
     if (dto.alias !== undefined) updateData.alias = normalizarAlias(dto.alias)
-    if (typeof dto.nombre === 'string') updateData.nombre = dto.nombre.trim()
+    if (typeof dto.nombre === 'string') {
+      updateData.nombre = dto.nombre.trim()
+      exigirNombreConPalabras(dto.nombre.trim())
+    }
 
     const { data, error } = await supabase
       .from('stock_materiales')
