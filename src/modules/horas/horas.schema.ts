@@ -10,7 +10,7 @@ export const HoraSchema = z.object({
 
 export const UpsertHoraSchema = z.object({
   obra_cod: z.string().min(1),
-  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido, usar YYYY-MM-DD'),
+  fecha: z.iso.date('Fecha inválida: YYYY-MM-DD'),
   leg: z.string().min(1),
   horas: z.number().min(0),
 })
@@ -18,7 +18,7 @@ export const UpsertHoraSchema = z.object({
 export const UpsertHorasLoteSchema = z.object({
   obra_cod: z.string().min(1),
   horas: z.array(z.object({
-    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    fecha: z.iso.date('Fecha inválida: YYYY-MM-DD'),
     leg: z.string().min(1),
     horas: z.number().min(0),
   })),

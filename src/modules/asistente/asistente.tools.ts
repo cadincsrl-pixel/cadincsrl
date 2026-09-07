@@ -161,6 +161,7 @@ async function costoObra(input: z.infer<typeof CostoObraInput>, ctx: ToolCtx) {
       .eq('obra_cod', obraCod)
       .gt('horas', 0)
       .order('fecha')
+      .order('id')
       .range(from, to)
     if (desde) q = q.gte('fecha', desde)
     if (hasta) q = q.lte('fecha', hasta)

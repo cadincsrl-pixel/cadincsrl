@@ -1,6 +1,6 @@
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type {
-  CreateCategoriaDto, UpdateCategoriaDto, CreateEntregaDto,
+  CreateCategoriaDto, UpdateCategoriaDto, CreateEntregaDto, CreateEntregasLoteDto,
 } from './ropa.schema.js'
 
 export const ropaService = {
@@ -64,6 +64,20 @@ export const ropaService = {
       .single()
     if (error) throw new Error(error.message)
     return data
+  },
+
+  async createEntregasLote(dto: CreateEntregasLoteDto, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const filas = [...new Set(dto.categoria_ids)].map(categoria_id => ({
+      leg:           dto.leg,
+      categoria_id,
+      fecha_entrega: dto.fecha_entrega,
+      obs:           dto.obs ?? null,
+      created_by:    userId,
+    }))
+    const { data, error } = await supabase.from('ropa_entregas').insert(filas).select()
+    if (error) throw new Error(error.message)
+    return data ?? []
   },
 
   async deleteEntrega(id: number, token: string) {

@@ -1,3 +1,4 @@
+import { HTTPException } from 'hono/http-exception'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type { CreateCierreDto, UpdateCierreDto } from './cierres.schema.js'
 
@@ -44,6 +45,8 @@ export const cierresService = {
       .select()
       .single()
 
+    // Dos pestañas cerrando la misma semana: la segunda no es un 500.
+    if (error?.code === '23505') throw new HTTPException(409, { message: 'CIERRE_YA_EXISTE: la semana ya tiene un cierre; actualizalo en vez de crearlo' })
     if (error) throw new Error(error.message)
     return data
   },
@@ -60,9 +63,10 @@ export const cierresService = {
       .eq('obra_cod', obraCod)
       .eq('sem_key', semKey)
       .select()
-      .single()
+      .maybeSingle()
 
     if (error) throw new Error(error.message)
+    if (!data) throw new HTTPException(404, { message: 'CIERRE_NO_EXISTE: la semana no tiene cierre para actualizar' })
     return data
   },
 }

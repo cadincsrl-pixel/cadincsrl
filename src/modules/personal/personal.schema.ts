@@ -81,8 +81,6 @@ export const MSG = {
   viernes:    'La fecha tiene que ser un viernes (inicio de la semana)',
 } as const
 
-const ISO_FECHA = /^\d{4}-\d{2}-\d{2}$/
-
 // Todo se guarda normalizado (DNI y teléfono solo dígitos, nombre sin espacios
 // dobles, talle en mayúsculas) para que el control de duplicados y las búsquedas
 // comparen peras con peras. Los `.optional()` van AFUERA de estos schemas: así
@@ -93,10 +91,10 @@ const NombreSchema   = z.string().max(120).transform(normalizarNombre).refine(no
 const TalleSchema    = z.string().max(10).nullable().transform(normalizarTalle).refine(talleValido, MSG.talle)
 const LegajoSchema   = z.string().trim().regex(LEGAJO_RE, MSG.legajo)
 
-const FechaNacimientoSchema = z.string().regex(ISO_FECHA, 'Fecha inválida')
+const FechaNacimientoSchema = z.iso.date('Fecha inválida')
   .refine(f => fechaNacimientoValida(f, hoyArgentinaISO()), MSG.nacimiento)
 
-const ViernesSchema = z.string().regex(ISO_FECHA, 'Fecha inválida')
+const ViernesSchema = z.iso.date('Fecha inválida')
   .refine(esViernes, MSG.viernes)
 
 export const PersonalSchema = z.object({

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { esViernes } from '../../lib/semanas.js'
 
 export const TarifaSchema = z.object({
   id: z.number(),
@@ -12,7 +13,8 @@ export const CreateTarifaSchema = z.object({
   obra_cod: z.string().min(1),
   cat_id: z.number(),
   vh: z.number().min(0),
-  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Vigencia: viernes de la semana desde la que rige (§5.3).
+  desde: z.iso.date('desde debe ser YYYY-MM-DD').refine(esViernes, 'desde tiene que ser un viernes').optional(),
   // true = el usuario ya confirmó que el cambio recalcula semanas cerradas.
   confirmar_historico: z.boolean().optional(),
 })

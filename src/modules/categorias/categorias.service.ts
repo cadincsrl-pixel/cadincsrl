@@ -1,5 +1,8 @@
 // src/modules/categorias/categorias.service.ts
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { hoyArgentinaISO } from '../../lib/semanas.js'
+import { viernesISO } from '../horas/costo-obra.js'
+import { HTTPException } from 'hono/http-exception'
 import type { CreateCategoriaDto, UpdateCategoriaDto } from './categorias.schema.js'
 
 export const categoriasService = {
@@ -43,7 +46,7 @@ export const categoriasService = {
       .insert({
         cat_id: data.id,
         vh: dto.vh,
-        desde: new Date().toISOString().slice(0, 10),
+        desde: viernesISO(hoyArgentinaISO()),
         created_by: userId,
         updated_by: userId,
       })
@@ -58,7 +61,7 @@ export const categoriasService = {
     // Cambio de precio → nueva versión en el historial. Upsert por
     // (cat_id, desde): re-editar la misma semana pisa esa versión.
     if (dto.vh !== undefined) {
-      const desde = dto.desde ?? new Date().toISOString().slice(0, 10)
+      const desde = dto.desde ?? viernesISO(hoyArgentinaISO())
       const { error: histError } = await supabase
         .from('categoria_tarifas')
         .upsert(
@@ -102,6 +105,9 @@ export const categoriasService = {
       .delete()
       .eq('id', id)
 
+    if (error?.code === '23503') {
+      throw new HTTPException(409, { message: 'CATEGORIA_EN_USO: hay trabajadores, tarifas u horas con esta categoría; no se puede borrar' })
+    }
     if (error) throw new Error(error.message)
     return { success: true }
   },

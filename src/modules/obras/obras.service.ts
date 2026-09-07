@@ -1,3 +1,4 @@
+import { HTTPException } from 'hono/http-exception'
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached, invalidarCacheObrasUsuario } from '../../lib/obras-usuario.js'
 import type { CreateObraDto, UpdateObraDto } from './obras.schema.js'
@@ -15,12 +16,13 @@ async function validarResponsableObra(
     .eq('id', userIdNuevo)
     .maybeSingle()
   if (error) throw new Error(error.message)
-  if (!data) throw new Error('Usuario responsable no existe')
-  if (data.activo === false) throw new Error('El usuario responsable está inactivo')
+  // Errores del pedido, no del server: 400 con motivo legible.
+  if (!data) throw new HTTPException(400, { message: 'RESPONSABLE_INVALIDO: el usuario responsable no existe' })
+  if (data.activo === false) throw new HTTPException(400, { message: 'RESPONSABLE_INVALIDO: el usuario responsable está inactivo' })
   // Admin puede ser responsable también (no rompe nada, ve todo igual).
   // Solo rechazamos si rol_base está seteado y NO matchea.
   if (data.rol !== 'admin' && data.rol_base != null && data.rol_base !== rolEsperado) {
-    throw new Error(`El usuario no tiene rol_base=${rolEsperado} (tiene ${data.rol_base})`)
+    throw new HTTPException(400, { message: `RESPONSABLE_INVALIDO: el usuario no es ${rolEsperado} (es ${data.rol_base})` })
   }
 }
 
@@ -255,13 +257,35 @@ export const obrasService = {
     return data
   },
 
+  // Eliminar es solo para obras cargadas por error y vacías. Horas, extras,
+  // cierres, asignaciones y certificaciones cascadean en silencio si se borra
+  // la obra, así que se cuentan antes; el resto (pedidos, stock, remitos…)
+  // frena por FK y también se traduce a 409. Con datos, la salida es archivar.
   async delete(cod: string, token: string) {
     const supabase = createSupabaseClient(token)
+
+    const TABLAS: Array<[string, string]> = [
+      ['horas', 'horas'], ['tarja_hs_extras', 'horas extras'], ['cierres', 'cierres'],
+      ['asignaciones', 'asignaciones'], ['certificaciones', 'certificaciones de contratistas'],
+    ]
+    const conDatos: string[] = []
+    for (const [tabla, etiqueta] of TABLAS) {
+      const { count, error } = await supabase.from(tabla).select('*', { count: 'exact', head: true }).eq('obra_cod', cod)
+      if (error) throw new Error(error.message)
+      if ((count ?? 0) > 0) conDatos.push(`${count} ${etiqueta}`)
+    }
+    if (conDatos.length > 0) {
+      throw new HTTPException(409, { message: `OBRA_CON_DATOS: la obra tiene ${conDatos.join(', ')}. Archivala en vez de eliminarla.` })
+    }
+
     const { error } = await supabase
       .from('obras')
       .delete()
       .eq('cod', cod)
 
+    if (error?.code === '23503') {
+      throw new HTTPException(409, { message: 'OBRA_CON_DATOS: la obra tiene pedidos, stock u otros registros asociados. Archivala en vez de eliminarla.' })
+    }
     if (error) throw new Error(error.message)
     return { success: true }
   },

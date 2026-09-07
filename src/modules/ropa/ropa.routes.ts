@@ -4,7 +4,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { ropaService } from './ropa.service.js'
 import {
-  CreateCategoriaSchema, UpdateCategoriaSchema, CreateEntregaSchema,
+  CreateCategoriaSchema, UpdateCategoriaSchema, CreateEntregaSchema, CreateEntregasLoteSchema,
 } from './ropa.schema.js'
 
 // Ropa es un tab de tarja (CLAUDE.md §4) → permisos vía 'tarja.*'.
@@ -41,6 +41,16 @@ ropa.delete('/categorias/:id', async (c) => {
 
 ropa.post('/entregas', zValidator('json', CreateEntregaSchema), async (c) => {
   const data = await ropaService.createEntrega(
+    c.req.valid('json'),
+    c.get('accessToken'),
+    c.get('user').id,
+  )
+  return c.json(data, 201)
+})
+
+// POST /api/ropa/entregas/lote — varias prendas al mismo trabajador, atómico.
+ropa.post('/entregas/lote', zValidator('json', CreateEntregasLoteSchema), async (c) => {
+  const data = await ropaService.createEntregasLote(
     c.req.valid('json'),
     c.get('accessToken'),
     c.get('user').id,

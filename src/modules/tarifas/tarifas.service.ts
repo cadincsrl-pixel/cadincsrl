@@ -1,4 +1,6 @@
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { hoyArgentinaISO } from '../../lib/semanas.js'
+import { viernesISO } from '../horas/costo-obra.js'
 import type { CreateTarifaDto } from './tarifas.schema.js'
 
 export const tarifasService = {
@@ -17,7 +19,8 @@ export const tarifasService = {
 
   async upsert(dto: CreateTarifaDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const desde = dto.desde ?? new Date().toISOString().slice(0, 10)
+    // Sin `desde`, rige desde la semana en curso (viernes, hora Argentina).
+    const desde = dto.desde ?? viernesISO(hoyArgentinaISO())
 
     const { data, error } = await supabase
       .from('tarifas')

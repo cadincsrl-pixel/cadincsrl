@@ -2,7 +2,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireFlag } from '../../middleware/permission.js'
+import { requirePermiso, requireFlag, tieneFlag } from '../../middleware/permission.js'
 import { ensureNoAfectaSemanasCerradas, hoyArgentinaISO } from '../../lib/semanas.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import { categoriasService } from './categorias.service.js'
@@ -16,10 +16,15 @@ categorias.use('*', authMiddleware)
 // expone montos salariales — solo roles que ven costos lo necesitan.
 categorias.get('/',
   requirePermiso('tarja', 'lectura'),
-  requireFlag('tarja', 'ver_costos', true, true),
   async (c) => {
     const token = c.get('accessToken')
     const data = await categoriasService.getAll(token)
+    // Sin ver_costos: los nombres sí (la grilla tiene que mostrar la categoría
+    // de cada trabajador), los montos no. Antes era 403 y el select de
+    // categoría del capataz quedaba vacío, con 403 silenciosos.
+    if (!(await tieneFlag(c.get('user').id, 'tarja', 'ver_costos', true))) {
+      return c.json((data ?? []).map((cat: Record<string, unknown>) => ({ ...cat, vh: 0, categoria_tarifas: [] })))
+    }
     return c.json(data)
   },
 )

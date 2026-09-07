@@ -8,7 +8,7 @@ import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
 import { supabase, createSupabaseClient } from '../../lib/supabase.js'
 import { todasLasFilas } from '../../lib/paginar.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
-import { ensureSemanasAbiertas, viernesEntre } from '../../lib/semanas.js'
+import { ensureSemanasAbiertas, viernesEntre, hoyArgentinaISO, juevesISO } from '../../lib/semanas.js'
 
 const horas = new Hono()
 
@@ -33,6 +33,7 @@ horas.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
       .from('horas')
       .select('*')
       .order('fecha')
+      .order('id')
       .range(from, from + PAGE - 1)
     if (desde) q = q.gte('fecha', desde)
     if (hasta)  q = q.lte('fecha', hasta)
@@ -60,8 +61,15 @@ horas.get('/costo-obra',
   async (c) => {
     const obraCod = c.req.query('obra_cod')
     if (!obraCod) return c.json({ error: 'OBRA_REQUERIDA' }, 400)
-    const desde = c.req.query('desde')
-    const hasta = c.req.query('hasta')
+    // Rango normalizado a semanas enteras (viernes→jueves): las horas se
+    // filtraban por día y las extras por semana, así que un ?desde=<lunes>
+    // sumaba las extras de toda esa semana pero solo los días desde el lunes.
+    const desdeRaw = c.req.query('desde')
+    const hastaRaw = c.req.query('hasta')
+    const ISO = /^\d{4}-\d{2}-\d{2}$/
+    if ((desdeRaw && !ISO.test(desdeRaw)) || (hastaRaw && !ISO.test(hastaRaw))) return c.json({ error: 'FECHA_INVALIDA: YYYY-MM-DD' }, 400)
+    const desde = desdeRaw ? viernesISO(desdeRaw) : undefined
+    const hasta = hastaRaw ? juevesISO(viernesISO(hastaRaw)) : undefined
     const userId = c.get('user').id
 
     const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
@@ -77,6 +85,7 @@ horas.get('/costo-obra',
         .eq('obra_cod', obraCod)
         .gt('horas', 0)
         .order('fecha')
+        .order('id')
         .range(from, from + PAGE - 1)
       if (desde) q = q.gte('fecha', desde)
       if (hasta) q = q.lte('fecha', hasta)
@@ -170,7 +179,8 @@ horas.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
 
   await validarObraDelUsuario(userId, obraCod, 'tarja')
 
-  if (desde && hasta) {
+  // Un solo extremo también filtra (antes ?desde= solo devolvía toda la obra).
+  if (desde || hasta) {
     const data = await horasService.getBySemana(obraCod, desde, hasta, token)
     return c.json(data)
   }
@@ -179,20 +189,9 @@ horas.get('/:obraCod', requirePermiso('tarja', 'lectura'), async (c) => {
   return c.json(data)
 })
 
-// Helper: si el user es capataz puro, solo puede tocar horas con
-// fecha = hoy (ni pasado ni futuro). Para el resto de roles no aplica.
-// Se aplica en los endpoints PUT (upsert individual y lote). DELETE
-// semana ya está bloqueado para capataces por requireFlag('ver_pii', true).
-function fechaHoyArgentina(): string {
-  // Server puede correr en UTC, capatazes operan en hora local de Argentina.
-  // Forzamos timezone Argentina y devolvemos YYYY-MM-DD.
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Argentina/Buenos_Aires',
-    year:  'numeric', month: '2-digit', day: '2-digit',
-  })
-  return fmt.format(new Date())
-}
-
+// Regla capataz: solo puede tocar horas con fecha = hoy (hora Argentina,
+// hoyArgentinaISO de lib/semanas). Se aplica en los PUT (individual y lote);
+// DELETE semana ya está bloqueado para capataces por requireFlag('ver_pii').
 // PUT /api/horas — upsert individual
 horas.put('/', requirePermiso('tarja', 'actualizacion'), zValidator('json', UpsertHoraSchema), async (c) => {
   const dto = c.req.valid('json')
@@ -201,7 +200,7 @@ horas.put('/', requirePermiso('tarja', 'actualizacion'), zValidator('json', Upse
   await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
 
   // Capataz puede cargar SOLO el día actual.
-  if (await esCapataz(userId) && dto.fecha !== fechaHoyArgentina()) {
+  if (await esCapataz(userId) && dto.fecha !== hoyArgentinaISO()) {
     return c.json({
       error:  'FECHA_FUERA_DE_RANGO',
       detail: 'Como capataz solo podés cargar horas del día actual.',
@@ -220,7 +219,7 @@ horas.put('/lote', requirePermiso('tarja', 'actualizacion'), zValidator('json', 
   await validarObraDelUsuario(userId, dto.obra_cod, 'tarja')
 
   if (await esCapataz(userId)) {
-    const hoy = fechaHoyArgentina()
+    const hoy = hoyArgentinaISO()
     const fueraDeRango = dto.horas.filter(h => h.fecha !== hoy)
     if (fueraDeRango.length > 0) {
       return c.json({

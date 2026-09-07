@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
-import { ensureNoAfectaSemanasCerradas } from '../../lib/semanas.js'
+import { ensureNoAfectaSemanasCerradas, esViernes } from '../../lib/semanas.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import { todasLasFilas } from '../../lib/paginar.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -64,7 +64,7 @@ const UpsertSchema = z.object({
   obra_cod: z.string().min(1),
   leg: z.string().min(1),
   cat_id: z.number().int().positive(),
-  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  desde: z.iso.date('desde debe ser YYYY-MM-DD').refine(esViernes, 'desde tiene que ser un viernes'),
   confirmar_historico: z.boolean().optional(),
 })
 

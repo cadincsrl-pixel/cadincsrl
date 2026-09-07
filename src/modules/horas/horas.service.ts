@@ -3,6 +3,16 @@ import { todasLasFilas } from '../../lib/paginar.js'
 import type { UpsertHoraDto, UpsertHorasLoteDto } from './horas.schema.js'
 import { viernesISO } from './costo-obra.js'
 import { ensureSemanasAbiertas as ensureSemanasAbiertasLib } from '../../lib/semanas.js'
+import { HTTPException } from 'hono/http-exception'
+
+// Un legajo u obra que no existe llega como violación de FK (23503): es un
+// 404 del cliente, no un 500 del server.
+function errorDeHoras(error: { code?: string; message: string }): Error {
+  if (error.code === '23503') {
+    return new HTTPException(404, { message: 'LEGAJO_U_OBRA_INEXISTENTE: el legajo o la obra no existen' })
+  }
+  return new Error(error.message)
+}
 
 type SupabaseClient = ReturnType<typeof createSupabaseClient>
 
@@ -25,18 +35,16 @@ async function ensureSemanasAbiertas(
 
 export const horasService = {
 
-  // Obtener horas de una obra en un rango de fechas (semana)
-  async getBySemana(obraCod: string, desde: string, hasta: string, token: string) {
+  // Horas de una obra en un rango de fechas (cualquiera de los dos extremos
+  // puede faltar). Paginado: un rango abierto puede pasar de 1000 filas.
+  async getBySemana(obraCod: string, desde: string | undefined, hasta: string | undefined, token: string) {
     const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
-      .from('horas')
-      .select('*')
-      .eq('obra_cod', obraCod)
-      .gte('fecha', desde)
-      .lte('fecha', hasta)
-
-    if (error) throw new Error(error.message)
-    return data
+    return todasLasFilas((d, h) => {
+      let q = supabase.from('horas').select('*').eq('obra_cod', obraCod).order('fecha').order('id').range(d, h)
+      if (desde) q = q.gte('fecha', desde)
+      if (hasta) q = q.lte('fecha', hasta)
+      return q
+    })
   },
 
   // Obtener todas las horas de una obra (paginado: la obra archivada más
@@ -82,7 +90,7 @@ export const horasService = {
       .select()
       .single()
 
-    if (error) throw new Error(error.message)
+    if (error) throw errorDeHoras(error)
     return data
   },
 
@@ -107,23 +115,10 @@ export const horasService = {
         // (horas reales recién tipeadas) jamás se pisa con 0.
         .upsert(rows, { onConflict: 'obra_cod,fecha,leg', ignoreDuplicates: dto.solo_nuevas === true })
 
-      if (error) throw new Error(error.message)
+      if (error) throw errorDeHoras(error)
     }
 
     return { success: true, upserted: rows.length }
   },
 
-  // Limpiar todas las horas de una semana en una obra
-  async limpiarSemana(obraCod: string, desde: string, hasta: string, token: string) {
-    const supabase = createSupabaseClient(token)
-    const { error } = await supabase
-      .from('horas')
-      .delete()
-      .eq('obra_cod', obraCod)
-      .gte('fecha', desde)
-      .lte('fecha', hasta)
-
-    if (error) throw new Error(error.message)
-    return { success: true }
-  },
 }

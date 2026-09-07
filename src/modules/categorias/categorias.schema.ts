@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { esViernes } from '../../lib/semanas.js'
 
 export const CategoriaSchema = z.object({
   id: z.number(),
@@ -16,7 +17,7 @@ export const UpdateCategoriaSchema = z.object({
   vh: z.number().min(0).optional(),
   // Vigencia de la nueva versión de precio (YYYY-MM-DD, viernes de semana).
   // Solo aplica si viene `vh`; sin `desde`, el service usa hoy.
-  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  desde: z.iso.date('desde debe ser YYYY-MM-DD').refine(esViernes, 'desde tiene que ser un viernes').optional(),
   // true = el usuario ya confirmó que el precio recalcula semanas cerradas.
   confirmar_historico: z.boolean().optional(),
 })
