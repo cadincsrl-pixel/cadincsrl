@@ -144,6 +144,10 @@ export const personalService = {
     if (!actual) throw new HTTPException(404, { message: `NO_EXISTE: no hay trabajador con legajo ${leg}` })
 
     if (campos.dni !== undefined && campos.dni !== (actual.dni ?? '')) {
+      // El DNI es obligatorio: si ya tenía uno, se corrige pero no se borra.
+      if (campos.dni === '') {
+        throw new HTTPException(400, { message: 'DNI_OBLIGATORIO: el DNI no se puede dejar vacío; si está mal, cargá el correcto' })
+      }
       await ensureDniLibre(supabase, campos.dni, leg)
     }
 

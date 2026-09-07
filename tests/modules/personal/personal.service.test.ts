@@ -173,6 +173,16 @@ describe('update', () => {
     expect(ops('personal', 'update')).toHaveLength(1)
   })
 
+  it('el DNI no se puede dejar vacío si ya tenía uno (sí en un legajo viejo sin DNI)', async () => {
+    expect(await codigo(personalService.update('001', { dni: '' }, 'tok', 'u-1'))).toBe(400)
+    expect(ops('personal', 'update')).toHaveLength(0)
+
+    PERSONAL['003'] = { leg: '003', nom: 'TRES', cat_id: 1, dni: '' }
+    await personalService.update('003', { dni: '', tel: '3815551234' }, 'tok', 'u-1')
+    expect(ops('personal', 'update')).toHaveLength(1)
+    delete PERSONAL['003']
+  })
+
   it('404 si el legajo no existe', async () => {
     expect(await codigo(personalService.update('999', { tel: 'x' }, 'tok', 'u-1'))).toBe(404)
   })
