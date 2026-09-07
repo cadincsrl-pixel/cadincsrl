@@ -29,6 +29,11 @@ export function juevesISO(semKey: string): string {
   return d.toISOString().slice(0, 10)
 }
 
+/** true si la fecha ISO cae en viernes (inicio de semana de tarja). */
+export function esViernes(iso: string): boolean {
+  return new Date(iso + 'T12:00:00Z').getUTCDay() === 5
+}
+
 export type EstadoCierre = 'cerrado' | 'pendiente'
 
 export function semanaCerrada(estado: string | null | undefined, semKey: string, hoyISO: string = hoyArgentinaISO()): boolean {

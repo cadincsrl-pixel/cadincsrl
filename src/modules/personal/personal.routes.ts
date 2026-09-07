@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { personalService } from './personal.service.js'
+import type { ZodType } from 'zod'
 import { CreatePersonalSchema, UpdatePersonalSchema } from './personal.schema.js'
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached, TIPOS_LEGACY_RESTRINGIDOS } from '../../lib/obras-usuario.js'
@@ -29,6 +30,18 @@ async function piiLimitada(userId: string): Promise<boolean> {
 
   // v3: ver_pii es la fuente de verdad. Default false (sin la flag = no ve PII).
   return tarja.ver_pii !== true
+}
+
+// El default del zValidator devuelve el ZodError crudo (ilegible en la UI).
+// Se responde { error, campo } para que el formulario marque el input.
+function validarJson<T extends ZodType>(schema: T) {
+  return zValidator('json', schema, (result, c) => {
+    if (!result.success) {
+      const issue = result.error.issues[0]
+      const campo = issue?.path?.map(String).join('.') || undefined
+      return c.json({ error: issue?.message ?? 'Datos inválidos', campo }, 400)
+    }
+  })
 }
 
 const personal = new Hono()
@@ -147,7 +160,7 @@ personal.post(
   '/',
   requirePermiso('tarja', 'creacion'),
   requireFlag('tarja', 'ver_pii', true),
-  zValidator('json', CreatePersonalSchema),
+  validarJson(CreatePersonalSchema),
   async (c) => {
     const dto = c.req.valid('json')
     const token = c.get('accessToken')
@@ -161,7 +174,7 @@ personal.patch(
   '/:leg',
   requirePermiso('tarja', 'actualizacion'),
   requireFlag('tarja', 'ver_pii', true),
-  zValidator('json', UpdatePersonalSchema),
+  validarJson(UpdatePersonalSchema),
   async (c) => {
     const leg = c.req.param('leg')
     const dto = c.req.valid('json')
