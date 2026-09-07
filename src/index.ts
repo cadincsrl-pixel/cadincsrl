@@ -76,7 +76,13 @@ app.use('*', cors({
 
 // ── Rutas públicas ──
 app.get('/health', (c) => {
-  return c.json({ status: 'ok', timestamp: new Date().toISOString() })
+  // `commit` lo setea Render (RENDER_GIT_COMMIT): sirve para saber qué versión
+  // está viva antes de aplicar una migración que dependa del backend nuevo.
+  return c.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    commit: process.env.RENDER_GIT_COMMIT ?? null,
+  })
 })
 
 // ── Rutas protegidas ──
