@@ -1,15 +1,25 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso } from '../../../middleware/permission.js'
+import { requirePermisoOr } from '../../../middleware/permission.js'
 import { mapsService, MapsError } from './maps.service.js'
 import { GeocodeSchema, ResolverMapsUrlSchema, SugerirKmSchema, CompletarMatrizSchema } from './maps.schema.js'
 
 const maps = new Hono()
 
 maps.use('*', authMiddleware)
-maps.on(['GET'],  '*', requirePermiso('logistica', 'lectura'))
-maps.on(['POST'], '*', requirePermiso('logistica', 'actualizacion'))
+// Áridos también geolocaliza sus canteras con el mismo componente, y hay gente
+// con permiso de áridos SIN logística (Sebastián Cecanti). Estos endpoints solo
+// traducen una dirección o un link de Maps a coordenadas: no leen ni exponen
+// ningún dato del ERP, así que abrirlos a áridos no filtra nada.
+maps.on(['GET'],  '*', requirePermisoOr([
+  { modulo: 'logistica', accion: 'lectura' },
+  { modulo: 'aridos',    accion: 'lectura' },
+]))
+maps.on(['POST'], '*', requirePermisoOr([
+  { modulo: 'logistica', accion: 'actualizacion' },
+  { modulo: 'aridos',    accion: 'actualizacion' },
+]))
 
 function handle(err: unknown, c: any) {
   if (err instanceof MapsError) {

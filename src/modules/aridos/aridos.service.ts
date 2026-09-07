@@ -420,13 +420,16 @@ export const aridosService = {
     return data
   },
 
-  // Si viene dirección, se geocodifica best-effort para tener lat/lng
-  // (sirve para rutas/tiempos futuros). Si Google falla, se guarda igual.
+  // Coordenadas: si el front las manda (las sacó del pin de un link de Maps)
+  // MANDAN. El geocoding por dirección queda como fallback para cuando no vienen
+  // — es best-effort y suele caer en el centro del pueblo, no en la planta.
+  // `lat === null` explícito es "borrar las coordenadas", no "geocodificá".
   async createCantera(dto: CreateCanteraDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    let lat: number | null = null
-    let lng: number | null = null
-    if (dto.direccion) {
+    let lat: number | null = dto.lat ?? null
+    let lng: number | null = dto.lng ?? null
+    const vinieronCoords = dto.lat != null && dto.lng != null
+    if (!vinieronCoords && dto.direccion) {
       try {
         const g = await geocode(`${dto.direccion}${dto.localidad ? `, ${dto.localidad}` : ''}`)
         lat = g.lat; lng = g.lng
@@ -441,10 +444,15 @@ export const aridosService = {
     return data
   },
 
+  // Misma regla que el alta: si el PATCH trae lat/lng, se respetan tal cual
+  // (incluido null para borrarlas) y NO se geocodifica. Sin esto, editar la
+  // dirección de una cantera geolocalizada a mano le pisaba el pin bueno con
+  // el centro del pueblo.
   async updateCantera(id: number, dto: UpdateCanteraDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     let extra: Record<string, unknown> = {}
-    if (dto.direccion) {
+    const mandaCoords = dto.lat !== undefined || dto.lng !== undefined
+    if (!mandaCoords && dto.direccion) {
       try {
         const g = await geocode(`${dto.direccion}${dto.localidad ? `, ${dto.localidad}` : ''}`)
         extra = { lat: g.lat, lng: g.lng }

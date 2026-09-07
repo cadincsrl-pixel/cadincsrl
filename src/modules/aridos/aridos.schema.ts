@@ -167,10 +167,17 @@ export const ListMovimientosQuerySchema = z.object({
 })
 
 // ── Canteras propias del negocio de áridos ────────────────────
+// `maps_url` + `lat`/`lng` son el mismo mecanismo que en logística: el front
+// pega el link de Maps, el backend le saca el pin, y las coordenadas llegan
+// acá ya resueltas. Si vienen lat/lng explícitas MANDAN sobre el geocoding por
+// dirección, que es un fallback y suele caer en el centro del pueblo.
 export const CreateCanteraSchema = z.object({
   nombre:    z.string().min(1, 'El nombre es requerido'),
   direccion: z.string().nullable().optional(),
   localidad: z.string().nullable().optional(),
+  maps_url:  z.string().nullable().optional(),
+  lat:       z.number().min(-90).max(90).nullable().optional(),
+  lng:       z.number().min(-180).max(180).nullable().optional(),
   obs:       z.string().nullable().optional(),
 })
 
@@ -178,6 +185,9 @@ export const UpdateCanteraSchema = z.object({
   nombre:    z.string().min(1).optional(),
   direccion: z.string().nullable().optional(),
   localidad: z.string().nullable().optional(),
+  maps_url:  z.string().nullable().optional(),
+  lat:       z.number().min(-90).max(90).nullable().optional(),
+  lng:       z.number().min(-180).max(180).nullable().optional(),
   obs:       z.string().nullable().optional(),
   activo:    z.boolean().optional(),
 })
