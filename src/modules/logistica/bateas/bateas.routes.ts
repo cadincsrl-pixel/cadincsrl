@@ -4,13 +4,13 @@ import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { bateasService } from './bateas.service.js'
 import { CreateBateaSchema, UpdateBateaSchema } from './bateas.schema.js'
-import { buildVehiculoDocsRoutes } from './vehiculo-docs.routes.js'
+import { buildEntidadDocsRoutes } from '../../documentos/entidad-docs.routes.js'
 
 const bateas = new Hono()
 bateas.use('*', authMiddleware)
 
 // Sub-router de documentos: /api/logistica/bateas/:id/documentos/...
-bateas.route('/', buildVehiculoDocsRoutes('batea'))
+bateas.route('/', buildEntidadDocsRoutes('batea'))
 
 bateas.get('/', requirePermiso('logistica', 'lectura'), async (c) => {
   return c.json(await bateasService.getAll(c.get('accessToken')))

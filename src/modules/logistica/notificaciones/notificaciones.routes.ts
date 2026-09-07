@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { authMiddleware } from '../../../middleware/auth.js'
-import { requirePermiso } from '../../../middleware/permission.js'
-import { createSupabaseClient } from '../../../lib/supabase.js'
+import { requirePermiso, requirePermisoOr } from '../../../middleware/permission.js'
+import { createSupabaseClient, supabase } from '../../../lib/supabase.js'
 
 const notif = new Hono()
 
@@ -23,23 +23,56 @@ function ventanaFechas() {
 }
 
 // GET /api/logistica/notificaciones/documentos
-// Documentos de vehículos (camiones + bateas) con vence_el cargado
-// y dentro de la ventana relevante. La clasificación
-// (vencido / por vencer / vigente) se hace en frontend.
-notif.get('/documentos', async (c) => {
-  const sb = createSupabaseClient(c.get('accessToken'))
-  const { desde, hasta } = ventanaFechas()
+// Documentos con `vence_el` dentro de la ventana relevante, de las CINCO
+// entidades que los tienen. La clasificación (vencido / por vencer / vigente)
+// se hace en el frontend.
+//
+// Vive bajo /api/logistica por historia, pero ya no es solo de logística:
+// camión y batea son de logística, flota es del módulo flota, máquina de
+// alquiler y unidad de áridos. Por eso:
+//  - la guarda acepta lectura en CUALQUIERA de esos módulos (antes exigía
+//    logística, así que un usuario de flota o de alquiler no veía nunca sus
+//    propios vencimientos en la campana);
+//  - y las filas se filtran por los módulos que la persona realmente puede
+//    leer, para no mostrarle las patentes de un módulo que no tiene.
+const MODULO_DE_ENTIDAD: Record<string, string> = {
+  camion: 'logistica', batea: 'logistica', flota: 'flota',
+  maquina: 'alquiler', unidad: 'aridos',
+}
 
-  const { data, error } = await sb
-    .from('v_vehiculo_documentos_vencimientos')
-    .select('*')
-    .gte('vence_el', desde)
-    .lte('vence_el', hasta)
-    .order('vence_el', { ascending: true })
+notif.get(
+  '/documentos',
+  requirePermisoOr([
+    { modulo: 'logistica', accion: 'lectura' },
+    { modulo: 'flota',     accion: 'lectura' },
+    { modulo: 'alquiler',  accion: 'lectura' },
+    { modulo: 'aridos',    accion: 'lectura' },
+  ]),
+  async (c) => {
+    const sb = createSupabaseClient(c.get('accessToken'))
+    const { desde, hasta } = ventanaFechas()
 
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json(data ?? [])
-})
+    const { data, error } = await sb
+      .from('v_vehiculo_documentos_vencimientos')
+      .select('*')
+      .gte('vence_el', desde)
+      .lte('vence_el', hasta)
+      .order('vence_el', { ascending: true })
+
+    if (error) return c.json({ error: error.message }, 500)
+
+    const { data: perfil } = await supabase
+      .from('profiles').select('rol, permisos').eq('id', c.get('user').id).maybeSingle()
+    if (perfil?.rol === 'admin') return c.json(data ?? [])
+
+    const permisos = (perfil?.permisos ?? {}) as Record<string, Record<string, boolean>>
+    const visibles = (data ?? []).filter(row => {
+      const modulo = MODULO_DE_ENTIDAD[String(row.entidad)]
+      return !!modulo && permisos[modulo]?.lectura === true
+    })
+    return c.json(visibles)
+  },
+)
 
 // GET /api/logistica/notificaciones/documentos-choferes
 // Documentos de choferes (DNI, licencia, libreta sanitaria, etc.)

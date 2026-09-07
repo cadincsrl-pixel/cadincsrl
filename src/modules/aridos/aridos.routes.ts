@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { aridosService } from './aridos.service.js'
+import { buildEntidadDocsRoutes } from '../documentos/entidad-docs.routes.js'
 import {
   CreateMaterialSchema, UpdateMaterialSchema,
   CreateClienteSchema, UpdateClienteSchema,
@@ -26,6 +27,11 @@ aridos.on(['GET'],          '*', requirePermiso('aridos', 'lectura'))
 aridos.on(['POST'],         '*', requirePermiso('aridos', 'creacion'))
 aridos.on(['PATCH', 'PUT'], '*', requirePermiso('aridos', 'actualizacion'))
 aridos.on(['DELETE'],       '*', requirePermiso('aridos', 'eliminacion'))
+
+// ── Documentación de la unidad (VTV, RTO, seguro, título…) ────
+// Mismo sub-router que camiones, bateas y máquinas de alquiler: hash con dedup,
+// bucket privado (aridos-docs) y borrado suave.
+aridos.route('/unidades', buildEntidadDocsRoutes('unidad'))
 
 // ── Materiales ────────────────────────────────────────────────
 aridos.get('/materiales', async (c) => {

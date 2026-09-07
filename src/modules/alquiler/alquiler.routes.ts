@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { alquilerService } from './alquiler.service.js'
+import { buildEntidadDocsRoutes } from '../documentos/entidad-docs.routes.js'
 import {
   CreateMaquinaSchema,
   UpdateMaquinaSchema,
@@ -35,6 +36,12 @@ alquiler.on(['GET'],          '*', requirePermiso('alquiler', 'lectura'))
 alquiler.on(['POST'],         '*', requirePermiso('alquiler', 'creacion'))
 alquiler.on(['PATCH', 'PUT'], '*', requirePermiso('alquiler', 'actualizacion'))
 alquiler.on(['DELETE'],       '*', requirePermiso('alquiler', 'eliminacion'))
+
+// ── Documentación de la máquina (VTV, RTO, seguro, título…) ───
+// Mismo sub-router que camiones, bateas y unidades de áridos: hash con dedup,
+// bucket privado (alquiler-docs) y borrado suave. Va ANTES de las rutas de
+// máquinas porque `/maquinas/:id/documentos` tiene que ganarle a `/maquinas/:id`.
+alquiler.route('/maquinas', buildEntidadDocsRoutes('maquina'))
 
 // ── Máquinas ──────────────────────────────────────────────────
 alquiler.get('/maquinas', async (c) => {

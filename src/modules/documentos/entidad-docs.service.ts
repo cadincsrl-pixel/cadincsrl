@@ -1,28 +1,47 @@
 /**
- * Service compartido para documentos de vehículos (camión y batea).
+ * Service compartido de documentos por entidad (VTV, RTO, seguro, título…).
  *
- * Las tablas `camion_documentos` y `batea_documentos` tienen estructura
- * idéntica salvo el nombre de la FK (camion_id vs batea_id). Este service
- * recibe el `entidad` y resuelve la tabla correspondiente.
+ * Cubre CUATRO entidades, cada una con su tabla propia pero de estructura
+ * idéntica salvo el nombre de la FK:
+ *   camion  → camion_documentos            (logística)
+ *   batea   → batea_documentos             (logística)
+ *   maquina → alquiler_maquina_documentos  (alquiler de maquinaria)
+ *   unidad  → aridos_unidad_documentos     (áridos)
  *
- * Mismo patrón que chofer_documentos / personal_documentos: hash SHA-256
- * dedup, bucket privado con signed URLs, soft delete.
+ * Las tablas quedan separadas para conservar la FK con ON DELETE CASCADE y los
+ * índices parciales; la lógica (hash SHA-256 con dedup, bucket privado con
+ * signed URLs, soft delete) se escribe UNA vez y `entidadInfo()` traduce.
  *
- * El bucket `vehiculo-docs` es compartido. Paths:
- *   vehiculo/camion/{id}/uuid.ext
- *   vehiculo/batea/{id}/uuid.ext
+ * Cada módulo tiene su bucket, con el prefijo de path que ya venía usando:
+ *   vehiculo-docs → vehiculo/camion/{id}/uuid.ext · vehiculo/batea/{id}/uuid.ext
+ *   alquiler-docs → maquina/{id}/uuid.ext
+ *   aridos-docs   → unidad/{id}/uuid.ext
+ * El prefijo de alquiler se respetó tal cual para poder migrar la póliza que ya
+ * estaba cargada SIN mover el archivo (migración `20260907w`).
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { createSupabaseClient, supabase } from '../../../lib/supabase.js'
+import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 
-const BUCKET = 'vehiculo-docs'
 const ALLOWED_MIME = new Set([
   'image/jpeg','image/png','image/webp','image/heic','image/heif','application/pdf',
 ])
 const MAX_SIZE_BYTES = 10 * 1024 * 1024
 
-export type Entidad = 'camion' | 'batea'
-export type VehiculoDocTipo = 'titulo' | 'tarjeta_verde' | 'rto' | 'poliza_seguro' | 'homologacion' | 'registro_modificacion'
+export type Entidad = 'camion' | 'batea' | 'maquina' | 'unidad'
+
+// Unión de los tipos de TODAS las entidades. El CHECK de cada tabla es el que
+// manda: camión/batea aceptan 6 y máquina/unidad los 8 de flota. El enum zod de
+// las rutas se arma por entidad con `TIPOS_POR_ENTIDAD`, así el 400 sale con un
+// mensaje útil en vez de reventar contra el CHECK.
+export type VehiculoDocTipo =
+  | 'titulo' | 'tarjeta_verde' | 'rto' | 'poliza_seguro'
+  | 'homologacion' | 'registro_modificacion'
+  | 'vtv' | 'patente' | 'oblea' | 'otro'
+
+const TIPOS_VEHICULO = ['titulo','tarjeta_verde','rto','poliza_seguro','homologacion','registro_modificacion'] as const
+// El user pidió la misma lista para máquinas y unidades: "lleva todo lo mismo,
+// si no lo tiene lo dejo en blanco". Es la de flota.
+const TIPOS_FLOTA    = ['titulo','tarjeta_verde','vtv','rto','poliza_seguro','patente','oblea','otro'] as const
 
 export class VehiculoDocError extends Error {
   constructor(public status: number, public code: string, public detail?: unknown) {
@@ -31,11 +50,42 @@ export class VehiculoDocError extends Error {
   }
 }
 
-interface TablaInfo { tabla: string; fkCol: string }
-function tablaInfo(entidad: Entidad): TablaInfo {
-  return entidad === 'camion'
-    ? { tabla: 'camion_documentos', fkCol: 'camion_id' }
-    : { tabla: 'batea_documentos',  fkCol: 'batea_id'  }
+interface EntidadInfo {
+  tabla:   string
+  fkCol:   string
+  bucket:  string
+  /** Prefijo del path en Storage. Se valida al registrar (anti path traversal). */
+  prefijo: (id: number) => string
+  /** Módulo de permisos que gobierna estos documentos. */
+  modulo:  string
+  tipos:   readonly string[]
+}
+
+const ENTIDADES: Record<Entidad, EntidadInfo> = {
+  camion: {
+    tabla: 'camion_documentos', fkCol: 'camion_id', bucket: 'vehiculo-docs',
+    prefijo: id => `vehiculo/camion/${id}/`, modulo: 'logistica', tipos: TIPOS_VEHICULO,
+  },
+  batea: {
+    tabla: 'batea_documentos', fkCol: 'batea_id', bucket: 'vehiculo-docs',
+    prefijo: id => `vehiculo/batea/${id}/`, modulo: 'logistica', tipos: TIPOS_VEHICULO,
+  },
+  maquina: {
+    tabla: 'alquiler_maquina_documentos', fkCol: 'maquina_id', bucket: 'alquiler-docs',
+    prefijo: id => `maquina/${id}/`, modulo: 'alquiler', tipos: TIPOS_FLOTA,
+  },
+  unidad: {
+    tabla: 'aridos_unidad_documentos', fkCol: 'unidad_id', bucket: 'aridos-docs',
+    prefijo: id => `unidad/${id}/`, modulo: 'aridos', tipos: TIPOS_FLOTA,
+  },
+}
+
+export function entidadInfo(entidad: Entidad): EntidadInfo {
+  return ENTIDADES[entidad]
+}
+
+function tablaInfo(entidad: Entidad): EntidadInfo {
+  return ENTIDADES[entidad]
 }
 
 export interface UploadUrlDto {
@@ -72,7 +122,7 @@ const COLUMNAS_RETORNO =
   'id, tipo, nombre_archivo, mime_type, size_bytes, vence_el, obs, ' +
   'created_at, created_by, updated_at, updated_by'
 
-export const vehiculoDocsService = {
+export const entidadDocsService = {
 
   async listByEntidad(entidad: Entidad, entidadId: number, token: string) {
     const { tabla, fkCol } = tablaInfo(entidad)
@@ -89,6 +139,7 @@ export const vehiculoDocsService = {
   },
 
   async generarUploadUrl(entidad: Entidad, entidadId: number, dto: UploadUrlDto) {
+    const { bucket, prefijo } = tablaInfo(entidad)
     if (!ALLOWED_MIME.has(dto.mime_type)) {
       throw new VehiculoDocError(400, 'MIME_NO_PERMITIDO', { mime: dto.mime_type })
     }
@@ -96,8 +147,8 @@ export const vehiculoDocsService = {
       throw new VehiculoDocError(400, 'TAMAÑO_INVALIDO', { size: dto.size_bytes, max: MAX_SIZE_BYTES })
     }
     const ext = extFromMime(dto.mime_type)
-    const path = `vehiculo/${entidad}/${entidadId}/${randomUUID()}.${ext}`
-    const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path)
+    const path = `${prefijo(entidadId)}${randomUUID()}.${ext}`
+    const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(path)
     if (error) throw new VehiculoDocError(500, 'UPLOAD_URL_ERROR', error.message)
     return { path, token: data.token, signed_url: data.signedUrl, tipo: dto.tipo }
   },
@@ -109,13 +160,13 @@ export const vehiculoDocsService = {
     userId: string,
     token: string,
   ) {
-    const { tabla, fkCol } = tablaInfo(entidad)
+    const { tabla, fkCol, bucket, prefijo } = tablaInfo(entidad)
 
-    const dl = await supabase.storage.from(BUCKET).download(dto.storage_path)
+    const dl = await supabase.storage.from(bucket).download(dto.storage_path)
     if (dl.error || !dl.data) {
       throw new VehiculoDocError(400, 'ARCHIVO_NO_SUBIDO', dl.error?.message)
     }
-    if (!dto.storage_path.startsWith(`vehiculo/${entidad}/${entidadId}/`)) {
+    if (!dto.storage_path.startsWith(prefijo(entidadId))) {
       throw new VehiculoDocError(400, 'PATH_INVALIDO')
     }
 
@@ -146,9 +197,9 @@ export const vehiculoDocsService = {
     if (error) {
       const is23505 = error.code === '23505' || /unique/i.test(error.message)
       if (is23505) {
-        await supabase.storage.from(BUCKET).remove([dto.storage_path]).catch(() => undefined)
+        await supabase.storage.from(bucket).remove([dto.storage_path]).catch(() => undefined)
         throw new VehiculoDocError(409, 'DOC_DUPLICADO', {
-          message: 'Ya hay un documento idéntico cargado en este vehículo.',
+          message: 'Ya hay un documento idéntico cargado acá.',
         })
       }
       throw new VehiculoDocError(500, 'DB_ERROR', error.message)
@@ -184,7 +235,7 @@ export const vehiculoDocsService = {
   },
 
   async signedUrl(entidad: Entidad, entidadId: number, id: number, token: string) {
-    const { tabla, fkCol } = tablaInfo(entidad)
+    const { tabla, fkCol, bucket } = tablaInfo(entidad)
     const sb = createSupabaseClient(token)
     const { data: doc, error } = await sb
       .from(tabla)
@@ -197,7 +248,7 @@ export const vehiculoDocsService = {
     if (!doc) throw new VehiculoDocError(404, 'DOC_NO_EXISTE')
 
     const { data, error: sErr } = await supabase.storage
-      .from(BUCKET)
+      .from(bucket)
       .createSignedUrl(doc.storage_path, 900, { download: doc.nombre_archivo })
     if (sErr) throw new VehiculoDocError(500, 'SIGNED_URL_ERROR', sErr.message)
     return { url: data.signedUrl, nombre_archivo: doc.nombre_archivo }
