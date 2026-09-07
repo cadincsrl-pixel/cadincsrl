@@ -49,9 +49,16 @@ obras.get('/', requirePermisoOr([
 })
 
 // GET /api/obras/archivadas?modulo=tarja
+//
+// Misma lista de módulos que `GET /`: herramientas también necesita las
+// archivadas para MOSTRAR nombres. El pañol, los movimientos y la
+// trazabilidad son historia y siguen nombrando obras cerradas; sin esto la
+// pantalla cae al código crudo. Caso real: CC-019 (Hipódromo) se archivó el
+// 2026-09-05 con 45 herramientas sin devolver y en Retornos se leía "CC-019".
 obras.get('/archivadas', requirePermisoOr([
   { modulo: 'tarja', accion: 'lectura' },
   { modulo: 'certificaciones', accion: 'lectura' },
+  { modulo: 'herramientas', accion: 'lectura' },
 ]), async (c) => {
   const token  = c.get('accessToken')
   const userId = c.get('user').id
