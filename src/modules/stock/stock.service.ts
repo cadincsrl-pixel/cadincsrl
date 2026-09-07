@@ -592,7 +592,17 @@ export const stockService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('stock_movimientos')
-      .select('*, stock_materiales(id, nombre, unidad, stock_actual), declarante:profiles!stock_movimientos_created_by_fkey(id, nombre)')
+      // SIN embed del declarante. `stock_movimientos.created_by` apunta a
+      // `auth.users(id)`, NO a `profiles(id)`, así que pedir
+      // `profiles!stock_movimientos_created_by_fkey` hacía fallar la query
+      // entera con "Could not find a relationship between
+      // 'stock_movimientos' and 'profiles'". El endpoint tiraba 500, el
+      // front se quedaba con la lista vacía y el panel de "Ajustes
+      // pendientes" se auto-ocultaba: nunca se vio un ajuste pendiente, y el
+      // botón "↔ Diferencia" declaraba ajustes que quedaban invisibles para
+      // siempre. El nombre lo resuelve el front con `usePerfilesMap`, que es
+      // lo que ya hacen las otras pantallas.
+      .select('*, stock_materiales(id, nombre, unidad, stock_actual)')
       .eq('tipo',   'ajuste')
       .eq('estado', 'pendiente')
       .order('created_at', { ascending: false })
