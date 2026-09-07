@@ -1,6 +1,8 @@
 import { HTTPException } from 'hono/http-exception'
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached, invalidarCacheObrasUsuario } from '../../lib/obras-usuario.js'
+import { hoyArgentinaISO, juevesISO } from '../../lib/semanas.js'
+import { viernesISO } from '../horas/costo-obra.js'
 import type { CreateObraDto, UpdateObraDto } from './obras.schema.js'
 
 // Valida que un user (si está seteado) exista, esté activo y tenga el
@@ -226,6 +228,32 @@ export const obrasService = {
     }
 
     return data
+  },
+
+  // Motivo para NO archivar todavía (null = se puede): horas reales en la
+  // semana en curso o semanas reabiertas sin volver a cerrar. La ruta
+  // responde 409 con esto salvo ?forzar=1.
+  async motivoNoArchivar(cod: string): Promise<string | null> {
+    const vie = viernesISO(hoyArgentinaISO())
+    const jue = juevesISO(vie)
+    const { data: horasSem, error: e1 } = await supabaseAdmin
+      .from('horas').select('leg, horas').eq('obra_cod', cod).gte('fecha', vie).lte('fecha', jue).gt('horas', 0)
+    if (e1) throw new Error(e1.message)
+    const { data: reabiertas, error: e2 } = await supabaseAdmin
+      .from('cierres').select('sem_key').eq('obra_cod', cod).eq('estado', 'pendiente').lt('sem_key', vie)
+    if (e2) throw new Error(e2.message)
+
+    const partes: string[] = []
+    if (horasSem && horasSem.length > 0) {
+      const hs = horasSem.reduce((acc, h) => acc + Number(h.horas), 0)
+      const legs = new Set(horasSem.map(h => h.leg)).size
+      partes.push(`${hs} horas de ${legs} trabajador${legs === 1 ? '' : 'es'} en la semana en curso (${vie})`)
+    }
+    if (reabiertas && reabiertas.length > 0) {
+      const semanas = reabiertas.map(r => String(r.sem_key).slice(0, 10)).sort()
+      partes.push(`${semanas.length} semana${semanas.length === 1 ? '' : 's'} reabierta${semanas.length === 1 ? '' : 's'} sin volver a cerrar (${semanas.join(', ')})`)
+    }
+    return partes.length ? partes.join(' y ') : null
   },
 
   async archivar(cod: string, token: string, userId: string) {

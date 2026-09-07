@@ -13,7 +13,8 @@
 // - Categoría efectiva: cat_obra (más reciente <= ref, si no la más antigua)
 //   > personal_cat_historial (más reciente <= ref) > personal.cat_id.
 // - VH: tarifa de obra para esa cat (más reciente <= ref, si no la más
-//   antigua — retroactivo); sin tarifa de obra → precio global versionado
+//   antigua — retroactivo; una fila con vh null = volver al global); sin
+//   tarifa de obra → precio global versionado
 //   (categoria_tarifas, mismo criterio); sin historial → cache categorias.vh.
 // - Horas de la semana redondeadas a centésimas; costo por operario-semana
 //   = round((hs + extras) * vh / 1000) * 1000  (redondeo al MIL por leg).
@@ -31,7 +32,7 @@ export interface CategoriaRow {
   vh: number | null
   categoria_tarifas?: { vh: number; desde: string }[] | null
 }
-export interface TarifaRow    { cat_id: number; vh: number; desde: string }
+export interface TarifaRow    { cat_id: number; vh: number | null; desde: string }  // vh null = volver al global
 export interface CatObraRow   { leg: string; cat_id: number; desde: string }
 
 export interface CostoSemana  { sem_key: string; hs: number; hs_extras: number; costo: number; operarios: number }
@@ -104,12 +105,14 @@ function vhConCatObra(
     .filter(t => t.cat_id === catId)
     .sort((a, b) => a.desde.localeCompare(b.desde))
   if (deObra.length > 0) {
-    let vh: number | null = null
+    let vigente: TarifaRow | null = null
     for (const t of deObra) {
-      if (t.desde <= fechaRef) vh = Number(t.vh)
+      if (t.desde <= fechaRef) vigente = t
       else break
     }
-    return vh ?? Number(deObra[0]!.vh)
+    const t = vigente ?? deObra[0]!
+    // vh null = "volver al global" desde ese viernes: cae al precio global.
+    if (t.vh != null) return Number(t.vh)
   }
   return vhGlobalEnFecha(categorias.find(c => c.id === catId), fechaRef)
 }

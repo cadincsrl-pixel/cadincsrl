@@ -84,6 +84,23 @@ describe('calcularCostoObra — cálculo canónico', () => {
     expect(r.total).toBe(55_000)
   })
 
+  it('una tarifa de obra con vh null = "volver al global" desde ese viernes', () => {
+    // Semana 17/07: tarifa de obra 6.000. Semana 24/07: fila null → global 4.900.
+    const tarifas = [
+      { cat_id: 1, vh: 6000, desde: '2026-07-17' },
+      { cat_id: 1, vh: null, desde: '2026-07-24' },
+    ]
+    const r = calcularCostoObra({
+      horas: [
+        { leg: '001', fecha: '2026-07-20', horas: 10 }, // semana 17/07 → 6.000
+        { leg: '001', fecha: '2026-07-27', horas: 10 }, // semana 24/07 → global 4.900
+      ],
+      hsExtras: [], personal: PERSONAL, categorias: CATEGORIAS,
+      tarifas, catObra: [], hoyISO: HOY,
+    })
+    expect(r.semanas.map(s => s.costo)).toEqual([60_000, 49_000])
+  })
+
   it('semana ACTUAL usa hoy como fecha de referencia (no el viernes)', () => {
     // Tarifa de obra que arranca HOY (06/08): la semana actual (vie 31/07)
     // la toma porque fechaRef = hoy.

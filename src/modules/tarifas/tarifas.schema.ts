@@ -12,7 +12,10 @@ export const TarifaSchema = z.object({
 export const CreateTarifaSchema = z.object({
   obra_cod: z.string().min(1),
   cat_id: z.number(),
-  vh: z.number().min(0),
+  // null = "volver al global": desde ese viernes la obra usa el precio global
+  // de la categoría. Antes "volver al global" copiaba el global vigente como
+  // tarifa de obra y quedaba pinneado cuando el global subía.
+  vh: z.number().min(0).nullable(),
   // Vigencia: viernes de la semana desde la que rige (§5.3).
   desde: z.iso.date('desde debe ser YYYY-MM-DD').refine(esViernes, 'desde tiene que ser un viernes').optional(),
   // true = el usuario ya confirmó que el cambio recalcula semanas cerradas.

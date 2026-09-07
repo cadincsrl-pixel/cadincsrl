@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
@@ -6,6 +7,17 @@ import { obrasService } from './obras.service.js'
 import { CreateObraSchema, UpdateObraSchema } from './obras.schema.js'
 import { validarObraDelUsuario } from '../../lib/obras-usuario.js'
 import { supabase as supabaseAdmin } from '../../lib/supabase.js'
+
+// ?modulo= aplica el override de alcance de ESE módulo. Solo se acepta si el
+// usuario tiene lectura ahí (si no, un usuario con tarja='asignadas' podría
+// pedir ?modulo=certificaciones y ver todas las obras); admin siempre.
+async function moduloPermitido(userId: string, modulo: string | undefined): Promise<string | undefined> {
+  if (!modulo) return undefined
+  const { data } = await supabaseAdmin.from('profiles').select('rol, permisos').eq('id', userId).maybeSingle()
+  if (data?.rol === 'admin') return modulo
+  const permisos = (data?.permisos ?? {}) as Record<string, { lectura?: boolean } | undefined>
+  return permisos[modulo]?.lectura ? modulo : undefined
+}
 
 const obras = new Hono()
 
@@ -31,7 +43,7 @@ obras.get('/', requirePermisoOr([
 ]), async (c) => {
   const token  = c.get('accessToken')
   const userId = c.get('user').id
-  const modulo = c.req.query('modulo') || undefined
+  const modulo = await moduloPermitido(userId, c.req.query('modulo') || undefined)
   const data = await obrasService.getAll(token, userId, modulo)
   return c.json(data)
 })
@@ -43,7 +55,7 @@ obras.get('/archivadas', requirePermisoOr([
 ]), async (c) => {
   const token  = c.get('accessToken')
   const userId = c.get('user').id
-  const modulo = c.req.query('modulo') || undefined
+  const modulo = await moduloPermitido(userId, c.req.query('modulo') || undefined)
   const data = await obrasService.getArchivadas(token, userId, modulo)
   return c.json(data)
 })
@@ -93,7 +105,7 @@ obras.get('/:cod', requirePermisoOr([
   const cod    = c.req.param('cod')
   const token  = c.get('accessToken')
   const userId = c.get('user').id
-  const modulo = c.req.query('modulo') || undefined
+  const modulo = await moduloPermitido(userId, c.req.query('modulo') || undefined)
   try {
     const data = await obrasService.getByCod(cod, token, userId, modulo)
     return c.json(data)
@@ -153,7 +165,7 @@ obras.patch(
 
     // Validar acceso a la obra antes de editar.
     try {
-      await obrasService.getByCod(cod, token, userId)
+      await obrasService.getByCod(cod, token, userId, 'tarja')
     } catch (err: any) {
       if (err?.code === 'OBRA_SIN_ACCESO') return c.json({ error: err.code }, 403)
       throw err
@@ -181,10 +193,17 @@ obras.patch(
     const userId = c.get('user').id
 
     try {
-      await obrasService.getByCod(cod, token, userId)
+      await obrasService.getByCod(cod, token, userId, 'tarja')
     } catch (err: any) {
       if (err?.code === 'OBRA_SIN_ACCESO') return c.json({ error: err.code }, 403)
       throw err
+    }
+
+    // Aviso antes de archivar (horas en la semana en curso, semanas
+    // reabiertas): 409 con el detalle; el modal ofrece archivar igual.
+    if (c.req.query('forzar') !== '1') {
+      const motivo = await obrasService.motivoNoArchivar(cod)
+      if (motivo) throw new HTTPException(409, { message: `OBRA_CON_SEMANA_ABIERTA: la obra tiene ${motivo}.` })
     }
 
     const data = await obrasService.archivar(cod, token, userId)
@@ -204,7 +223,7 @@ obras.patch(
     // Para desarchivar no podemos usar getByCod (filtra archivada=false),
     // así que validamos directamente con el helper de obras-usuario.
     try {
-      await validarObraDelUsuario(userId, cod)
+      await validarObraDelUsuario(userId, cod, 'tarja')
     } catch (err: any) {
       // HTTPException con message 'OBRA_SIN_ACCESO'
       if (err?.message === 'OBRA_SIN_ACCESO') return c.json({ error: err.message }, 403)
@@ -226,7 +245,7 @@ obras.delete(
     const userId = c.get('user').id
 
     try {
-      await validarObraDelUsuario(userId, cod)
+      await validarObraDelUsuario(userId, cod, 'tarja')
     } catch (err: any) {
       if (err?.message === 'OBRA_SIN_ACCESO') return c.json({ error: err.message }, 403)
       throw err
