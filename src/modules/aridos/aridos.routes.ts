@@ -5,6 +5,8 @@ import { requirePermiso } from '../../middleware/permission.js'
 import { aridosService } from './aridos.service.js'
 import { buildEntidadDocsRoutes } from '../documentos/entidad-docs.routes.js'
 import { buildServiciosRoutes } from '../servicios/servicios.routes.js'
+import { choferesAridosService, ChoferAridosError } from './aridos-choferes.service.js'
+import { z as zc } from 'zod'
 import {
   CreateMaterialSchema, UpdateMaterialSchema,
   CreateClienteSchema, UpdateClienteSchema,
@@ -35,6 +37,74 @@ aridos.on(['DELETE'],       '*', requirePermiso('aridos', 'eliminacion'))
 aridos.route('/unidades', buildEntidadDocsRoutes('unidad'))
 // Services (mantenimientos): mismo molde, montado bajo la misma raíz.
 aridos.route('/unidades', buildServiciosRoutes('unidad'))
+
+// ── Choferes del área (padrón propio, jornal por día) ─────────
+// Áridos se maneja aparte: estos NO son los choferes de logística ni el
+// personal de tarja. Cobran por día trabajado (migración 20260908f).
+const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/
+const CrearChoferSchema = zc.object({
+  nombre:       zc.string().trim().min(1),
+  dni:          zc.string().trim().nullable().optional(),
+  tel:          zc.string().trim().nullable().optional(),
+  obs:          zc.string().trim().nullable().optional(),
+  jornal:       zc.number().min(0).nullable().optional(),
+  jornal_desde: zc.string().regex(FECHA_RE).nullable().optional(),
+})
+const EditarChoferSchema = CrearChoferSchema.partial().extend({ activo: zc.boolean().optional() })
+const JornalSchema = zc.object({
+  jornal:        zc.number().min(0),
+  vigente_desde: zc.string().regex(FECHA_RE),
+  obs:           zc.string().trim().nullable().optional(),
+})
+const DiaSchema = zc.object({
+  chofer_id: zc.number().int().positive(),
+  fecha:     zc.string().regex(FECHA_RE),
+  unidad_id: zc.number().int().positive().nullable().optional(),
+  obs:       zc.string().trim().nullable().optional(),
+})
+
+function chofer<T>(fn: (c: any) => Promise<T>) {
+  return async (c: any) => {
+    try { return c.json(await fn(c)) } catch (err) {
+      if (err instanceof ChoferAridosError) {
+        const body: Record<string, unknown> = { error: err.code }
+        if (err.detail !== undefined) body.detail = err.detail
+        return c.json(body, err.status as any)
+      }
+      return c.json({ error: (err as Error).message ?? 'UNKNOWN' }, 500)
+    }
+  }
+}
+
+aridos.get('/choferes', chofer(c => choferesAridosService.listar(c.get('accessToken'))))
+
+aridos.post('/choferes', zValidator('json', CrearChoferSchema),
+  chofer(c => choferesAridosService.crear(c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
+
+aridos.patch('/choferes/:id', zValidator('json', EditarChoferSchema),
+  chofer(c => choferesAridosService.editar(Number(c.req.param('id')), c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
+
+aridos.get('/choferes/:id/jornales',
+  chofer(c => choferesAridosService.jornales(Number(c.req.param('id')), c.get('accessToken'))))
+
+// Cambiar el jornal INSERTA una versión nueva; no pisa la historia.
+aridos.post('/choferes/:id/jornales', zValidator('json', JornalSchema),
+  chofer(c => choferesAridosService.setJornal(Number(c.req.param('id')), c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
+
+// Días trabajados
+aridos.get('/chofer-dias', chofer(c => choferesAridosService.dias(
+  c.get('accessToken'), c.req.query('desde'), c.req.query('hasta'),
+  c.req.query('chofer_id') ? Number(c.req.query('chofer_id')) : undefined)))
+
+aridos.post('/chofer-dias', zValidator('json', DiaSchema),
+  chofer(c => choferesAridosService.marcarDia(c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
+
+aridos.delete('/chofer-dias/:id',
+  chofer(c => choferesAridosService.borrarDia(Number(c.req.param('id')), c.get('user').id, c.get('accessToken'))))
+
+// Lo que hay que pagar en un mes (YYYY-MM)
+aridos.get('/chofer-pago/:mes',
+  chofer(c => choferesAridosService.pagoMes(c.req.param('mes'), c.get('accessToken'))))
 
 // ── Materiales ────────────────────────────────────────────────
 aridos.get('/materiales', async (c) => {
