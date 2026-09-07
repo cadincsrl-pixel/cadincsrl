@@ -8,6 +8,7 @@ import {
   BajaAsignacionSchema,
 } from './asignaciones.schema.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
 const asignaciones = new Hono()
@@ -20,14 +21,15 @@ asignaciones.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
-  // Si allowed === null (admin / scope=todas) traemos toda la tabla con
-  // .range explícito para defenderse hasta donde llega el client. Para
-  // usuarios con scope restringido usamos la RPC que hace el filtro
+  // Si allowed === null (admin / scope=todas) traemos toda la tabla paginada
+  // (el .range(0, 99999) de antes no evitaba el cap de 1000 de PostgREST).
+  // Para usuarios con scope restringido usamos la RPC que hace el filtro
   // server-side sin cap.
   const supabase = createSupabaseClient(token)
-  const { data, error } = allowed != null
-    ? await supabase.rpc('asignaciones_de_obras', { p_obras: allowed })
-    : await supabase.from('asignaciones').select('*').range(0, 99999)
+  if (allowed == null) {
+    return c.json(await todasLasFilas((d, h) => supabase.from('asignaciones').select('*').order('obra_cod').order('leg').range(d, h)))
+  }
+  const { data, error } = await supabase.rpc('asignaciones_de_obras', { p_obras: allowed })
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
 })

@@ -5,6 +5,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { ensureNoAfectaSemanasCerradas } from '../../lib/semanas.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
 const catObra = new Hono()
@@ -18,9 +19,10 @@ catObra.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   if (allowed != null && allowed.length === 0) return c.json([])
 
   const supabase = createSupabaseClient(c.get('accessToken'))
-  const { data, error } = allowed != null
-    ? await supabase.rpc('cat_obra_de_obras', { p_obras: allowed })
-    : await supabase.from('cat_obra').select('*').range(0, 99999)
+  if (allowed == null) {
+    return c.json(await todasLasFilas((d, h) => supabase.from('cat_obra').select('*').order('id').range(d, h)))
+  }
+  const { data, error } = await supabase.rpc('cat_obra_de_obras', { p_obras: allowed })
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
 })

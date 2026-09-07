@@ -1,6 +1,7 @@
 import { HTTPException } from 'hono/http-exception'
 import { ensureSemanasAbiertas as ensureSemanasAbiertasLib } from '../../lib/semanas.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import type { UpsertHsExtraDto, UpsertHsExtrasLoteDto } from './hs-extras.schema.js'
 
 type SupabaseClient = ReturnType<typeof createSupabaseClient>
@@ -43,12 +44,7 @@ export const hsExtrasService = {
   // GET /all — todas las hs extras (sin filtro), para vistas globales (recibos, export)
   async getAll(token: string) {
     const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
-      .from('tarja_hs_extras')
-      .select('*')
-      .order('sem_key')
-    if (error) throw new Error(error.message)
-    return data ?? []
+    return todasLasFilas((d, h) => supabase.from('tarja_hs_extras').select('*').order('sem_key').order('id').range(d, h))
   },
 
   // GET /:obra_cod?desde&hasta

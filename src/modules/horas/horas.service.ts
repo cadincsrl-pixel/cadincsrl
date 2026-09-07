@@ -1,4 +1,5 @@
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import type { UpsertHoraDto, UpsertHorasLoteDto } from './horas.schema.js'
 import { viernesISO } from './costo-obra.js'
 import { ensureSemanasAbiertas as ensureSemanasAbiertasLib } from '../../lib/semanas.js'
@@ -38,17 +39,12 @@ export const horasService = {
     return data
   },
 
-  // Obtener todas las horas de una obra
+  // Obtener todas las horas de una obra (paginado: la obra archivada más
+  // grande ya pasa de 800 filas y PostgREST corta en 1000).
   async getByObra(obraCod: string, token: string) {
     const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
-      .from('horas')
-      .select('*')
-      .eq('obra_cod', obraCod)
-      .order('fecha')
-
-    if (error) throw new Error(error.message)
-    return data
+    return todasLasFilas((d, h) =>
+      supabase.from('horas').select('*').eq('obra_cod', obraCod).order('fecha').order('id').range(d, h))
   },
 
   // Upsert de una hora individual

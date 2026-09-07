@@ -7,6 +7,7 @@ import { ensureNoAfectaSemanasCerradas, hoyArgentinaISO } from '../../lib/semana
 import { tarifasService } from './tarifas.service.js'
 import { CreateTarifaSchema } from './tarifas.schema.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
 const tarifas = new Hono()
@@ -24,9 +25,10 @@ tarifas.get(
     if (allowed != null && allowed.length === 0) return c.json([])
 
     const supabase = createSupabaseClient(c.get('accessToken'))
-    const { data, error } = allowed != null
-      ? await supabase.rpc('tarifas_de_obras', { p_obras: allowed })
-      : await supabase.from('tarifas').select('*').order('desde').range(0, 99999)
+    if (allowed == null) {
+      return c.json(await todasLasFilas((d, h) => supabase.from('tarifas').select('*').order('desde').order('id').range(d, h)))
+    }
+    const { data, error } = await supabase.rpc('tarifas_de_obras', { p_obras: allowed })
     if (error) return c.json({ error: error.message }, 500)
     return c.json(data)
   },

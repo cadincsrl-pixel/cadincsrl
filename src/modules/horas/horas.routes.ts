@@ -6,6 +6,7 @@ import { horasService } from './horas.service.js'
 import { calcularCostoObra, viernesISO } from './costo-obra.js'
 import { UpsertHoraSchema, UpsertHorasLoteSchema } from './horas.schema.js'
 import { supabase, createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 import { ensureSemanasAbiertas, viernesEntre } from '../../lib/semanas.js'
 
@@ -131,19 +132,31 @@ horas.get('/trabajador/:leg', requirePermiso('tarja', 'lectura'), async (c) => {
   const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
   if (allowed != null && allowed.length === 0) return c.json([])
 
-  let query = supabase
-    .from('horas')
-    .select('*')
-    .eq('leg', leg)
-    .order('fecha')
-
-  if (desde) query = query.gte('fecha', desde)
-  if (hasta) query = query.lte('fecha', hasta)
-  if (allowed != null) query = query.in('obra_cod', allowed)
-
-  const { data, error } = await query
-  if (error) return c.json({ error: error.message }, 500)
+  // Paginado: un legajo con años de horas supera el cap de 1000 de PostgREST.
+  const data = await todasLasFilas((d, h) => {
+    let query = supabase.from('horas').select('*').eq('leg', leg).order('fecha').order('id').range(d, h)
+    if (desde) query = query.gte('fecha', desde)
+    if (hasta) query = query.lte('fecha', hasta)
+    if (allowed != null) query = query.in('obra_cod', allowed)
+    return query
+  })
   return c.json(data)
+})
+
+// GET /api/horas/resumen-obras?semana=YYYY-MM-DD — una fila por obra con las
+// horas y trabajadores de esa semana (viernes) más los totales históricos y
+// la última carga real. Lo calcula la RPC `obras_actividad`: antes la pantalla
+// de resumen bajaba TODA la tabla de horas (19k filas) para sacar estos números.
+horas.get('/resumen-obras', requirePermiso('tarja', 'lectura'), async (c) => {
+  const semana = c.req.query('semana')
+  if (!semana || !/^\d{4}-\d{2}-\d{2}$/.test(semana)) return c.json({ error: 'SEMANA_REQUERIDA: viernes YYYY-MM-DD' }, 400)
+  const userId = c.get('user').id
+  const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
+  if (allowed != null && allowed.length === 0) return c.json([])
+
+  const { data, error } = await supabase.rpc('obras_actividad', { p_vie: semana, p_obras: allowed })
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data ?? [])
 })
 
 

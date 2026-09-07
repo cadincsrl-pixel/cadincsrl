@@ -137,6 +137,35 @@ personal.get(
   },
 )
 
+// GET /api/personal/actividad?desde=YYYY-MM-DD — por legajo: última fecha con
+// horas reales, obras de esa última semana y cuántas filas de horas tiene
+// desde `desde` (viernes de corte para "activo"). Lo calcula la RPC
+// `personal_actividad`; antes Personal y Ropa bajaban TODA la tabla de horas
+// solo para saber quién está activo y en qué obra estuvo por última vez.
+// Va ANTES de /:leg para que Hono no lo tome como leg='actividad'.
+personal.get(
+  '/actividad',
+  requirePermiso('tarja', 'lectura'),
+  async (c) => {
+    const desde = c.req.query('desde')
+    if (!desde || !/^\d{4}-\d{2}-\d{2}$/.test(desde)) return c.json({ error: 'DESDE_REQUERIDO: YYYY-MM-DD' }, 400)
+    const userId = c.get('user').id
+    const token = c.get('accessToken')
+
+    const allowed = await getObrasDelUsuarioCached(userId, 'tarja')
+    if (allowed != null && allowed.length === 0) return c.json([])
+    const legsPermitidos = await filtrarLegsPermitidos(userId, token)
+    if (legsPermitidos != null && legsPermitidos.length === 0) return c.json([])
+
+    const { data, error } = await supabaseAdmin.rpc('personal_actividad', { p_desde: desde, p_obras: allowed })
+    if (error) return c.json({ error: error.message }, 500)
+    const filas = (data ?? []) as Array<{ leg: string }>
+    if (legsPermitidos == null) return c.json(filas)
+    const permitidos = new Set(legsPermitidos)
+    return c.json(filas.filter(f => permitidos.has(f.leg)))
+  },
+)
+
 personal.get(
   '/:leg',
   requirePermiso('tarja', 'lectura'),

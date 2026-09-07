@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import type {
   CreateContratistaDto,
   UpdateContratistaDto,
@@ -740,9 +741,11 @@ export const contratistasService = {
   // "todas" (path admin sin cambios); array → RPC (evita el cap de 1000).
   async getCertAll(allowed: string[] | null, token: string) {
     const supabase = createSupabaseClient(token)
-    const { data, error } = allowed != null
-      ? await supabase.rpc('certificaciones_de_obras', { p_obras: allowed })
-      : await supabase.from('certificaciones').select('*').range(0, 99999)
+    if (allowed == null) {
+      const filas = await todasLasFilas((d, h) => supabase.from('certificaciones').select('*').order('id').range(d, h))
+      return adjuntarTitulos(supabase, filas as CertRow[])
+    }
+    const { data, error } = await supabase.rpc('certificaciones_de_obras', { p_obras: allowed })
     if (error) throw new ContratError(500, error.message)
     return adjuntarTitulos(supabase, (data ?? []) as CertRow[])
   },

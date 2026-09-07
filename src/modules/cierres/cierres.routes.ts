@@ -5,6 +5,7 @@ import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { cierresService } from './cierres.service.js'
 import { CreateCierreSchema, UpdateCierreSchema } from './cierres.schema.js'
 import { createSupabaseClient } from '../../lib/supabase.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
 
 const cierres = new Hono()
@@ -17,9 +18,11 @@ cierres.get('/all', requirePermiso('tarja', 'lectura'), async (c) => {
   if (allowed != null && allowed.length === 0) return c.json([])
 
   const supabase = createSupabaseClient(c.get('accessToken'))
-  const { data, error } = allowed != null
-    ? await supabase.rpc('cierres_de_obras', { p_obras: allowed })
-    : await supabase.from('cierres').select('*').range(0, 99999)
+  // Admin / scope "todas": paginado (el .range(0, 99999) no evitaba el cap de 1000).
+  if (allowed == null) {
+    return c.json(await todasLasFilas((d, h) => supabase.from('cierres').select('*').order('id').range(d, h)))
+  }
+  const { data, error } = await supabase.rpc('cierres_de_obras', { p_obras: allowed })
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
 })
