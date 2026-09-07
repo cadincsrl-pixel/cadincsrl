@@ -4,6 +4,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { aridosService } from './aridos.service.js'
 import { buildEntidadDocsRoutes } from '../documentos/entidad-docs.routes.js'
+import { buildServiciosRoutes } from '../servicios/servicios.routes.js'
 import {
   CreateMaterialSchema, UpdateMaterialSchema,
   CreateClienteSchema, UpdateClienteSchema,
@@ -32,6 +33,8 @@ aridos.on(['DELETE'],       '*', requirePermiso('aridos', 'eliminacion'))
 // Mismo sub-router que camiones, bateas y máquinas de alquiler: hash con dedup,
 // bucket privado (aridos-docs) y borrado suave.
 aridos.route('/unidades', buildEntidadDocsRoutes('unidad'))
+// Services (mantenimientos): mismo molde, montado bajo la misma raíz.
+aridos.route('/unidades', buildServiciosRoutes('unidad'))
 
 // ── Materiales ────────────────────────────────────────────────
 aridos.get('/materiales', async (c) => {

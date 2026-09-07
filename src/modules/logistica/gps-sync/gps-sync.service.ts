@@ -200,9 +200,51 @@ async function aplicarSync(tipo: Tipo, userId: string | null): Promise<SyncResum
     })
   }
 
+  // ── Unidades de áridos, del mismo tirón ───────────────────────────────
+  // Comparten el GPS con los camiones (mismo Mobile Quest, mismo catálogo), así
+  // que se resuelven con los datos que ya trajimos: cero llamadas extra y cero
+  // crons nuevos que configurar en Render.
+  //
+  // Es más simple que el de camiones a propósito: la unidad no tiene padrón de
+  // sync (`gps_sync_log` es de camiones) ni auto-mapeo por patente — el
+  // `id_vehiculo_gps` lo elige una persona del catálogo al crear la unidad.
+  // Acá solo se cachea la última lectura y, sobre todo, el kilometraje, que es
+  // la base del semáforo de services.
+  let unidadesAridos = 0
+  try {
+    const { data: unidades } = await supabase
+      .from('aridos_unidades')
+      .select('id, id_vehiculo_gps, km_actuales')
+      .not('id_vehiculo_gps', 'is', null)
+
+    const porId = new Map(datos.map(d => [String(d.id_vehiculo), d]))
+    for (const u of unidades ?? []) {
+      const d = porId.get(String(u.id_vehiculo_gps))
+      if (!d) continue
+      const patch: Record<string, unknown> = {
+        gps_ultima_lat:        d.latitud,
+        gps_ultima_lng:        d.longitud,
+        gps_ultima_velocidad:  d.velocidad,
+        gps_ultima_lectura_en: d.fecha,
+      }
+      // Mismo criterio que camiones: cualquier valor distinto pisa, así una
+      // carga manual equivocada se autocorrige en el sync siguiente.
+      if (d.km != null && d.km !== Number(u.km_actuales ?? NaN)) {
+        patch.km_actuales       = d.km
+        patch.km_actualizado_en = new Date().toISOString()
+      }
+      const { error } = await supabase.from('aridos_unidades').update(patch).eq('id', u.id)
+      if (!error) unidadesAridos++
+    }
+  } catch (err) {
+    // El sync de camiones NUNCA puede fallar por áridos: es un extra.
+    console.error('[gps-sync] áridos falló, los camiones siguen:', err)
+  }
+
   const duracion = Date.now() - t0
   // duracion total del sync va replicada en cada row para análisis.
   for (const r of logRows) r.duracion_ms = duracion
+  if (unidadesAridos > 0) console.log(`[gps-sync] ${unidadesAridos} unidades de áridos actualizadas`)
 
   if (logRows.length > 0) {
     const { error: errLog } = await supabase.from('gps_sync_log').insert(logRows)

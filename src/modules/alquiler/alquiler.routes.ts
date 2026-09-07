@@ -4,6 +4,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { alquilerService } from './alquiler.service.js'
 import { buildEntidadDocsRoutes } from '../documentos/entidad-docs.routes.js'
+import { buildServiciosRoutes } from '../servicios/servicios.routes.js'
 import {
   CreateMaquinaSchema,
   UpdateMaquinaSchema,
@@ -42,6 +43,8 @@ alquiler.on(['DELETE'],       '*', requirePermiso('alquiler', 'eliminacion'))
 // bucket privado (alquiler-docs) y borrado suave. Va ANTES de las rutas de
 // máquinas porque `/maquinas/:id/documentos` tiene que ganarle a `/maquinas/:id`.
 alquiler.route('/maquinas', buildEntidadDocsRoutes('maquina'))
+// Services (mantenimientos): mismo molde, montado bajo la misma raíz.
+alquiler.route('/maquinas', buildServiciosRoutes('maquina'))
 
 // ── Máquinas ──────────────────────────────────────────────────
 alquiler.get('/maquinas', async (c) => {
