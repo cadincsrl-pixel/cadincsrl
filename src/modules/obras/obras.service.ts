@@ -168,6 +168,12 @@ export const obrasService = {
         obs: dto.obs,
         capataz_user_id:   dto.capataz_user_id   ?? null,
         jefe_obra_user_id: dto.jefe_obra_user_id ?? null,
+        // El alta enumera las columnas una por una, y esta se habia quedado
+        // afuera: el modal deja elegir "materiales a cargo de CADINC", el
+        // schema lo valida, y despues el insert lo tiraba. Toda obra llave en
+        // mano nacia como 'cliente' y solo se arreglaba si alguien la editaba
+        // (el PATCH si la escribe, por eso el bug era invisible).
+        materiales_a_cargo_de: dto.materiales_a_cargo_de ?? 'cliente',
         archivada: false,
         created_by: userId,
         updated_by: userId,
