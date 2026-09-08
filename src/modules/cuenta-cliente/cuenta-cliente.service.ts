@@ -121,6 +121,31 @@ export interface CobroCapacidad { id: number; capacidad: number }
  * sigue con el resto — igual que hace la pantalla al imputar a mano.
  */
 export function asignarImputaciones(items: ItemImputable[], cobros: CobroCapacidad[]) {
+  // Si la plata alcanza para TODO, el orden de prioridad deja de importar y el
+  // problema es puro empaquetado: colocar cada ítem entero en algún pago.
+  // Primero se intenta el empaquetado bueno (más grande primero, al hueco más
+  // justo — best fit decreasing); si logra cubrir todo, listo. Solo cuando no
+  // alcanza para todo entra la regla de prioridad: primero lo viejo.
+  // Caso real que lo exige: Belén pagó $9.000.000 contra $8.905.208 — sobra
+  // plata, pero el ítem más nuevo ($1.394.000) no entraba en ningún resto del
+  // reparto cronológico y quedaba sin congelar.
+  const bfd = (() => {
+    const restante = new Map(cobros.map(c => [c.id, c.capacidad]))
+    const asignados: (ItemImputable & { cobro_id: number })[] = []
+    for (const item of [...items].sort((a, b) => b.monto - a.monto)) {
+      let mejor: number | null = null
+      for (const c of cobros) {
+        const r = restante.get(c.id) ?? 0
+        if (r >= item.monto && (mejor === null || r < (restante.get(mejor) ?? 0))) mejor = c.id
+      }
+      if (mejor === null) return null
+      restante.set(mejor, (restante.get(mejor) ?? 0) - item.monto)
+      asignados.push({ ...item, cobro_id: mejor })
+    }
+    return asignados
+  })()
+  if (bfd) return { asignados: bfd, sinCubrir: [] as ItemImputable[] }
+
   const orden = { operarios: 0, contratistas: 1, material: 2 } as const
   const pendientes = [...items].sort((a, b) =>
     a.fecha.localeCompare(b.fecha) || orden[a.tipo] - orden[b.tipo] || a.clave.localeCompare(b.clave))
@@ -132,6 +157,43 @@ export function asignarImputaciones(items: ItemImputable[], cobros: CobroCapacid
     if (!cobro) { sinCubrir.push(item); continue }
     restante.set(cobro.id, (restante.get(cobro.id) ?? 0) - item.monto)
     asignados.push({ ...item, cobro_id: cobro.id })
+  }
+
+  // Segunda pasada: reubicación de un nivel. Un ítem grande y nuevo puede no
+  // entrar entero en ningún resto aunque la plata total sobre (los pagos
+  // quedaron fragmentados por los ítems viejos). Antes de darlo por sin
+  // cubrir, se intenta mover ítems chicos de un pago con capacidad hacia otros
+  // restos, para hacerle lugar al grande. Caso real: el Bercovich de Belén,
+  // $1.394.000 con $1.488.791 libres repartidos en migajas.
+  for (const grande of [...sinCubrir]) {
+    let hecho = false
+    for (const bin of cobros) {
+      if (bin.capacidad < grande.monto || hecho) continue
+      const enElBin = asignados.filter(a => a.cobro_id === bin.id).sort((a, b) => a.monto - b.monto)
+      const movidos: typeof asignados = []
+      let libre = restante.get(bin.id) ?? 0
+      for (const chico of enElBin) {
+        if (libre >= grande.monto) break
+        const destino = cobros.find(c => c.id !== bin.id && (restante.get(c.id) ?? 0) >= chico.monto)
+        if (!destino) continue
+        restante.set(destino.id, (restante.get(destino.id) ?? 0) - chico.monto)
+        chico.cobro_id = destino.id
+        movidos.push(chico)
+        libre += chico.monto
+      }
+      if (libre >= grande.monto) {
+        restante.set(bin.id, libre - grande.monto)
+        asignados.push({ ...grande, cobro_id: bin.id })
+        sinCubrir.splice(sinCubrir.indexOf(grande), 1)
+        hecho = true
+      } else {
+        // No alcanzó: deshacer los movimientos de este intento.
+        for (const m of movidos) {
+          restante.set(m.cobro_id, (restante.get(m.cobro_id) ?? 0) + m.monto)
+          m.cobro_id = bin.id
+        }
+      }
+    }
   }
   return { asignados, sinCubrir }
 }

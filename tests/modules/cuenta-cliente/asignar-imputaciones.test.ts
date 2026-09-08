@@ -57,3 +57,42 @@ describe('asignarImputaciones', () => {
     expect(sinCubrir).toHaveLength(0)
   })
 })
+
+describe('reubicación: el ítem grande que no entra por fragmentación', () => {
+  it('mueve un ítem chico para hacerle lugar al grande (el caso Bercovich)', () => {
+    // El viejo de 450 cae al pago grande y deja resto 550; el nuevo de 900 no
+    // entra ni ahí (550) ni en el otro (500). Moviendo el de 450 al segundo
+    // pago, el primero libera 1000 y el grande entra.
+    const { asignados, sinCubrir } = asignarImputaciones(
+      [item('material', 'viejo', '2026-05-01', 450), item('material', 'nuevo-grande', '2026-09-01', 900)],
+      [{ id: 1, capacidad: 1000 }, { id: 2, capacidad: 500 }],
+    )
+    expect(sinCubrir).toHaveLength(0)
+    const porClave = Object.fromEntries(asignados.map(a => [a.clave, a.cobro_id]))
+    expect(porClave['nuevo-grande']).toBe(1)
+    expect(porClave['viejo']).toBe(2)
+  })
+
+  it('si ni moviendo alcanza, lo deja sin cubrir y no rompe nada', () => {
+    const { asignados, sinCubrir } = asignarImputaciones(
+      [item('material', 'v1', '2026-05-01', 400), item('material', 'grande', '2026-09-01', 2000)],
+      [{ id: 1, capacidad: 500 }, { id: 2, capacidad: 500 }],
+    )
+    expect(sinCubrir.map(x => x.clave)).toEqual(['grande'])
+    expect(asignados.map(a => a.clave)).toEqual(['v1'])
+  })
+})
+
+describe('cuando la plata alcanza para todo, se empaqueta todo', () => {
+  it('resuelve el caso Belén real: sobra poco y el ítem más nuevo es el más grande', () => {
+    // Réplica en miniatura: pagos fragmentados por lo viejo, y un ítem nuevo
+    // grande que solo entra si el empaquetado es inteligente.
+    const { asignados, sinCubrir } = asignarImputaciones(
+      [item('operarios', 's1', '2026-05-15', 700), item('operarios', 's2', '2026-05-22', 400),
+       item('material', 'm1', '2026-06-01', 180), item('material', 'bercovich', '2026-09-08', 1390)],
+      [{ id: 1, capacidad: 300 }, { id: 2, capacidad: 1500 }, { id: 3, capacidad: 1100 }],
+    )
+    expect(sinCubrir).toHaveLength(0)
+    expect(asignados).toHaveLength(4)
+  })
+})
