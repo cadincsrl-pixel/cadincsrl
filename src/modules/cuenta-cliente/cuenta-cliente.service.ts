@@ -76,6 +76,16 @@ export interface CuentaFiltro {
   hasta?:        string
   q?:            string
   archivadas?:   boolean
+  /**
+   * Recorta por destino interno de CADINC (obras.es_interna).
+   *   undefined → todo, que es como se comportó siempre la cuenta corriente
+   *   true      → solo el pañol y los otros centros internos
+   *   false     → solo las obras de verdad
+   * Lo fuerza el handler de /interno, nunca se lee del query string: si viniera
+   * de afuera, esa pantalla podría pedir la deuda de un cliente con una URL
+   * armada a mano, que es justo lo que el tab aparte evita.
+   */
+  solo_internas?: boolean
 }
 
 // Palabras del buscador normalizadas igual que `busq` en la vista (norm_txt):
@@ -102,6 +112,7 @@ export const cuentaClienteService = {
     if (f.sin_precio) q = q.eq('precio_unit', 0)
     if (f.proveedor_id) q = q.eq('proveedor_id', f.proveedor_id)
     if (f.origen) q = q.eq('origen', f.origen)
+    if (f.solo_internas !== undefined) q = q.eq('obra_interna', f.solo_internas)
     if (f.desde) q = q.gte('fecha_resolucion', f.desde)
     if (f.hasta) q = q.lte('fecha_resolucion', f.hasta)
     for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
@@ -134,12 +145,42 @@ export const cuentaClienteService = {
         p_hasta:        f.hasta ?? null,
         p_palabras:     pal.length ? pal : null,
         p_archivadas:   !!f.archivadas,
+        p_solo_internas: f.solo_internas ?? null,
       }),
       supabase.rpc('cuenta_corriente_pagos', { p_obras: allowed, p_obra_cod: f.obra_cod ?? null }),
     ])
     if (g.error) throw new Error(g.error.message)
     if (p.error) throw new Error(p.error.message)
     return { grupos: g.data ?? [], pagos: p.data ?? [] }
+  },
+
+  /**
+   * Gasto de los centros internos (pañol, mantenimiento, herreros, logística,
+   * poda) para la pestaña "Gasto interno".
+   *
+   * Sale del MISMO ledger que la cuenta corriente (v_cuenta_corriente), no de
+   * una vista paralela sobre los pedidos: dos orígenes darían dos totales
+   * distintos para la misma obra y el número dejaría de creerse.
+   *
+   * La excepción son las herramientas, que MCC excluye a propósito (una
+   * herramienta va y vuelve, no se le factura a nadie). Vienen aparte, de la
+   * RPC gasto_interno_herramientas, y el front las muestra en su propia columna
+   * etiquetada como patrimonio — no sumadas al consumo del mes.
+   */
+  async getGastoInterno(allowed: string[] | null, f: CuentaFiltro, grupo: 'obra' | 'mes' | 'proveedor', token: string) {
+    const interno = { ...f, solo_internas: true }
+    const supabase = createSupabaseClient(token)
+    const [base, herr] = await Promise.all([
+      this.getResumen(allowed, interno, grupo, token),
+      supabase.rpc('gasto_interno_herramientas', {
+        p_obras:    allowed,
+        p_obra_cod: f.obra_cod ?? null,
+        p_desde:    f.desde ?? null,
+        p_hasta:    f.hasta ?? null,
+      }),
+    ])
+    if (herr.error) throw new Error(herr.error.message)
+    return { ...base, herramientas: herr.data ?? [] }
   },
 
   /**

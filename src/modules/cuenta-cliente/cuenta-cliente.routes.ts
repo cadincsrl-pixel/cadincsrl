@@ -22,7 +22,13 @@ const cuentaCliente = new Hono()
 
 cuentaCliente.use('*', authMiddleware)
 // Guardia por tab (2026-09-06): la tab de la pantalla también vale en la API.
-cuentaCliente.use('*', requireTab('certificaciones', 'cuenta-corriente'))
+//
+// Son DOS tabs sobre el mismo módulo y no una: quien carga los pedidos del
+// pañol necesita ver lo que gastó el pañol, y no puede ver de paso la deuda
+// viva de todos los clientes. Así que acá se admiten las dos, y cada ruta que
+// muestra plata de clientes vuelve a exigir 'cuenta-corriente' por su cuenta.
+cuentaCliente.use('*', requireTab('certificaciones', ['cuenta-corriente', 'gasto-interno']))
+const soloCuenta = requireTab('certificaciones', 'cuenta-corriente')
 
 // Wrapper de error → respeta CcHttpError con status/code/detail.
 function handler(fn: (c: any) => Promise<any>) {
@@ -57,7 +63,7 @@ function filtroDeQuery(f: CuentaCorrienteQuery): CuentaFiltro {
 }
 
 // GET /api/cuenta-cliente/renglones — listado paginado y filtrado en el server.
-cuentaCliente.get('/renglones', requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
+cuentaCliente.get('/renglones', soloCuenta, requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
   const f = c.req.valid('query')
   const userId = c.get('user').id
   if (f.obra_cod) await validarObraDelUsuario(userId, f.obra_cod, 'certificaciones')
@@ -68,7 +74,7 @@ cuentaCliente.get('/renglones', requirePermiso('certificaciones', 'lectura'), zV
 
 // GET /api/cuenta-cliente/resumen — totales por grupo (obra | mes | proveedor)
 // × estado × tipo del conjunto filtrado, más pagos por obra.
-cuentaCliente.get('/resumen', requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
+cuentaCliente.get('/resumen', soloCuenta, requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
   const f = c.req.valid('query')
   const userId = c.get('user').id
   if (f.obra_cod) await validarObraDelUsuario(userId, f.obra_cod, 'certificaciones')
@@ -77,9 +83,38 @@ cuentaCliente.get('/resumen', requirePermiso('certificaciones', 'lectura'), zVal
   return c.json(await cuentaClienteService.getResumen(allowed, filtroDeQuery(f), f.grupo, c.get('accessToken')))
 })
 
+// ── Gasto interno (2026-09-08) ────────────────────────────────────────
+// El gasto propio de CADINC: pañol, mantenimiento, herreros, logística, poda.
+//
+// Son dos endpoints espejo de /resumen y /renglones, y existen por el permiso:
+// quien carga los pedidos del pañol tiene que poder ver lo que gastó sin que se
+// le abra la deuda de los clientes. Por eso `solo_internas` se FUERZA acá y no
+// se lee del query: aunque alguien arme la URL a mano, de estas dos rutas no
+// sale un renglón de una obra de cliente.
+
+// GET /api/cuenta-cliente/interno/resumen — totales por mes u obra + herramientas.
+cuentaCliente.get('/interno/resumen', requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
+  const f = c.req.valid('query')
+  const userId = c.get('user').id
+  if (f.obra_cod) await validarObraDelUsuario(userId, f.obra_cod, 'certificaciones')
+  const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
+  const filtro = { ...filtroDeQuery(f), solo_internas: true }
+  return c.json(await cuentaClienteService.getGastoInterno(allowed, filtro, f.grupo, c.get('accessToken')))
+})
+
+// GET /api/cuenta-cliente/interno/renglones — el detalle, renglón por renglón.
+cuentaCliente.get('/interno/renglones', requirePermiso('certificaciones', 'lectura'), zValidator('query', CuentaCorrienteQuerySchema), async (c) => {
+  const f = c.req.valid('query')
+  const userId = c.get('user').id
+  if (f.obra_cod) await validarObraDelUsuario(userId, f.obra_cod, 'certificaciones')
+  const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
+  const filtro = { ...filtroDeQuery(f), solo_internas: true }
+  return c.json(await cuentaClienteService.getRenglones(allowed, filtro, f.limit, f.offset, c.get('accessToken')))
+})
+
 // GET /api/cuenta-cliente/pendientes-precio
 // Conteo de materiales sin precio (a tasar) por obra, en las obras del usuario.
-cuentaCliente.get('/pendientes-precio', requirePermiso('certificaciones', 'lectura'), async (c) => {
+cuentaCliente.get('/pendientes-precio', soloCuenta, requirePermiso('certificaciones', 'lectura'), async (c) => {
   const allowed = await getObrasDelUsuarioCached(c.get('user').id, 'certificaciones')
   // allowed === null → scope global (admin): todas las obras.
   const data = await cuentaClienteService.pendientesDePrecio(allowed, c.get('accessToken'))
@@ -92,7 +127,7 @@ cuentaCliente.get('/pendientes-precio', requirePermiso('certificaciones', 'lectu
 
 // GET /api/cuenta-cliente/cobros?obra_cod=X (opcional — sin obra: scope user,
 // para que los KPIs de "todas mis obras" incluyan los pagos)
-cuentaCliente.get('/cobros', requirePermiso('certificaciones', 'lectura'), async (c) => {
+cuentaCliente.get('/cobros', soloCuenta, requirePermiso('certificaciones', 'lectura'), async (c) => {
   const obraCod = c.req.query('obra_cod')
   const userId  = c.get('user').id
   if (obraCod) {
@@ -108,7 +143,7 @@ cuentaCliente.get('/cobros', requirePermiso('certificaciones', 'lectura'), async
 })
 
 // POST /api/cuenta-cliente/cobros — registra el cobro imputando items (RPC).
-cuentaCliente.post('/cobros', requirePermiso('certificaciones', 'creacion'), zValidator('json', CrearCobroSchema), handler(async (c) => {
+cuentaCliente.post('/cobros', soloCuenta, requirePermiso('certificaciones', 'creacion'), zValidator('json', CrearCobroSchema), handler(async (c) => {
   const dto = c.req.valid('json')
   await validarObraDelUsuario(c.get('user').id, dto.obra_cod, 'certificaciones')
   const data = await cuentaClienteService.crearCobro(dto, c.get('accessToken'), c.get('user').id)
@@ -116,13 +151,13 @@ cuentaCliente.post('/cobros', requirePermiso('certificaciones', 'creacion'), zVa
 }))
 
 // POST /api/cuenta-cliente/cobros/upload-comprobante — firma URL de subida.
-cuentaCliente.post('/cobros/upload-comprobante', requirePermiso('certificaciones', 'creacion'), zValidator('json', UploadComprobanteCobroSchema), handler(async (c) => {
+cuentaCliente.post('/cobros/upload-comprobante', soloCuenta, requirePermiso('certificaciones', 'creacion'), zValidator('json', UploadComprobanteCobroSchema), handler(async (c) => {
   const data = await cuentaClienteService.firmarUploadComprobante(c.req.valid('json').content_type)
   return c.json(data)
 }))
 
 // GET /api/cuenta-cliente/cobros/:id/comprobante-url — firma URL de descarga.
-cuentaCliente.get('/cobros/:id/comprobante-url', requirePermiso('certificaciones', 'lectura'), handler(async (c) => {
+cuentaCliente.get('/cobros/:id/comprobante-url', soloCuenta, requirePermiso('certificaciones', 'lectura'), handler(async (c) => {
   const id = Number(c.req.param('id'))
   const obraCod = await cuentaClienteService.getCobroObra(id, c.get('accessToken'))
   if (!obraCod) return c.json({ error: 'Cobro no encontrado' }, 404)
@@ -132,7 +167,7 @@ cuentaCliente.get('/cobros/:id/comprobante-url', requirePermiso('certificaciones
 }))
 
 // PATCH /api/cuenta-cliente/cobros/:id
-cuentaCliente.patch('/cobros/:id', requirePermiso('certificaciones', 'actualizacion'), zValidator('json', EditarCobroSchema), handler(async (c) => {
+cuentaCliente.patch('/cobros/:id', soloCuenta, requirePermiso('certificaciones', 'actualizacion'), zValidator('json', EditarCobroSchema), handler(async (c) => {
   const id = Number(c.req.param('id'))
   const obraCod = await cuentaClienteService.getCobroObra(id, c.get('accessToken'))
   if (!obraCod) return c.json({ error: 'Cobro no encontrado' }, 404)
@@ -142,7 +177,7 @@ cuentaCliente.patch('/cobros/:id', requirePermiso('certificaciones', 'actualizac
 }))
 
 // DELETE /api/cuenta-cliente/cobros/:id — desimputa items y borra (RPC).
-cuentaCliente.delete('/cobros/:id', requirePermiso('certificaciones', 'eliminacion'), handler(async (c) => {
+cuentaCliente.delete('/cobros/:id', soloCuenta, requirePermiso('certificaciones', 'eliminacion'), handler(async (c) => {
   const id = Number(c.req.param('id'))
   const obraCod = await cuentaClienteService.getCobroObra(id, c.get('accessToken'))
   if (!obraCod) return c.json({ error: 'Cobro no encontrado' }, 404)
