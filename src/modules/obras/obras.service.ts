@@ -3,7 +3,7 @@ import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supab
 import { getObrasDelUsuarioCached, invalidarCacheObrasUsuario } from '../../lib/obras-usuario.js'
 import { hoyArgentinaISO, juevesISO } from '../../lib/semanas.js'
 import { viernesISO } from '../horas/costo-obra.js'
-import type { CreateObraDto, UpdateObraDto } from './obras.schema.js'
+import type { CreateObraDto, UpdateObraDto, AdminTarifaDto } from './obras.schema.js'
 
 // Valida que un user (si está seteado) exista, esté activo y tenga el
 // rol_base esperado. Lanza error con mensaje claro si no.
@@ -322,5 +322,47 @@ export const obrasService = {
     }
     if (error) throw new Error(error.message)
     return { success: true }
+  },
+
+  // ── Obras por administración ────────────────────────────────────────
+
+  /** Historial de porcentajes, más nuevo primero. */
+  async getAdminTarifas(cod: string) {
+    const { data, error } = await supabaseAdmin
+      .from('obras_admin_tarifas')
+      .select('*')
+      .eq('obra_cod', cod)
+      .order('desde', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
+  /**
+   * Nueva versión de porcentajes. Upsert por (obra, desde): corregir los
+   * números del MISMO viernes es un arreglo, no una versión nueva. Y prende
+   * `por_administracion` en la obra: cargar porcentajes ES marcarla.
+   */
+  async guardarAdminTarifa(cod: string, dto: AdminTarifaDto, userId: string) {
+    const { data: obra } = await supabaseAdmin
+      .from('obras').select('cod').eq('cod', cod).maybeSingle()
+    if (!obra) throw Object.assign(new Error('OBRA_INEXISTENTE'), { code: 'OBRA_INEXISTENTE' })
+
+    // Siempre viernes: los costos de operarios y contratistas son semanales,
+    // así que un % que arranca un martes partiría una semana en dos.
+    if (dto.desde !== viernesISO(dto.desde)) {
+      throw Object.assign(new Error('DESDE_NO_ES_VIERNES'), { code: 'DESDE_NO_ES_VIERNES' })
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('obras_admin_tarifas')
+      .upsert({ obra_cod: cod, ...dto, created_by: userId }, { onConflict: 'obra_cod,desde' })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+
+    const { error: e2 } = await supabaseAdmin
+      .from('obras').update({ por_administracion: true, updated_by: userId }).eq('cod', cod)
+    if (e2) throw new Error(e2.message)
+    return data
   },
 }

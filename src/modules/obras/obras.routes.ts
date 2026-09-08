@@ -4,7 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermisoOr, requireFlag } from '../../middleware/permission.js'
 import { obrasService } from './obras.service.js'
-import { CreateObraSchema, UpdateObraSchema } from './obras.schema.js'
+import { CreateObraSchema, UpdateObraSchema, AdminTarifaSchema } from './obras.schema.js'
 import { validarObraDelUsuario } from '../../lib/obras-usuario.js'
 import { supabase as supabaseAdmin } from '../../lib/supabase.js'
 
@@ -260,6 +260,43 @@ obras.delete(
 
     const data = await obrasService.delete(cod, token)
     return c.json(data)
+  },
+)
+
+// ── Obras por administración ──────────────────────────────────────────
+// Los porcentajes (costo + % por pata) que se le facturan al cliente.
+// Versionados por fecha: agregar una versión nunca pisa la anterior, porque
+// el historial es lo que justifica cada factura ya emitida.
+
+// GET /api/obras/:cod/admin-tarifas — el historial completo, más nuevo primero.
+obras.get('/:cod/admin-tarifas', requirePermisoOr([
+  { modulo: 'tarja', accion: 'lectura' },
+  { modulo: 'certificaciones', accion: 'lectura' },
+]), async (c) => {
+  const cod = c.req.param('cod')
+  await validarObraDelUsuario(c.get('user').id, cod, 'certificaciones')
+  return c.json(await obrasService.getAdminTarifas(cod))
+})
+
+// POST /api/obras/:cod/admin-tarifas — nueva versión de porcentajes.
+// Misma guardia que editar la obra (jefatura). De paso prende el flag: cargar
+// porcentajes ES marcar la obra por administración.
+obras.post(
+  '/:cod/admin-tarifas',
+  requireFlag('tarja', 'administrar_obras', true),
+  zValidator('json', AdminTarifaSchema),
+  async (c) => {
+    const cod = c.req.param('cod')
+    const dto = c.req.valid('json')
+    try {
+      const data = await obrasService.guardarAdminTarifa(cod, dto, c.get('user').id)
+      return c.json(data, 201)
+    } catch (err: unknown) {
+      const e = err as { code?: string; message?: string }
+      if (e?.code === 'DESDE_NO_ES_VIERNES') return c.json({ error: e.code }, 400)
+      if (e?.code === 'OBRA_INEXISTENTE')    return c.json({ error: e.code }, 404)
+      throw err
+    }
   },
 )
 

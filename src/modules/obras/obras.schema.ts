@@ -43,7 +43,23 @@ export const UpdateObraSchema = z.object({
   capataz_user_id:   UserIdField,
   jefe_obra_user_id: UserIdField,
   materiales_a_cargo_de: ACargoDeField,
+  // Prender/apagar la vista de administración. Los porcentajes NO van acá:
+  // viven versionados en obras_admin_tarifas y tienen su propio endpoint.
+  por_administracion: z.boolean().optional(),
 })
+
+/**
+ * Una versión de porcentajes de una obra por administración. `desde` siempre
+ * viernes (los costos de operarios y contratistas son semanales, así que el %
+ * cambia en frontera de semana). Se agregan versiones, nunca se pisan.
+ */
+export const AdminTarifaSchema = z.object({
+  desde:            z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  pct_operarios:    z.number().min(0).max(500),
+  pct_contratistas: z.number().min(0).max(500),
+  pct_materiales:   z.number().min(0).max(500),
+})
+export type AdminTarifaDto = z.infer<typeof AdminTarifaSchema>
 
 export type Obra = z.infer<typeof ObraSchema>
 export type CreateObraDto = z.infer<typeof CreateObraSchema>
