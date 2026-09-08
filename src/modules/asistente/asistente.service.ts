@@ -1,6 +1,11 @@
 // =====================================================================
-// Asistente IA v1 — chat de SOLO LECTURA sobre los datos del ERP vía
-// Claude API con tool use.
+// Asistente IA — chat sobre los datos del ERP vía Claude API con tool use.
+//
+// Es de solo lectura CON UNA EXCEPCIÓN: puede cargar pedidos de compra
+// dictados (asistente.pedidos.ts). Esa escritura no llama al service por
+// dentro, sale por app.request() contra la ruta HTTP de siempre, así que
+// hereda permiso, alcance por obra, validación y auditoría. Cualquier otra
+// escritura que se agregue en el futuro tiene que seguir ese camino.
 //
 // Decisiones:
 // - Loop MANUAL de tool use (client.messages.create, sin beta): control
@@ -17,6 +22,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { ChatMessage } from './asistente.schema.js'
 import { ASISTENTE_TOOLS, fetchPerfil, type ToolCtx } from './asistente.tools.js'
+import { PEDIDO_TOOLS, type PedidoCtx } from './asistente.pedidos.js'
 
 const MAX_ITER_HERRAMIENTAS = 8
 const MAX_TOKENS = 2048
@@ -38,7 +44,30 @@ Reglas:
 - Formateá los montos en pesos argentinos estilo es-AR (ej.: $ 1.234.567,50). Las herramientas devuelven números crudos.
 - NUNCA inventes números ni datos. Todo dato concreto debe salir de una herramienta. Si ninguna herramienta puede responder lo que piden, decilo claramente ("no tengo una herramienta para consultar eso").
 - Si una herramienta devuelve { "error": "SIN_PERMISO" }, respondé que el usuario no tiene acceso a ese dato y NO intentes deducirlo ni conseguirlo por otra vía.
-- Sos de solo lectura: no podés crear, modificar ni borrar nada, y no prometas hacerlo.
+- Sos de solo lectura, con UNA excepción: podés cargar pedidos de compra. Nada más. No prometas editar ni borrar nada.
+
+CÓMO CARGAR UN PEDIDO DICTADO
+Alguien te va a decir algo como "para la garita 20 bolsas de cemento, 3 rollos de alambre y una masa". El objetivo es que quede cargado bien y en la menor cantidad de mensajes posible.
+
+1. Buscá TODOS los materiales del dictado en UNA sola llamada a buscar_materiales. Nunca de a uno: es lento y se nota.
+2. Juntá TODAS las dudas en UN SOLO mensaje. Esto es lo que separa un asistente de un formulario: no preguntes el cemento, esperes, y después preguntes el alambre. Preguntá las dos cosas juntas.
+3. Cuando un material da varios candidatos, mostralos con lo que los DIFERENCIA (precio, medida, presentación), no solo el nombre. La persona elige por eso.
+4. Si dijo una presentación que no es la de la ficha ("3 rollos de alambre" cuando el de atar va por kilo), decíselo y preguntá. NUNCA conviertas por tu cuenta: ahí es donde el precio termina mal por un factor de 20.
+5. Lo que ya resolvió, resuelto. No vuelvas a preguntar algo que ya te contestó.
+6. Antes de cargar, escribí el pedido completo —con el código de obra— y preguntá si lo cargás. Recién cuando dice que sí, llamás a crear_pedido pasándole su frase textual.
+7. Después de cargar, decí el número de pedido y qué quedó a medias (renglones sin ficha del catálogo).
+
+Avisos que cambian plata, decilos sin dramatizar, una línea:
+- Si el material es una HERRAMIENTA: va al pañol y no se le factura a la obra.
+- Si la obra es interna (pañol, mantenimiento, herreros, logística, poda): es gasto de CADINC, no se le cobra a ningún cliente.
+- Si un material no está en el catálogo: se carga igual pero no cruza precio ni stock.
+
+Reglas duras:
+- Los material_id salen SOLO de buscar_materiales en ESTA conversación. Nunca de tu memoria, nunca inventados.
+- Si no encontrás el material, no elijas el más parecido: decí que no está y ofrecé cargarlo sin catalogar, o preguntá.
+- Las herramientas que no están en el catálogo NO se pueden crear desde el pedido: se dan de alta en Herramientas › Catálogo.
+- Si crear_pedido te devuelve un error, contale a la persona qué pasó. No reintentes con otros valores por tu cuenta.
+- No podés editar ni borrar un pedido ya cargado. Si se equivocaron, mandalos a la pantalla de Solicitudes.
 - Si el pedido es ambiguo (qué obra, qué rango de fechas), preguntá o asumí lo razonable y aclaralo (ej.: "últimos 30 días").
 - La fecha de hoy y el nombre del usuario que pregunta vienen a continuación de estas instrucciones.`
 
@@ -72,12 +101,18 @@ export const asistenteService = {
     })
     const model = process.env.ASISTENTE_MODEL ?? 'claude-sonnet-5'
 
-    const tools: Anthropic.Tool[] = ASISTENTE_TOOLS.map(t => ({
+    // Dos familias con reglas distintas: las de asistente.tools.ts son de
+    // lectura; las de asistente.pedidos.ts escriben y reciben, además, los
+    // mensajes del usuario (para verificar la confirmación server-side).
+    const tools: Anthropic.Tool[] = [...ASISTENTE_TOOLS, ...PEDIDO_TOOLS].map(t => ({
       name: t.name,
       description: t.description,
       input_schema: t.input_schema,
     }))
-    const runners = new Map(ASISTENTE_TOOLS.map(t => [t.name, t.run]))
+    type Runner = (input: unknown, ctx: never) => Promise<unknown>
+    const runners = new Map<string, Runner>()
+    for (const t of ASISTENTE_TOOLS) runners.set(t.name, t.run as Runner)
+    for (const t of PEDIDO_TOOLS)    runners.set(t.name, t.run as Runner)
 
     const system: Anthropic.TextBlockParam[] = [
       {
@@ -93,7 +128,15 @@ export const asistenteService = {
       },
     ]
 
-    const ctx: ToolCtx = { userId, token, perfil }
+    const ctxLectura: ToolCtx = { userId, token, perfil }
+    // La confirmación del pedido se verifica contra los mensajes REALES del
+    // usuario, no contra lo que el modelo diga que dijo.
+    const ctxPedido: PedidoCtx = {
+      userId, token, perfil,
+      mensajesUsuario: mensajes.filter(m => m.role === 'user').map(m => m.content),
+    }
+    const esDePedidos = new Set(PEDIDO_TOOLS.map(t => t.name))
+    const ctx = (nombre: string) => (esDePedidos.has(nombre) ? ctxPedido : ctxLectura) as never
     // La API exige que el primer mensaje sea role=user. Cuando el frontend
     // recorta el historial a una ventana fija, la ventana puede arrancar en
     // un assistant (a partir del intercambio 13) — dropeamos los assistant
@@ -169,7 +212,7 @@ export const asistenteService = {
             resultado = { error: 'HERRAMIENTA_DESCONOCIDA', detalle: tu.name }
           } else {
             try {
-              resultado = await run(tu.input, ctx)
+              resultado = await run(tu.input, ctx(tu.name))
             } catch (err) {
               // Un fallo de datos NUNCA corta el chat: se le informa al
               // modelo como resultado y él decide cómo responder.
