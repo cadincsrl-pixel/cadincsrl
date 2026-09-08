@@ -14,7 +14,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
-import type { CrearCobroDto, EditarCobroDto } from './cuenta-cliente.schema.js'
+import type { CrearCobroDto, EditarCobroDto, EmitirCertificadoDto } from './cuenta-cliente.schema.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { calcularCostoObra, viernesISO } from '../horas/costo-obra.js'
 import { todasLasFilas } from '../../lib/paginar.js'
@@ -505,6 +505,8 @@ export const cuentaClienteService = {
       p_comprobante_hash: comprobanteHash,
       p_item_ids:         dto.item_ids ?? [],
       p_user_id:          userId,
+      p_certificado_id:     dto.certificado_id ?? null,
+      p_monto_mano_de_obra: dto.monto_mano_de_obra ?? 0,
     })
     if (error) {
       // La RPC rechazó: el comprobante recién subido queda huérfano → limpiar.
@@ -515,6 +517,85 @@ export const cuentaClienteService = {
       if (msg.includes('COMPROBANTE_DUPLICADO')) throw new CcHttpError(409, 'COMPROBANTE_DUPLICADO')
       if (msg.includes('ITEM_INVALIDO'))         throw new CcHttpError(400, 'ITEM_INVALIDO')
       if (msg.includes('MONTO_INSUFICIENTE'))    throw new CcHttpError(400, 'MONTO_INSUFICIENTE')
+      if (msg.includes('CERTIFICADO_NO_EXISTE'))     throw new CcHttpError(404, 'CERTIFICADO_NO_EXISTE')
+      if (msg.includes('CERTIFICADO_ANULADO'))       throw new CcHttpError(409, 'CERTIFICADO_ANULADO')
+      if (msg.includes('CERTIFICADO_DE_OTRA_OBRA'))  throw new CcHttpError(400, 'CERTIFICADO_DE_OTRA_OBRA')
+      if (msg.includes('MANO_DE_OBRA_INVALIDA'))     throw new CcHttpError(400, 'MANO_DE_OBRA_INVALIDA')
+      throw new Error(msg)
+    }
+    return data
+  },
+
+  // ── Certificados al cliente (20260911h/i/j) ───────────────────────────
+  // El certificado es la "presentacion" de la cuenta: corte por fecha, mano de
+  // obra por avance, materiales congelados al emitir. Emitir y anular van por
+  // RPC SECURITY DEFINER con supabaseAdmin; el scope de obra se valida en la
+  // route ANTES (CLAUDE.md §9).
+
+  async getCertificados(obraCod: string, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('certificados_cliente')
+      .select('*')
+      .eq('obra_cod', obraCod)
+      .order('numero', { ascending: false })
+      .limit(500)
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
+  async getCertificadoObra(id: number): Promise<string> {
+    const { data, error } = await supabaseAdmin.from('certificados_cliente').select('obra_cod').eq('id', id).maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) throw new CcHttpError(404, 'CERTIFICADO_NO_EXISTE')
+    return data.obra_cod as string
+  },
+
+  /** El certificado con sus renglones (de la vista) y los cobros imputados contra el. */
+  async getCertificado(id: number, token: string) {
+    const supabase = createSupabaseClient(token)
+    const [{ data: cert, error: e1 }, { data: renglones, error: e2 }, { data: cobros, error: e3 }] = await Promise.all([
+      supabase.from('certificados_cliente').select('*').eq('id', id).maybeSingle(),
+      supabase.from('v_cuenta_corriente').select('*').eq('certificado_id', id).order('fecha_resolucion').order('id').limit(1000),
+      supabase.from('cuenta_cliente_cobros').select('*').eq('certificado_id', id).order('fecha'),
+    ])
+    if (e1) throw new Error(e1.message)
+    if (!cert) throw new CcHttpError(404, 'CERTIFICADO_NO_EXISTE')
+    if (e2) throw new Error(e2.message)
+    if (e3) throw new Error(e3.message)
+    const cobrado = (cobros ?? []).reduce((s, c) => s + Number(c.monto ?? 0), 0)
+    return { ...cert, renglones: renglones ?? [], cobros: cobros ?? [], cobrado, saldo: Number(cert.total) - cobrado }
+  },
+
+  async emitirCertificado(dto: EmitirCertificadoDto, userId: string) {
+    const { data, error } = await supabaseAdmin.rpc('emitir_certificado_cliente', {
+      p_obra_cod:     dto.obra_cod,
+      p_fecha_corte:  dto.fecha_corte,
+      p_mano_de_obra: dto.mano_de_obra ?? 0,
+      p_obs:          dto.obs ?? null,
+      p_user_id:      userId,
+    })
+    if (error) {
+      const msg = error.message || ''
+      if (msg.includes('OBRA_INEXISTENTE'))      throw new CcHttpError(404, 'OBRA_INEXISTENTE')
+      if (msg.includes('OBRA_ES_DEPOSITO'))      throw new CcHttpError(409, 'OBRA_ES_DEPOSITO')
+      if (msg.includes('OBRA_ARCHIVADA'))        throw new CcHttpError(409, 'OBRA_ARCHIVADA')
+      if (msg.includes('MANO_DE_OBRA_INVALIDA')) throw new CcHttpError(400, 'MANO_DE_OBRA_INVALIDA')
+      throw new Error(msg)
+    }
+    return data
+  },
+
+  async anularCertificado(id: number, motivo: string, userId: string) {
+    const { data, error } = await supabaseAdmin.rpc('anular_certificado_cliente', {
+      p_id: id, p_motivo: motivo, p_user_id: userId,
+    })
+    if (error) {
+      const msg = error.message || ''
+      if (msg.includes('CERTIFICADO_NO_EXISTE'))   throw new CcHttpError(404, 'CERTIFICADO_NO_EXISTE')
+      if (msg.includes('CERTIFICADO_YA_ANULADO'))  throw new CcHttpError(409, 'CERTIFICADO_YA_ANULADO')
+      if (msg.includes('CERTIFICADO_CON_COBROS'))  throw new CcHttpError(409, 'CERTIFICADO_CON_COBROS')
+      if (msg.includes('MOTIVO_OBLIGATORIO'))      throw new CcHttpError(400, 'MOTIVO_OBLIGATORIO')
       throw new Error(msg)
     }
     return data

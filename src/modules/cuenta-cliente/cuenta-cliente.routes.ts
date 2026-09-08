@@ -9,11 +9,12 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireTab } from '../../middleware/permission.js'
+import { requirePermiso, requireTab, tieneFlag } from '../../middleware/permission.js'
 import { cuentaClienteService, CcHttpError } from './cuenta-cliente.service.js'
 import {
   CrearCobroSchema, EditarCobroSchema, UploadComprobanteCobroSchema,
   CuentaCorrienteQuerySchema, CUENTA_ESTADOS, ImputarPagadoSchema, type CuentaCorrienteQuery,
+  EmitirCertificadoSchema, AnularCertificadoSchema,
 } from './cuenta-cliente.schema.js'
 import type { CuentaFiltro } from './cuenta-cliente.service.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -195,6 +196,52 @@ cuentaCliente.delete('/cobros/:id', soloCuenta, requirePermiso('certificaciones'
   await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
   const data = await cuentaClienteService.eliminarCobro(id, c.get('accessToken'), c.get('user').id)
   return c.json(data)
+}))
+
+// ── Certificados al cliente (20260911h/i/j) ─────────────────────────────
+// Emitir es un acto de facturacion: pide `creacion` + el flag cargar_precios
+// (o admin), el mismo que "Cargar precios". Anular, solo admin: deshace una
+// presentacion que el cliente puede tener en la mano.
+
+// GET /api/cuenta-cliente/certificados?obra_cod=
+cuentaCliente.get('/certificados', soloCuenta, requirePermiso('certificaciones', 'lectura'), handler(async (c) => {
+  const obraCod = c.req.query('obra_cod')
+  if (!obraCod) return c.json({ error: 'OBRA_REQUERIDA' }, 400)
+  await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
+  return c.json(await cuentaClienteService.getCertificados(obraCod, c.get('accessToken')))
+}))
+
+// GET /api/cuenta-cliente/certificados/:id — el certificado con renglones y cobros.
+cuentaCliente.get('/certificados/:id', soloCuenta, requirePermiso('certificaciones', 'lectura'), handler(async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
+  const obraCod = await cuentaClienteService.getCertificadoObra(id)
+  await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
+  return c.json(await cuentaClienteService.getCertificado(id, c.get('accessToken')))
+}))
+
+// POST /api/cuenta-cliente/certificados — emitir (RPC transaccional).
+cuentaCliente.post('/certificados', soloCuenta, requirePermiso('certificaciones', 'creacion'), zValidator('json', EmitirCertificadoSchema), handler(async (c) => {
+  const dto = c.req.valid('json')
+  const userId = c.get('user').id
+  await validarObraDelUsuario(userId, dto.obra_cod, 'certificaciones')
+  if (!(await tieneFlag(userId, 'certificaciones', 'cargar_precios', false))) {
+    return c.json({ error: 'SIN_PERMISO_CARGAR_PRECIOS' }, 403)
+  }
+  return c.json(await cuentaClienteService.emitirCertificado(dto, userId), 201)
+}))
+
+// POST /api/cuenta-cliente/certificados/:id/anular — solo admin.
+cuentaCliente.post('/certificados/:id/anular', soloCuenta, requirePermiso('certificaciones', 'eliminacion'), zValidator('json', AnularCertificadoSchema), handler(async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
+  const userId = c.get('user').id
+  if (!(await tieneFlag(userId, 'certificaciones', 'anular_certificados', false))) {
+    return c.json({ error: 'SOLO_ADMIN' }, 403)
+  }
+  const obraCod = await cuentaClienteService.getCertificadoObra(id)
+  await validarObraDelUsuario(userId, obraCod, 'certificaciones')
+  return c.json(await cuentaClienteService.anularCertificado(id, c.req.valid('json').motivo, userId))
 }))
 
 export default cuentaCliente

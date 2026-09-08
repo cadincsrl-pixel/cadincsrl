@@ -15,7 +15,24 @@ export const CrearCobroSchema = z.object({
   item_ids: z.array(z.number().int().positive()).max(500).optional().default([]),
   // Path del comprobante ya subido al bucket con la signed URL (2 pasos).
   comprobante_path: z.string().optional().nullable(),
+  // Cobro contra un certificado (20260911j): se imputan TODOS sus renglones
+  // sin cobrar (item_ids se ignora) y el monto se reparte en materiales (la
+  // suma de esos renglones) y mano de obra (lo que diga aca).
+  certificado_id:     z.number().int().positive().optional().nullable(),
+  monto_mano_de_obra: z.number().min(0).optional().default(0),
 })
+
+// ── Certificados al cliente (20260911h) ─────────────────────────────────
+export const EmitirCertificadoSchema = z.object({
+  obra_cod:     z.string().min(1),
+  fecha_corte:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  mano_de_obra: z.number().min(0).optional().default(0),
+  obs:          z.string().max(500).optional().nullable(),
+})
+export const AnularCertificadoSchema = z.object({
+  motivo: z.string().trim().min(3).max(300),
+})
+export type EmitirCertificadoDto = z.infer<typeof EmitirCertificadoSchema>
 
 export const UploadComprobanteCobroSchema = z.object({
   content_type: z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
