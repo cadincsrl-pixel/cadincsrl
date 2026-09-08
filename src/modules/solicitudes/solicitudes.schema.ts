@@ -139,6 +139,10 @@ export const EditarItemSchema = z.object({
   proveedor_id: z.number().int().positive().optional(),
   precio_unit:  z.number().min(0).optional(),
   factura_id:   z.number().int().positive().nullable().optional(),
+  // Quién le pagó al proveedor. Editable después de resuelto (2026-09-08):
+  // el caso real son renglones que quedaron como "CADINC adelantó" cuando en
+  // realidad el cliente los pagó directo — cambiaba la deuda entera.
+  pagado_por:   z.enum(['cadinc', 'cliente']).optional(),
 })
 
 export type CreateSolicitudDto = z.infer<typeof CreateSolicitudSchema>

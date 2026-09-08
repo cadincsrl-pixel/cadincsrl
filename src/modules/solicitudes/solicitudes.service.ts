@@ -1114,10 +1114,10 @@ export const solicitudesService = {
 
   async editarItem(itemId: number, dto: EditarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    // El precio de un item ya cobrado al cliente está congelado (el cobro
-    // imputó monto_cobrado = precio_total al registrarse): retasarlo
+    // El precio Y el "quién lo pagó" de un item ya cobrado están congelados
+    // (el cobro imputó monto_cobrado = precio_total al registrarse): tocarlos
     // descuadraría la rendición. Eliminar el cobro primero si hace falta.
-    if (dto.precio_unit !== undefined) {
+    if (dto.precio_unit !== undefined || dto.pagado_por !== undefined) {
       const { data: mccCobrado } = await supabase
         .from('materiales_a_cuenta_cliente')
         .select('cobro_id').eq('item_id', itemId).not('cobro_id', 'is', null).maybeSingle()
@@ -1148,6 +1148,7 @@ export const solicitudesService = {
     }
     if (dto.proveedor_id !== undefined) updates.proveedor_id = dto.proveedor_id
     if (dto.factura_id !== undefined) updates.factura_id = dto.factura_id
+    if (dto.pagado_por !== undefined) updates.pagado_por = dto.pagado_por
     if (Object.keys(updates).length > 0) {
       updates.updated_by = userId
       // .is('cobro_id', null): si un cobro imputó la fila entre el guard y
