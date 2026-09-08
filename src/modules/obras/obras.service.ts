@@ -350,12 +350,13 @@ export const obrasService = {
 
   /**
    * Nueva versión de porcentajes. Upsert por (obra, desde): corregir los
-   * números del MISMO viernes es un arreglo, no una versión nueva. Y prende
-   * `por_administracion` en la obra: cargar porcentajes ES marcarla.
+   * números del MISMO viernes es un arreglo, no una versión nueva. En obras
+   * de cliente además prende `por_administracion` (cargar porcentajes ES
+   * marcarla); en llave en mano no — ver el comentario en el cuerpo.
    */
   async guardarAdminTarifa(cod: string, dto: AdminTarifaDto, userId: string) {
     const { data: obra } = await supabaseAdmin
-      .from('obras').select('cod').eq('cod', cod).maybeSingle()
+      .from('obras').select('cod, materiales_a_cargo_de').eq('cod', cod).maybeSingle()
     if (!obra) throw Object.assign(new Error('OBRA_INEXISTENTE'), { code: 'OBRA_INEXISTENTE' })
 
     // Siempre viernes: los costos de operarios y contratistas son semanales,
@@ -371,9 +372,15 @@ export const obrasService = {
       .single()
     if (error) throw new Error(error.message)
 
-    const { error: e2 } = await supabaseAdmin
-      .from('obras').update({ por_administracion: true, updated_by: userId }).eq('cod', cod)
-    if (e2) throw new Error(e2.message)
+    // En una obra de cliente, cargar porcentajes ES marcarla por
+    // administración. En una LLAVE EN MANO no: ahí los % alimentan el panel
+    // de "Costos de obra" (p. ej. cargas sociales sobre la mano de obra) y la
+    // obra no factura costo + % — prender el flag la mudaría de régimen.
+    if (obra.materiales_a_cargo_de !== 'cadinc') {
+      const { error: e2 } = await supabaseAdmin
+        .from('obras').update({ por_administracion: true, updated_by: userId }).eq('cod', cod)
+      if (e2) throw new Error(e2.message)
+    }
     return data
   },
 }
