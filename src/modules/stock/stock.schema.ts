@@ -81,7 +81,11 @@ export const CreateMovimientoSchema = z.object({
   material_id:       z.number().int().positive(),
   tipo:              z.enum(['entrada', 'salida', 'ajuste']),
   cantidad:          z.number().refine(n => n !== 0, { message: 'cantidad no puede ser 0' }),
-  motivo:            z.enum(['compra', 'despacho_obra', 'devolucion', 'ajuste_inventario', 'consumo_interno']),
+  // 'consumo_interno' salió el 2026-09-08. Lo reemplaza el pedido a un centro
+  // interno (obras.es_interna), que además VALORIZA: stock_movimientos no tiene
+  // columna de precio, así que lo que salía por acá no podía sumar al gasto del
+  // pañol. El CHECK sigue en la base, con 0 filas, por si alguien lo manda igual.
+  motivo:            z.enum(['compra', 'despacho_obra', 'devolucion', 'ajuste_inventario']),
   sub_motivo:        z.enum(SUB_MOTIVOS_AJUSTE).optional().nullable(),
   obra_cod:          z.string().optional().nullable().default(null),
   solicitud_item_id: z.number().int().optional().nullable().default(null),
@@ -99,18 +103,6 @@ export const CreateMovimientoSchema = z.object({
     }
   } else if (data.cantidad <= 0) {
     ctx.addIssue({ code: 'custom', path: ['cantidad'], message: 'cantidad debe ser positiva para entrada/salida' })
-  }
-  // Lo que el depósito consume para sí (limpieza, lavado, un arreglo) es
-  // siempre una salida, y sin el "para qué" no sirve como registro: el punto
-  // es que en el próximo recuento se lea qué pasó. La base lo exige igual
-  // (stock_movimientos_consumo_interno_chk); acá el error sale legible.
-  if (data.motivo === 'consumo_interno') {
-    if (data.tipo !== 'salida') {
-      ctx.addIssue({ code: 'custom', path: ['tipo'], message: 'un consumo interno es siempre una salida' })
-    }
-    if (!data.obs || data.obs.trim().length < 3) {
-      ctx.addIssue({ code: 'custom', path: ['obs'], message: 'obs es obligatoria para consumo interno: decí para qué se usó' })
-    }
   }
 })
 
