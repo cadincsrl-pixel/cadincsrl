@@ -275,9 +275,20 @@ solicitudes.post('/items/:itemId/revertir-envio', requireResolverItems, requireI
 
 // PATCH /items/:itemId — edita campos de items YA resueltos (ej. corregir
 // precio o proveedor luego de comprado). Es del comprador, no del jefe.
+//
+// Los campos que mueven LA CUENTA DEL CLIENTE (precio_unit y pagado_por)
+// exigen además el flag certificaciones.cargar_precios — pedido del user
+// (08/09): tocar lo que se le cobra a un cliente es decisión suya, no del
+// comprador. Chequeo condicional al body, como forzar_sin_stock: proveedor y
+// factura siguen siendo del comprador con resolver_items.
 solicitudes.patch('/items/:itemId', requireResolverItems, requireItemObraScope, zValidator('json', EditarItemSchema), itemHandler(async (c) => {
+  const dto = c.req.valid('json')
+  if (dto.precio_unit !== undefined || dto.pagado_por !== undefined) {
+    const puede = await tienePermisoExtra(c.get('user').id, 'certificaciones', 'cargar_precios')
+    if (!puede) throw new HttpError(403, 'SIN_PERMISO_CARGAR_PRECIOS')
+  }
   return solicitudesService.editarItem(
-    Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
+    Number(c.req.param('itemId')), dto, c.get('accessToken'), c.get('user').id
   )
 }))
 
