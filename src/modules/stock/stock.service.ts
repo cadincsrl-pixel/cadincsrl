@@ -1,5 +1,5 @@
 import type { PostgrestError } from '@supabase/supabase-js'
-import { createSupabaseClient } from '../../lib/supabase.js'
+import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
 import { normTxt } from '../../lib/norm-txt.js'
 
 export interface MaterialCompra {
@@ -14,9 +14,10 @@ export interface MaterialCompraProveedor {
 }
 export interface MaterialComprasResumen { compras: MaterialCompra[]; por_proveedor: MaterialCompraProveedor[] }
 import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto } from './stock.schema.js'
+import { puedeActualizarCatalogo } from '../../middleware/permission.js'
 
 /** Estados de precio que calcula `v_catalogo_materiales` (20260904z), más 'sin_precio' como agrupador. */
-export const CATALOGO_ESTADOS = ['sin_precio', 'tasar', 'desactualizado', 'al_dia', 'sin_compra'] as const
+export const CATALOGO_ESTADOS = ['sin_precio', 'tasar', 'desactualizado', 'al_dia', 'sin_compra', 'unidad_distinta'] as const
 export type CatalogoEstado = typeof CATALOGO_ESTADOS[number]
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -24,9 +25,16 @@ export type CatalogoEstado = typeof CATALOGO_ESTADOS[number]
 // ─────────────────────────────────────────────────────────────────────────
 // Las rutas lo desarman en `{ error, code, ...extra }`. Cualquier otro Error
 // cae al onError global (500).
+export type MaterialPrecioHist = {
+  id: number; precio: number; unidad: string | null; desde: string
+  fuente: 'manual' | 'compra' | 'ultima_compra' | 'migracion' | 'sql' | 'backfill'
+  item_id: number | null; user_id: string | null; obs: string | null
+  usuario: string | null; variacion_pct: number | null
+}
+
 export class StockHttpError extends Error {
   constructor(
-    readonly status: 400 | 404 | 409,
+    readonly status: 400 | 403 | 404 | 409,
     readonly code: string,
     message: string,
     readonly extra: Record<string, unknown> = {},
@@ -383,10 +391,10 @@ export const stockService = {
       if (error) throw new Error(error.message)
       return count ?? 0
     }
-    const [total, sin_precio, tasar, desactualizado, al_dia] = await Promise.all([
-      contar(), contar('sin_precio'), contar('tasar'), contar('desactualizado'), contar('al_dia'),
+    const [total, sin_precio, tasar, desactualizado, al_dia, unidad_distinta] = await Promise.all([
+      contar(), contar('sin_precio'), contar('tasar'), contar('desactualizado'), contar('al_dia'), contar('unidad_distinta'),
     ])
-    return { total, sin_precio, tasar, desactualizado, al_dia }
+    return { total, sin_precio, tasar, desactualizado, al_dia, unidad_distinta }
   },
 
   /**
@@ -423,6 +431,36 @@ export const stockService = {
     }
     const por_proveedor = [...porProv.values()].sort((a, b) => (b.ultima_fecha ?? '').localeCompare(a.ultima_fecha ?? ''))
     return { compras, por_proveedor }
+  },
+
+  /** Historial de precio_ref (20260911a), del mas nuevo al mas viejo, con variacion contra el anterior. */
+  async getMaterialPrecios(materialId: number, token: string): Promise<MaterialPrecioHist[]> {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('stock_materiales_precios')
+      .select('id, precio, unidad, desde, fuente, item_id, user_id, obs')
+      .eq('material_id', materialId)
+      .order('desde', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(200)
+    if (error) throw new Error(error.message)
+    const filas = (data ?? []) as Omit<MaterialPrecioHist, 'usuario' | 'variacion_pct'>[]
+
+    // Quien lo cambio: sin embed (profiles no tiene FK desde aca; ver memoria
+    // "embed profiles vs auth.users"), una consulta aparte por ids.
+    const ids = [...new Set(filas.map(f => f.user_id).filter((x): x is string => !!x))]
+    const nombres = new Map<string, string>()
+    if (ids.length) {
+      const { data: perfiles } = await supabaseAdmin.from('profiles').select('id, nombre').in('id', ids)
+      for (const p of (perfiles ?? []) as { id: string; nombre: string }[]) nombres.set(p.id, p.nombre)
+    }
+    return filas.map((f, i) => {
+      const prev = filas[i + 1]
+      const variacion_pct = prev && Number(prev.precio) > 0
+        ? Math.round((Number(f.precio) - Number(prev.precio)) / Number(prev.precio) * 1000) / 10
+        : null
+      return { ...f, usuario: f.user_id ? (nombres.get(f.user_id) ?? null) : null, variacion_pct }
+    })
   },
 
   /**
@@ -640,8 +678,12 @@ export const stockService = {
       updated_by: userId,
     }
     if (!insertData.proveedor_id) delete insertData.proveedor_id
+    // El primer precio tambien va por fijar_precio_ref (20260911c): si entra
+    // por el INSERT, el historial lo atribuye a 'sql' y a nadie.
+    const precioInicial = Number(insertData.precio_ref ?? 0)
+    insertData.precio_ref = 0
 
-    const { data, error } = await supabase
+    const { data: creado, error } = await supabase
       .from('stock_materiales')
       .insert(insertData)
       .select('*, stock_rubros(nombre, icono)')
@@ -660,12 +702,22 @@ export const stockService = {
       }
       throw new Error(error.message)
     }
-    return data
+    if (precioInicial > 0 && creado?.id) {
+      const { error: rpcErr } = await supabase.rpc('fijar_precio_ref', {
+        p_material_id: creado.id, p_precio: precioInicial, p_fuente: 'manual', p_item_id: null, p_user_id: userId,
+      })
+      if (rpcErr) throw new Error(rpcErr.message)
+      const { data: conPrecio } = await supabase
+        .from('stock_materiales').select('*, stock_rubros(nombre, icono)').eq('id', creado.id).single()
+      return conPrecio ?? { ...creado, precio_ref: precioInicial }
+    }
+    return creado
   },
 
   async updateMaterial(id: number, dto: UpdateMaterialDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    const updateData: Record<string, unknown> = { ...dto, updated_by: userId }
+    const { precio_fuente, ...campos } = dto
+    const updateData: Record<string, unknown> = { ...campos, updated_by: userId }
     if (updateData.proveedor_id === null || updateData.proveedor_id === undefined) delete updateData.proveedor_id
     // `alias` solo se toca si vino en el body (el schema de update no tiene
     // defaults justamente para no pisarlo con `[]` en cada PATCH).
@@ -674,25 +726,101 @@ export const stockService = {
       updateData.nombre = dto.nombre.trim()
       exigirNombreConPalabras(dto.nombre.trim())
     }
+    // El precio NUNCA va por UPDATE: va por fijar_precio_ref (20260911c), que es
+    // el unico camino que deja fuente, renglon y usuario en el historial.
+    delete updateData.precio_ref
 
+    // 1) ¿Cambia el precio, y de donde viene? Se decide ANTES de escribir nada.
+    let precioNuevo: number | null = null
+    let fuente: 'manual' | 'ultima_compra' = 'manual'
+    if (typeof campos.precio_ref === 'number') {
+      const { data: cat } = await supabase
+        .from('v_catalogo_materiales')
+        .select('unidad, precio_ref, uc_precio, uc_unidad, uc_unidad_ok')
+        .eq('id', id)
+        .maybeSingle()
+      if (!cat) throw new StockHttpError(404, 'MATERIAL_INEXISTENTE', 'No existe el material.')
+      // El modal de edicion manda el form entero con el precio sin tocar: eso
+      // es un no-op y no dispara ni chequeo, ni permiso, ni RPC.
+      const cambia = Number(cat.precio_ref ?? 0) !== campos.precio_ref
+      if (cambia) {
+        // "Usar ultima compra" se infiere SOLO en un PATCH que trae unicamente
+        // el precio (el boton del catalogo). Un form entero es edicion manual.
+        const soloPrecioEnBody = Object.keys(campos).every(k => k === 'precio_ref')
+        const coincide = cat.uc_precio != null && Number(cat.uc_precio) === campos.precio_ref
+        const esUltimaCompra = precio_fuente === 'ultima_compra' || (precio_fuente === undefined && soloPrecioEnBody && coincide)
+        if (esUltimaCompra) {
+          if (cat.uc_precio == null) {
+            throw new StockHttpError(409, 'SIN_ULTIMA_COMPRA', 'La ficha no tiene compras de las que copiar el precio.')
+          }
+          // Contra la unidad FINAL de la ficha: puede venir cambiada en el mismo
+          // PATCH, y es justamente la forma de arreglar una ficha inconsistente.
+          const unidadFinal = typeof campos.unidad === 'string' ? campos.unidad : (cat.unidad as string | null)
+          let ok: boolean = !!cat.uc_unidad_ok
+          if (typeof campos.unidad === 'string' && campos.unidad !== cat.unidad) {
+            const { data } = await supabase.rpc('unidad_compatible', { p_renglon: cat.uc_unidad, p_ficha: unidadFinal })
+            ok = data === true
+          }
+          if (!ok) {
+            throw new StockHttpError(
+              409,
+              'UNIDAD_DISTINTA',
+              `La última compra está en ${cat.uc_unidad ?? '?'} y la ficha en ${unidadFinal ?? '?'}: ese precio no se puede copiar sin convertir.`,
+              { unidad_ficha: unidadFinal, unidad_compra: cat.uc_unidad, uc_precio: cat.uc_precio },
+            )
+          }
+          fuente = 'ultima_compra'
+        }
+        if (!(await puedeActualizarCatalogo(userId))) {
+          throw new StockHttpError(403, 'SIN_PERMISO_CATALOGO', 'Sin permiso para fijar el precio de referencia del catálogo.')
+        }
+        precioNuevo = campos.precio_ref
+      }
+    }
+
+    // 2) Primero los demas campos: es el UPDATE que puede chocar con el nombre
+    //    (23505). Si falla, el precio todavia no se toco.
+    const hayCampos = Object.keys(updateData).some(k => k !== 'updated_by')
+    if (hayCampos) {
+      const { error } = await supabase.from('stock_materiales').update(updateData).eq('id', id)
+      if (error) {
+        if (esNombreDuplicado(error)) {
+          const candidatos = await stockService.buscarParecidos(String(updateData.nombre ?? ''), token, id).catch(() => [])
+          throw new StockHttpError(
+            409,
+            'MATERIAL_DUPLICADO',
+            `Ya existe un material activo llamado "${updateData.nombre}". Renombralo distinto o editá el que ya está.`,
+            { candidatos },
+          )
+        }
+        throw new Error(error.message)
+      }
+    }
+
+    // 3) Despues el precio, con el cliente POR REQUEST: lleva x-cadinc-user y
+    //    audit_cambios atribuye el 'precio_ref: X -> Y' a la persona. Y como
+    //    corre despues del UPDATE, el trigger del historial ya ve la unidad nueva.
+    if (precioNuevo !== null) {
+      const { error: rpcErr } = await supabase.rpc('fijar_precio_ref', {
+        p_material_id: id,
+        p_precio:      precioNuevo,
+        p_fuente:      fuente,
+        p_item_id:     null,
+        p_user_id:     userId,
+      })
+      if (rpcErr) {
+        const code = ['PRECIO_INVALIDO', 'MATERIAL_INEXISTENTE', 'FUENTE_INVALIDA'].find(k => rpcErr.message.includes(k))
+        throw new StockHttpError(code === 'MATERIAL_INEXISTENTE' ? 404 : 400, code ?? 'PRECIO_RECHAZADO', rpcErr.message)
+      }
+    }
+
+    // 4) La ficha como quedo.
     const { data, error } = await supabase
       .from('stock_materiales')
-      .update(updateData)
-      .eq('id', id)
       .select('*, stock_rubros(nombre, icono)')
+      .eq('id', id)
       .single()
-    if (error) {
-      if (esNombreDuplicado(error)) {
-        const candidatos = await stockService.buscarParecidos(String(updateData.nombre ?? ''), token, id).catch(() => [])
-        throw new StockHttpError(
-          409,
-          'MATERIAL_DUPLICADO',
-          `Ya existe un material activo llamado "${updateData.nombre}". Renombralo distinto o editá el que ya está.`,
-          { candidatos },
-        )
-      }
-      throw new Error(error.message)
-    }
+    if (error) throw new Error(error.message)
     return data
   },
 

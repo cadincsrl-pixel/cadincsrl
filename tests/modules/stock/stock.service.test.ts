@@ -15,12 +15,17 @@ type FilaLite = { id: number; nombre: string; unidad: string | null; alias: stri
 
 const { estado } = vi.hoisted(() => ({
   estado: {
+    rpcLlamadas: [] as Array<{ fn: string; args: any }>,
     materiales: [] as FilaLite[],
     insert:  null as { data: unknown; error: unknown } | null,
     update:  null as { data: unknown; error: unknown } | null,
     ultimoInsert: null as any,
     ultimoUpdate: null as any,
   },
+}))
+
+vi.mock('../../../src/middleware/permission.js', () => ({
+  puedeActualizarCatalogo: async () => true,
 }))
 
 vi.mock('../../../src/lib/supabase.js', () => {
@@ -46,6 +51,7 @@ vi.mock('../../../src/lib/supabase.js', () => {
     return obj
   }
   const cliente = { from: () => tabla() }
+  cliente.rpc = async (fn: string, args: any) => { estado.rpcLlamadas.push({ fn, args }); return { data: null, error: null } }
   return { createSupabaseClient: () => cliente, supabase: cliente }
 })
 
@@ -326,8 +332,20 @@ describe('updateMaterial', () => {
   })
 
   it('no toca alias si no vino en el body', async () => {
-    await stockService.updateMaterial(5, UpdateMaterialSchema.parse({ precio_ref: 1200 }), TOKEN, USER)
+    await stockService.updateMaterial(5, UpdateMaterialSchema.parse({ obs: 'nota' }), TOKEN, USER)
     expect(estado.ultimoUpdate).not.toHaveProperty('alias')
+  })
+
+  // 20260911: el precio no va por UPDATE sino por fijar_precio_ref, que es el
+  // unico camino que deja fuente, renglon y usuario en el historial.
+  it('el precio va por fijar_precio_ref y no por update', async () => {
+    estado.rpcLlamadas = []
+    estado.ultimoUpdate = undefined
+    await stockService.updateMaterial(5, UpdateMaterialSchema.parse({ precio_ref: 1200 }), TOKEN, USER)
+    expect(estado.rpcLlamadas).toEqual([{ fn: 'fijar_precio_ref', args: {
+      p_material_id: 5, p_precio: 1200, p_fuente: 'manual', p_item_id: null, p_user_id: USER,
+    } }])
+    expect(estado.ultimoUpdate).toBeUndefined()
   })
 
   it('mapea el 23505 a 409 MATERIAL_DUPLICADO', async () => {

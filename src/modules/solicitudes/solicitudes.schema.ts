@@ -114,6 +114,11 @@ export const ComprarItemSchema = z.object({
   // Cantidad realmente comprada si difiere de la solicitada. Si no viene,
   // se compró lo solicitado (cantidad_comprada queda NULL).
   cantidad_comprada:   z.number().positive().optional(),
+  // Poner este precio como precio de referencia del catalogo (20260911). No es
+  // columna: el service valida ANTES de resolver (ficha, unidad compatible,
+  // factura no anterior al precio vigente) y llama fijar_precio_ref DESPUES,
+  // con fuente 'compra' y el renglon. El route exige permiso de catalogo.
+  actualizar_catalogo: z.boolean().optional().default(false),
 })
 
 // Resolver ítem: despachar de depósito

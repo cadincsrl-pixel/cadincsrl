@@ -184,9 +184,12 @@ export const remitosEnvioService = {
           if (mat) {
             await supabase
               .from('stock_materiales')
+              // Solo stock. Hasta el 2026-09-08 aca tambien se pisaba precio_ref
+              // con el precio de esta compra, sin mirar unidad ni IVA: un precio
+              // curado a mano se perdia con la siguiente recepcion. El catalogo
+              // se actualiza al COMPRAR, con confirmacion (actualizar_catalogo).
               .update({
                 stock_actual: Number(mat.stock_actual) + aEnviar,
-                ...(itemPrev.precio_unit != null ? { precio_ref: itemPrev.precio_unit } : {}),
                 updated_by: userId,
               })
               .eq('id', itemPrev.material_id)

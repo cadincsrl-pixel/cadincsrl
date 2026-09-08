@@ -154,3 +154,23 @@ export async function tieneFlag(
   const v = permisos?.[modulo]?.[flag]
   return v === undefined ? defaultActual : Boolean(v)
 }
+
+/**
+ * ¿Puede fijar el precio de referencia del catálogo? UNA regla para los dos
+ * escritores de precio_ref (PATCH /api/stock/materiales/:id con precio_ref, y
+ * la compra con actualizar_catalogo): activo y (admin, o `actualizacion` de
+ * certificaciones y además el flag `cargar_precios` o la pestaña Catálogo —
+ * lista ausente o vacía = todas, igual que requireTab). Fase 1 de precios,
+ * 2026-09-08.
+ */
+export async function puedeActualizarCatalogo(userId: string): Promise<boolean> {
+  const profile = await fetchPermisos(userId)
+  if (!profile || estaInactivo(profile)) return false
+  if (profile.rol === 'admin') return true
+  const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
+  const cert = permisos?.certificaciones ?? {}
+  if (cert.actualizacion !== true) return false
+  if (cert.cargar_precios === true) return true
+  const tabs = cert.tabs
+  return !Array.isArray(tabs) || tabs.length === 0 || (tabs as unknown[]).includes('catalogo')
+}

@@ -75,6 +75,13 @@ stock.get('/catalogo/:id/compras', async (c) => {
   return c.json(await stockService.getMaterialCompras(id, c.get('accessToken')))
 })
 
+// GET /api/stock/catalogo/:id/precios — historial de precio_ref (20260911a).
+stock.get('/catalogo/:id/precios', async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
+  return c.json(await stockService.getMaterialPrecios(id, c.get('accessToken')))
+})
+
 // GET /api/stock/materiales/parecidos?nombre=… — los candidatos del "¿no será
 // este?" ANTES de intentar el alta. El modal del pedido los muestra en vivo
 // mientras se tipea el nombre; es la misma búsqueda que dispara el 409.

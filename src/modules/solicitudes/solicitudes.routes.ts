@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso } from '../../middleware/permission.js'
+import { requirePermiso, puedeActualizarCatalogo } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import { solicitudesService, HttpError } from './solicitudes.service.js'
@@ -186,7 +186,19 @@ solicitudes.post('/items/:itemId/stock-cliente', requireResolverItems, requireIt
   )
 }))
 
+// GET /items/:itemId/sugerencia-precio?proveedor_id= — catalogo, ultima compra
+// y ultima compra a este proveedor, con unidades y compatibilidad (20260911).
+solicitudes.get('/items/:itemId/sugerencia-precio', requireItemObraScope, itemHandler(async (c) => {
+  const prov = Number(c.req.query('proveedor_id'))
+  return solicitudesService.sugerenciaPrecio(
+    Number(c.req.param('itemId')), Number.isInteger(prov) && prov > 0 ? prov : null,
+  )
+}))
+
 solicitudes.post('/items/:itemId/comprar', requireResolverItems, requireItemObraScope, zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
+  if (c.req.valid('json').actualizar_catalogo && !(await puedeActualizarCatalogo(c.get('user').id))) {
+    throw new HttpError(403, 'SIN_PERMISO_CATALOGO')
+  }
   return solicitudesService.comprarItem(
     Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
   )

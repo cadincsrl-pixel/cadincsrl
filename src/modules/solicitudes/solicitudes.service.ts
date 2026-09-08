@@ -2,6 +2,7 @@ import type { PostgrestError } from '@supabase/supabase-js'
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import { registrarItemEvento } from '../../lib/item-eventos.js'
+import { validarActualizacionCatalogo, fechaART } from './actualizar-catalogo.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
   ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto,
@@ -57,6 +58,9 @@ export function mapRpcError(error: PostgrestError): HttpError {
     /STOCK_INSUFICIENTE/.test(msg)  ? 'STOCK_INSUFICIENTE' :
     /ITEM_YA_REGISTRADO/.test(msg)  ? 'ITEM_YA_REGISTRADO' :
     /DESPACHO_A_DEPOSITO/.test(msg) ? 'DESPACHO_A_DEPOSITO' :
+    /PRECIO_INVALIDO/.test(msg)     ? 'PRECIO_INVALIDO' :
+    /FUENTE_INVALIDA/.test(msg)     ? 'FUENTE_INVALIDA' :
+    /MATERIAL_INEXISTENTE/.test(msg) ? 'MATERIAL_INEXISTENTE' :
     error.code || 'UNKNOWN'
 
   switch (code) {
@@ -69,6 +73,9 @@ export function mapRpcError(error: PostgrestError): HttpError {
     case 'ITEM_NO_DISPONIBLE':    return new HttpError(404, code) // mantiene 404 legacy
     case 'PROVEEDOR_INVALIDO':    return new HttpError(400, code)
     case 'FACTURA_INVALIDA':      return new HttpError(400, code)
+    case 'PRECIO_INVALIDO':       return new HttpError(400, code)
+    case 'FUENTE_INVALIDA':       return new HttpError(400, code)
+    case 'MATERIAL_INEXISTENTE':  return new HttpError(404, code)
     case 'STOCK_INSUFICIENTE':    return new HttpError(400, code, parseDetail(error.details))
     case 'ITEM_YA_REGISTRADO':    return new HttpError(409, code)
     case 'DESPACHO_A_DEPOSITO':   return new HttpError(400, code)
@@ -443,6 +450,11 @@ export const solicitudesService = {
   },
 
   async comprarItem(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
+    // Si la compra ademas actualiza el catalogo, se valida ANTES de resolver
+    // (para no dejar el item a medias) y se aplica DESPUES (para no tocar el
+    // catalogo si la resolucion falla).
+    const catalogo = dto.actualizar_catalogo ? await this._prepararActualizacionCatalogo(itemId, dto) : null
+
     // en_proveedor: la RPC hace el cambio de estado; el evento se escribe
     // acá best-effort (pendiente de mover adentro de la RPC — plan #2 B2).
     if (dto.queda_en_proveedor) {
@@ -463,7 +475,8 @@ export const solicitudesService = {
         },
         userId,
       })
-      return item
+      if (!catalogo) return item
+      return { ...item, catalogo: await this._aplicarActualizacionCatalogo(catalogo, itemId, token, userId) }
     }
 
     // Camino RPC: el evento 'comprado' lo escribe la RPC DENTRO de la TX
@@ -471,7 +484,127 @@ export const solicitudesService = {
     const item = useRpcResolver()
       ? await this.comprarItemViaRPC(itemId, dto, token, userId)
       : await this.comprarItemLegacy(itemId, dto, token, userId)
-    return await this._promoverSiYaEnviado(item, token, userId)
+    const resuelto = await this._promoverSiYaEnviado(item, token, userId)
+    if (!catalogo) return resuelto
+    return { ...resuelto, catalogo: await this._aplicarActualizacionCatalogo(catalogo, itemId, token, userId) }
+  },
+
+  /** Lee ficha, unidad y factura y corre la regla; tira 400 con el motivo. */
+  async _prepararActualizacionCatalogo(itemId: number, dto: ComprarItemDto) {
+    const { data: item, error } = await supabaseAdmin
+      .from('solicitud_compra_item')
+      .select('id, material_id, unidad')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!item) throw new HttpError(404, 'ITEM_NO_EXISTE')
+    const [{ data: ficha }, { data: factura }] = await Promise.all([
+      item.material_id
+        ? supabaseAdmin.from('stock_materiales').select('id, unidad, precio_ref, precio_actualizado_en').eq('id', item.material_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      dto.factura_id
+        ? supabaseAdmin.from('facturas_compra').select('fecha').eq('id', dto.factura_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ])
+    const { data: compat } = item.material_id
+      ? await supabaseAdmin.rpc('unidad_compatible', { p_renglon: item.unidad, p_ficha: ficha?.unidad ?? null })
+      : { data: false }
+    const rechazo = validarActualizacionCatalogo({
+      material_id:           item.material_id ?? null,
+      unidad_renglon:        item.unidad ?? null,
+      unidad_ficha:          ficha?.unidad ?? null,
+      unidad_compatible:     compat === true,
+      precio_unit:           dto.precio_unit,
+      fecha_precio:          (factura?.fecha as string | null) ?? fechaART(new Date()),
+      precio_actualizado_en: (ficha?.precio_actualizado_en as string | null) ?? null,
+      precio_vigente:        Number(ficha?.precio_ref ?? 0),
+    })
+    if (rechazo) throw new HttpError(400, rechazo.code, rechazo.detalle)
+    return { material_id: item.material_id as number, precio: dto.precio_unit, precio_anterior: Number(ficha?.precio_ref ?? 0) }
+  },
+
+  /**
+   * Corre DESPUES de resolver, en su propia transaccion, y es best-effort: la
+   * compra ya esta hecha, asi que un fallo aca no puede volver como 500 (el
+   * reintento daria ITEM_NO_DISPONIBLE con la compra hecha). Devuelve el
+   * resultado para que la UI diga "compra cargada, el catalogo no se actualizo
+   * por X". Cliente por request: lleva x-cadinc-user para audit_cambios.
+   */
+  async _aplicarActualizacionCatalogo(
+    prep: { material_id: number; precio: number; precio_anterior: number }, itemId: number, token: string, userId: string,
+  ): Promise<{ ok: true; material_id: number; precio: number; precio_anterior: number } | { ok: false; code: string }> {
+    try {
+      const { error } = await createSupabaseClient(token).rpc('fijar_precio_ref', {
+        p_material_id: prep.material_id,
+        p_precio:      prep.precio,
+        p_fuente:      'compra',
+        p_item_id:     itemId,
+        p_user_id:     userId,
+      })
+      if (error) return { ok: false, code: mapRpcError(error).code }
+      return { ok: true, material_id: prep.material_id, precio: prep.precio, precio_anterior: prep.precio_anterior }
+    } catch (e) {
+      return { ok: false, code: e instanceof HttpError ? e.code : 'CATALOGO_NO_ACTUALIZADO' }
+    }
+  },
+
+  /**
+   * Lo que el modal de compra/despacho muestra al lado del precio (20260911):
+   * catalogo, ultima compra y ultima compra a ESTE proveedor, cada una con su
+   * unidad y si es compatible con la del renglon. La regla de unidades es la
+   * de la base (unidad_compatible), no se reimplementa aca.
+   */
+  async sugerenciaPrecio(itemId: number, proveedorId: number | null) {
+    const { data: item, error } = await supabaseAdmin
+      .from('solicitud_compra_item')
+      .select('id, material_id, unidad, descripcion')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!item) throw new HttpError(404, 'ITEM_NO_EXISTE')
+    const base = { unidad_renglon: item.unidad ?? null, ficha: null, ultima_compra: null, a_este_proveedor: null, compatible: false, puede_actualizar_ref: false, motivo: 'SIN_FICHA' as string | null }
+    if (!item.material_id) return base
+
+    const [{ data: cat }, { data: deEste }] = await Promise.all([
+      supabaseAdmin.from('v_catalogo_materiales')
+        .select('id, nombre, unidad, precio_ref, precio_actualizado_en, uc_precio, uc_unidad, uc_fecha, uc_proveedor, uc_unidad_ok')
+        .eq('id', item.material_id).maybeSingle(),
+      proveedorId
+        ? supabaseAdmin.from('v_material_compras')
+            .select('precio_unit, unidad, fecha, proveedor_nombre')
+            .eq('material_id', item.material_id).eq('proveedor_id', proveedorId)
+            .order('fecha', { ascending: false, nullsFirst: false }).limit(1)
+        : Promise.resolve({ data: null }),
+    ])
+    if (!cat) return base
+    const compatCon = async (u: string | null) => {
+      const { data } = await supabaseAdmin.rpc('unidad_compatible', { p_renglon: u, p_ficha: cat.unidad })
+      return data === true
+    }
+    const aEste = (deEste as { precio_unit: number; unidad: string | null; fecha: string | null; proveedor_nombre: string | null }[] | null)?.[0] ?? null
+    const [compatible, compatEste] = await Promise.all([compatCon(item.unidad ?? null), aEste ? compatCon(aEste.unidad) : Promise.resolve(false)])
+    const dias = cat.precio_actualizado_en
+      ? Math.floor((Date.now() - new Date(cat.precio_actualizado_en as string).getTime()) / 86_400_000)
+      : null
+    return {
+      unidad_renglon: item.unidad ?? null,
+      ficha: {
+        id: cat.id, nombre: cat.nombre, unidad: cat.unidad,
+        precio_ref: Number(cat.precio_ref ?? 0),
+        precio_actualizado_en: cat.precio_actualizado_en ?? null,
+        dias_desde_precio: dias,
+        precio_viejo: dias != null && dias > 45,
+      },
+      ultima_compra: cat.uc_precio != null
+        ? { precio_unit: Number(cat.uc_precio), unidad: cat.uc_unidad ?? null, fecha: cat.uc_fecha ?? null, proveedor: cat.uc_proveedor ?? null, compatible: !!cat.uc_unidad_ok }
+        : null,
+      a_este_proveedor: aEste
+        ? { precio_unit: Number(aEste.precio_unit), unidad: aEste.unidad, fecha: aEste.fecha, proveedor: aEste.proveedor_nombre, compatible: compatEste }
+        : null,
+      compatible,
+      puede_actualizar_ref: compatible && Number(cat.precio_ref ?? 0) >= 0,
+      motivo: compatible ? null : 'UNIDAD_DISTINTA',
+    }
   },
 
   // RPC `resolver_item_en_proveedor`: marca item='en_proveedor' + suma

@@ -60,7 +60,14 @@ export const CreateMaterialSchema = z.object({
   forzar:        z.boolean().optional().default(false),
 })
 
-export const UpdateMaterialSchema = z.object(materialFields).partial()
+export const UpdateMaterialSchema = z.object(materialFields).partial().extend({
+  // De donde sale el precio_ref que viene en el body. No es columna: el service
+  // lo usa para la fuente del historial (20260911a) y, si es "usar ultima
+  // compra", para exigir que la unidad de esa compra sea la de la ficha
+  // (409 UNIDAD_DISTINTA). Sin el campo, se infiere: si el numero coincide con
+  // la ultima compra, es "usar ultima compra".
+  precio_fuente: z.enum(['manual', 'ultima_compra']).optional(),
+})
 
 // ── Movimientos ──
 //
