@@ -94,6 +94,8 @@ const CrearInput = z.object({
     unidad: z.enum(UNIDADES),
     material_id: z.number().int().positive().nullish()
       .describe('El id que devolvió buscar_materiales en ESTA conversación. Null si el material no está en el catálogo.'),
+    sin_ficha_confirmado: z.boolean().optional()
+      .describe('true SOLO si le mostraste los candidatos a la persona y dijo que ninguno es el que pide. Sin esto, un renglón sin material_id se rechaza cuando el catálogo tiene algo parecido.'),
     clase: z.enum(['material', 'herramienta']).optional(),
     color: z.string().max(60).nullish(),
     obs: z.string().max(300).nullish(),
@@ -148,18 +150,40 @@ async function crearPedido(input: unknown, ctx: PedidoCtx) {
     }
   }
 
-  // (4) Coherencia texto↔ficha: el candado contra el id inventado.
-  const conTexto = dto.items.filter(i => i.material_id)
-  if (conTexto.length) {
-    const res = await stockService.buscarParaPedido(
-      conTexto.map(i => ({ texto: i.texto_dictado })), ctx.token)
-    for (const [n, item] of conTexto.entries()) {
-      const validos = new Set((res[n]?.candidatos ?? []).map(c => c.material_id))
-      if (!validos.has(item.material_id!)) {
+  // (4) Coherencia texto↔ficha, en las DOS direcciones.
+  //
+  //     El id inventado ya estaba cubierto. Faltaba el simétrico, que es
+  //     todavía más silencioso: el id AUSENTE. Un renglón con material_id
+  //     null se salteaba todos los controles de catálogo —la re-búsqueda,
+  //     la unidad, el pisado de la descripción—, así que un modelo que no
+  //     llamara a buscar_materiales cargaba el pedido entero en texto libre
+  //     con todas las guardias en verde. Y no se ve: como el modelo escribe
+  //     bien la descripción, el renglón parece catalogado. Pasó de verdad
+  //     con el pedido #697 (08/09/2026, el primero que cargó el asistente):
+  //     seis renglones, los seis con ficha exacta en el catálogo, los seis
+  //     sin vincular, y ninguno podía despacharse de depósito.
+  //
+  //     Ahora la búsqueda corre sobre TODOS los renglones: al que trae id
+  //     se le exige que esté entre los candidatos, y al que no lo trae se
+  //     le exige que la búsqueda no haya encontrado nada. El texto libre
+  //     sigue siendo posible, pero deja de ser el camino sin control: o la
+  //     búsqueda no devuelve nada, o la persona dijo que ninguno sirve
+  //     (`sin_ficha_confirmado`), que es el mismo "no, es otro material"
+  //     que ya usa `forzar` en el alta de materiales.
+  const busquedas = await stockService.buscarParaPedido(
+    dto.items.map(i => ({ texto: i.texto_dictado })), ctx.token)
+  for (const [n, item] of dto.items.entries()) {
+    const candidatos = busquedas[n]?.candidatos ?? []
+    if (item.material_id) {
+      if (!new Set(candidatos.map(c => c.material_id)).has(item.material_id)) {
         return rechazo('MATERIAL_NO_COINCIDE_CON_LO_DICTADO',
           `La ficha que elegiste para "${item.texto_dictado}" no aparece cuando busco ese texto. Volvé a buscarlo y preguntale a la persona cuál es.`,
-          { texto: item.texto_dictado, candidatos: res[n]?.candidatos ?? [] })
+          { texto: item.texto_dictado, candidatos })
       }
+    } else if (candidatos.length && !item.sin_ficha_confirmado) {
+      return rechazo('FALTA_ELEGIR_LA_FICHA',
+        `"${item.texto_dictado}" SÍ tiene ficha en el catálogo y lo mandaste sin material_id. Mostrale estos candidatos a la persona y mandá el id del que elija. Si te dice que ninguno es, repetí el renglón con sin_ficha_confirmado: true.`,
+        { texto: item.texto_dictado, candidatos })
     }
   }
 

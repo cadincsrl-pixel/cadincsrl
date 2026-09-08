@@ -6,6 +6,7 @@
 //   · una ficha que no se corresponde con lo que se dictó (el error invisible)
 //   · una unidad distinta a la de la ficha (el que deja el precio ×20)
 //   · una herramienta que no está en el catálogo
+//   · un renglón SIN ficha cuando el catálogo sí la tiene (el pedido #697)
 // Y que cuando todo está bien, el pedido sale por la ruta HTTP de siempre y no
 // por adentro del service, que es lo que le da permisos y auditoría.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -140,6 +141,29 @@ describe('crear_pedido — los candados', () => {
     expect(estado.posts).toHaveLength(0)
   })
 
+
+  // El error del pedido #697 (08/09/2026): el modelo no llamó a
+  // buscar_materiales y mandó los seis renglones con material_id null. Como
+  // escribió bien las descripciones, el pedido parecía sano; en realidad no
+  // cruzaba ni precio ni stock y no se podía despachar de depósito.
+  it('rechaza el renglón sin ficha cuando el catálogo SÍ tiene candidatos', async () => {
+    const r = await run({ ...PEDIDO_OK, items: [{ ...ITEM_OK, material_id: null }] })
+    expect(r.error).toBe('FALTA_ELEGIR_LA_FICHA')
+    expect(r.candidatos).toHaveLength(1)
+    expect(estado.posts).toHaveLength(0)
+  })
+
+  it('corta en el primer renglón sin ficha aunque los demás estén bien', async () => {
+    estado.fichas.push({ id: 2, nombre: 'Arena x 25kg', unidad: 'bolsa', clase: 'material', usa_color: false, activo: true })
+    estado.candidatosPorTexto['arena'] = [{ material_id: 2, nombre: 'Arena x 25kg' }]
+    const r = await run({ ...PEDIDO_OK, items: [
+      { ...ITEM_OK, material_id: 2, texto_dictado: 'arena', descripcion: 'Arena x 25kg' },
+      { ...ITEM_OK, material_id: null },
+    ] })
+    expect(r.error).toBe('FALTA_ELEGIR_LA_FICHA')
+    expect(estado.posts).toHaveLength(0)
+  })
+
   it('rechaza un material_id que no existe en el catálogo', async () => {
     estado.fichas = []
     const r = await run({ ...PEDIDO_OK, items: [{ ...ITEM_OK, material_id: 4242 }] })
@@ -196,6 +220,31 @@ describe('crear_pedido — el camino feliz', () => {
   it('deja el origen a la vista del comprador en el obs de cabecera', async () => {
     await run(PEDIDO_OK)
     expect(String(estado.posts[0].body.obs)).toMatch(/^\[asistente\]/)
+  })
+
+
+  it('el texto libre sigue pasando cuando la búsqueda no encuentra nada', async () => {
+    estado.candidatosPorTexto = {}
+    const r = await run({ ...PEDIDO_OK, items: [{
+      texto_dictado: 'perfil raro que no existe', descripcion: 'Perfil raro',
+      cantidad: 1, unidad: 'unid', material_id: null,
+    }] })
+    expect(r.ok).toBe(true)
+    expect(r.sin_catalogar).toBe(1)
+    expect((estado.posts[0].body.items as Fila[])[0].material_id).toBeNull()
+  })
+
+  it('el texto libre pasa igual si la persona ya dijo que ninguno de los candidatos sirve', async () => {
+    const r = await run({ ...PEDIDO_OK, items: [{
+      ...ITEM_OK, material_id: null, sin_ficha_confirmado: true,
+    }] })
+    expect(r.ok).toBe(true)
+    expect(r.sin_catalogar).toBe(1)
+  })
+
+  it('sin_ficha_confirmado es una señal para el servidor, no viaja al pedido', async () => {
+    await run({ ...PEDIDO_OK, items: [{ ...ITEM_OK, material_id: null, sin_ficha_confirmado: true }] })
+    expect((estado.posts[0].body.items as Fila[])[0]).not.toHaveProperty('sin_ficha_confirmado')
   })
 
   it('si la ruta rechaza, lo cuenta y no inventa que lo cargó', async () => {
