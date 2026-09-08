@@ -182,6 +182,71 @@ const MAX_CANDIDATOS  = 5
 const PESO_MOTIVO: Record<MotivoParecido, number> = { alias: 4, codigo: 3, nombre: 2, palabras: 1 }
 const PAGINA          = 1000 // tope duro de PostgREST: paginamos, no pedimos de más
 
+// ── Búsqueda para pedidos dictados al asistente ───────────────────────
+
+/** Más candidatos que en el anti-duplicados: acá el que elige es una persona. */
+const MAX_CANDIDATOS_PEDIDO = 8
+
+export type ResolucionBusqueda = 'unico' | 'varios' | 'sin_resultados'
+
+export type CandidatoPedido = {
+  material_id: number
+  nombre: string
+  unidad: string | null
+  clase: string
+  rubro: string | null
+  precio_ref: number
+  usa_color: boolean
+  stock_deposito: number
+  motivo: MotivoParecido
+  /** null si la persona no dijo unidad; false = dijo una y NO es la de la ficha. */
+  coincide_unidad: boolean | null
+}
+
+export type ResultadoBusquedaPedido = {
+  texto: string
+  resolucion: ResolucionBusqueda
+  candidatos: CandidatoPedido[]
+}
+
+/** Los puntajes con los que se ordena; se descartan antes de devolver. */
+type CandidatoConPuntaje = CandidatoPedido & { _sim: number; _palabras: number; _precision: number }
+
+type FilaMaterialPedido = FilaMaterialLite & {
+  clase: string | null
+  rubro_id: number | null
+  precio_ref: number | null
+  usa_color: boolean | null
+  stock_actual: number | null
+  stock_materiales_rubro_id_fkey: { nombre: string } | null
+}
+
+/**
+ * La palabra de presentación que dijo la persona ("bolsas", "rollos", "litros")
+ * llevada a la unidad del catálogo. Devuelve null si no se reconoce, que es lo
+ * mismo que no haber dicho nada: no inventamos una unidad para poder comparar.
+ */
+const SINONIMOS_UNIDAD: Record<string, string> = {
+  unidad: 'unid', unidades: 'unid', unid: 'unid', u: 'unid',
+  kilo: 'kg', kilos: 'kg', kg: 'kg', kilogramo: 'kg', kilogramos: 'kg',
+  tonelada: 'tn', toneladas: 'tn', tn: 'tn',
+  litro: 'lt', litros: 'lt', lt: 'lt', l: 'lt',
+  metro: 'm', metros: 'm', m: 'm', ml: 'm',
+  m2: 'm2', metrocuadrado: 'm2', metroscuadrados: 'm2',
+  m3: 'm3', metrocubico: 'm3', metroscubicos: 'm3',
+  galon: 'gl', galones: 'gl', gl: 'gl',
+  rollo: 'rollo', rollos: 'rollo',
+  bolsa: 'bolsa', bolsas: 'bolsa',
+  balde: 'balde', baldes: 'balde',
+  lata: 'lata', latas: 'lata',
+}
+
+export function unidadNormalizada(dicha: string | null | undefined): string | null {
+  if (!dicha) return null
+  const limpia = normMaterial(dicha).replace(/\s+/g, '')
+  return SINONIMOS_UNIDAD[limpia] ?? null
+}
+
 /** Normaliza una lista de alias: normalizados, sin vacíos y sin repetidos. */
 export function normalizarAlias(alias: readonly string[] | null | undefined): string[] {
   if (!alias) return []
@@ -430,6 +495,121 @@ export const stockService = {
         || b.sim - a.sim
         || a.nombre.length - b.nombre.length)
       .slice(0, MAX_CANDIDATOS)
+  },
+
+  /**
+   * Resuelve varios materiales dictados contra el catálogo, de una sola vez.
+   *
+   * Lo usa el asistente cuando alguien le dicta un pedido ("20 bolsas de
+   * cemento, 3 rollos de alambre y una masa"). Se diferencia de
+   * `buscarParecidos` en tres cosas, y por eso es una función aparte en vez de
+   * un parámetro más:
+   *
+   *   1. Es BATCH y baja el catálogo UNA vez. `buscarParecidos` lo pagina
+   *      entero en cada llamada, y envolverla en un bucle serían 6 descargas
+   *      del catálogo por pedido, adentro de un chat que ya tarda.
+   *   2. Devuelve lo que hace falta para DECIDIR, no solo para avisar de un
+   *      duplicado: unidad, clase, rubro, precio y si el material admite color.
+   *      Sin la unidad y el precio a la vista, el asistente no puede preguntar
+   *      "¿Portland o plasticor?" con los datos que hacen elegir.
+   *   3. Marca `coincide_unidad` contra la palabra de presentación que dijo la
+   *      persona ("bolsas", "rollos"). Cuando no coincide hay que preguntar, no
+   *      convertir: es el error que deja el precio mal por un factor de 20.
+   *
+   * NUNCA elige por su cuenta. Si un texto da más de un candidato, devuelve la
+   * lista y que pregunte quien sabe. 111 alias del catálogo apuntan a más de una
+   * ficha a propósito (los 6 colores de cable, los 5 largos de chapa).
+   */
+  async buscarParaPedido(
+    consultas: { texto: string; unidad_dicha?: string | null; solo_herramientas?: boolean }[],
+    token: string,
+  ): Promise<ResultadoBusquedaPedido[]> {
+    const supabase = createSupabaseClient(token)
+
+    // El catálogo entero, UNA vez, para todos los términos.
+    const filas: FilaMaterialPedido[] = []
+    for (let desde = 0; desde < PAGINA * 20; desde += PAGINA) {
+      const { data, error } = await supabase
+        .from('stock_materiales')
+        .select('id, nombre, unidad, alias, clase, rubro_id, precio_ref, usa_color, stock_actual, stock_materiales_rubro_id_fkey:stock_rubros(nombre)')
+        .eq('activo', true)
+        .order('id')
+        .range(desde, desde + PAGINA - 1)
+      if (error) throw new Error(error.message)
+      if (!data || data.length === 0) break
+      filas.push(...(data as unknown as FilaMaterialPedido[]))
+      if (data.length < PAGINA) break
+    }
+
+    // Precalculado una sola vez por ficha, no por término.
+    const preparadas = filas.map(f => ({
+      fila:    f,
+      blob:    normMaterial(`${f.nombre} ${(f.alias ?? []).join(' ')}`),
+      tokens:  tokensMaterial(f.nombre).length,
+      alias:   (f.alias ?? []).map(a => normMaterial(a)),
+      codigos: [f.nombre, ...(f.alias ?? [])].flatMap(t => [...formasCodigo(t)]),
+    }))
+
+    return consultas.map(({ texto, unidad_dicha, solo_herramientas }) => {
+      const buscado = normMaterial(texto)
+      if (!buscado) return { texto, resolucion: 'sin_resultados' as const, candidatos: [] }
+
+      const palabrasBuscadas = tokensMaterial(buscado)
+      const codigosBuscados  = formasCodigo(buscado)
+      const minimoPalabras   = Math.min(2, palabrasBuscadas.length)
+      const unidadDicha      = unidadNormalizada(unidad_dicha)
+
+      const encontrados: CandidatoConPuntaje[] = []
+      for (const p of preparadas) {
+        const f = p.fila
+        if (solo_herramientas && f.clase !== 'herramienta') continue
+        const coinciden = palabrasBuscadas.filter(t => p.blob.includes(t)).length
+        const palabras  = palabrasBuscadas.length ? coinciden / palabrasBuscadas.length : 0
+        const precision = Math.min(1, coinciden / Math.max(1, p.tokens))
+        const sim       = Math.round(similitud(buscado, f.nombre) * 1000) / 1000
+        const porAlias  = p.alias.includes(buscado)
+        const porCodigo = codigosBuscados.size > 0 && p.codigos.some(c => codigosBuscados.has(c))
+
+        const motivo: MotivoParecido | null =
+          porAlias ? 'alias'
+          : porCodigo ? 'codigo'
+          : sim > UMBRAL_PARECIDO ? 'nombre'
+          : (coinciden >= minimoPalabras && palabras >= UMBRAL_PALABRAS) ? 'palabras'
+          : null
+        if (!motivo) continue
+
+        encontrados.push({
+          material_id: f.id,
+          nombre:      f.nombre,
+          unidad:      f.unidad,
+          clase:       f.clase ?? 'material',
+          rubro:       f.stock_materiales_rubro_id_fkey?.nombre ?? null,
+          precio_ref:  Number(f.precio_ref ?? 0),
+          usa_color:   !!f.usa_color,
+          stock_deposito: Number(f.stock_actual ?? 0),
+          motivo,
+          coincide_unidad: unidadDicha === null ? null : unidadDicha === f.unidad,
+          _sim: sim, _palabras: palabras, _precision: precision,
+        })
+      }
+
+      const ordenados = encontrados
+        .sort((a, b) =>
+          PESO_MOTIVO[b.motivo] - PESO_MOTIVO[a.motivo]
+          || (a.motivo === 'palabras' ? (b._palabras - a._palabras || b._precision - a._precision) : 0)
+          || b._sim - a._sim
+          || a.nombre.length - b.nombre.length)
+        .slice(0, MAX_CANDIDATOS_PEDIDO)
+        .map(({ _sim, _palabras, _precision, ...c }) => c)
+
+      return {
+        texto,
+        resolucion: (ordenados.length === 0 ? 'sin_resultados'
+                   : ordenados.length === 1 ? 'unico'
+                   : 'varios') as ResolucionBusqueda,
+        candidatos: ordenados,
+      }
+    })
   },
 
   async createMaterial(dto: CreateMaterialDto, token: string, userId: string) {

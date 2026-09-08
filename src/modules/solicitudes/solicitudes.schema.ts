@@ -1,11 +1,25 @@
 import { z } from 'zod'
 
+/**
+ * Las 12 unidades que acepta la base (CHECK solicitud_compra_item_unidad_check).
+ *
+ * Hasta 2026-09-08 acá había un `z.string()` libre: cualquier cosa que no fuera
+ * de esta lista pasaba la validación y explotaba contra el CHECK como un 500
+ * crudo de Postgres. Con el enum es un 400 legible. Importa más ahora que el
+ * asistente puede cargar pedidos dictados, porque "20 bolsas" tienta a mandar
+ * 'bolsas' en plural — pero el agujero existía igual desde la pantalla.
+ */
+export const UNIDADES = [
+  'unid', 'kg', 'tn', 'lt', 'm', 'm2', 'm3', 'gl', 'rollo', 'bolsa', 'balde', 'lata',
+] as const
+const UnidadField = z.enum(UNIDADES).default('unid')
+
 const ItemSchema = z.object({
   descripcion: z.string().min(1),
   // positive(): dejar la cantidad vacía en el form guardaba 0 en silencio
   // (73 items en 0 hasta 2026-07-22). Sin cantidad no hay pedido.
   cantidad:    z.number().positive(),
-  unidad:      z.string().default('unid'),
+  unidad:      UnidadField,
   obs:         z.string().nullable().optional().default(null),
   material_id: z.number().int().positive().nullable().optional().default(null),
   // Color pedido. Texto libre a propósito: la carta de colores es del proveedor y
@@ -46,7 +60,7 @@ const UpdateItemSchema = z.object({
   id:          z.number().int().positive().optional(), // si tiene id, es update; si no, es nuevo
   descripcion: z.string().min(1),
   cantidad:    z.number().positive(),
-  unidad:      z.string().default('unid'),
+  unidad:      UnidadField,
   obs:         z.string().nullable().optional().default(null),
   material_id: z.number().int().positive().nullable().optional().default(null),
   // Color pedido. Texto libre a propósito: la carta de colores es del proveedor y
