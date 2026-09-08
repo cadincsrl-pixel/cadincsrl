@@ -13,7 +13,7 @@ import { requirePermiso, requireTab } from '../../middleware/permission.js'
 import { cuentaClienteService, CcHttpError } from './cuenta-cliente.service.js'
 import {
   CrearCobroSchema, EditarCobroSchema, UploadComprobanteCobroSchema,
-  CuentaCorrienteQuerySchema, CUENTA_ESTADOS, type CuentaCorrienteQuery,
+  CuentaCorrienteQuerySchema, CUENTA_ESTADOS, ImputarPagadoSchema, type CuentaCorrienteQuery,
 } from './cuenta-cliente.schema.js'
 import type { CuentaFiltro } from './cuenta-cliente.service.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -111,6 +111,17 @@ cuentaCliente.get('/interno/renglones', requirePermiso('certificaciones', 'lectu
   const filtro = { ...filtroDeQuery(f), solo_internas: true }
   return c.json(await cuentaClienteService.getRenglones(allowed, filtro, f.limit, f.offset, c.get('accessToken')))
 })
+
+// POST /api/cuenta-cliente/imputar-pagado — reparte lo pagado sobre lo
+// facturable, primero lo viejo, y congela lo cubierto (materiales a "Cobrado",
+// semanas de jornales/contratistas a cuenta_admin_imputaciones). Idempotente.
+cuentaCliente.post('/imputar-pagado', soloCuenta, requirePermiso('certificaciones', 'creacion'),
+  zValidator('json', ImputarPagadoSchema), handler(async (c) => {
+    const { obra_cod } = c.req.valid('json')
+    const userId = c.get('user').id
+    await validarObraDelUsuario(userId, obra_cod, 'certificaciones')
+    return c.json(await cuentaClienteService.imputarPagado(obra_cod, userId))
+  }))
 
 // GET /api/cuenta-cliente/pendientes-precio
 // Conteo de materiales sin precio (a tasar) por obra, en las obras del usuario.

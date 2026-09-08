@@ -278,6 +278,17 @@ obras.get('/:cod/admin-tarifas', requirePermisoOr([
   return c.json(await obrasService.getAdminTarifas(cod))
 })
 
+// GET /api/obras/:cod/admin-imputaciones — las semanas ya congeladas por
+// pagos del cliente (la cuenta las usa en lugar del cálculo vivo).
+obras.get('/:cod/admin-imputaciones', requirePermisoOr([
+  { modulo: 'tarja', accion: 'lectura' },
+  { modulo: 'certificaciones', accion: 'lectura' },
+]), async (c) => {
+  const cod = c.req.param('cod')
+  await validarObraDelUsuario(c.get('user').id, cod, 'certificaciones')
+  return c.json(await obrasService.getAdminImputaciones(cod))
+})
+
 // POST /api/obras/:cod/admin-tarifas — nueva versión de porcentajes.
 // Misma guardia que editar la obra (jefatura). De paso prende el flag: cargar
 // porcentajes ES marcar la obra por administración.

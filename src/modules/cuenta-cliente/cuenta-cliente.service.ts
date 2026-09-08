@@ -16,6 +16,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
 import type { CrearCobroDto, EditarCobroDto } from './cuenta-cliente.schema.js'
 import { normTxt } from '../../lib/norm-txt.js'
+import { calcularCostoObra, viernesISO } from '../horas/costo-obra.js'
+import { todasLasFilas } from '../../lib/paginar.js'
 
 const BUCKET_COBROS = 'cobros-docs'
 
@@ -94,6 +96,46 @@ function palabras(q?: string): string[] {
   return normTxt(q ?? '').split(' ').filter(Boolean)
 }
 
+// ── Imputar lo pagado (2026-09-08) ────────────────────────────────────
+// En una obra por administración el pago del cliente entra "a cuenta", así que
+// nada se congela solo. Este bloque reparte lo pagado sobre lo facturable,
+// PRIMERO LO VIEJO (regla del user), y congela lo cubierto: los materiales vía
+// cobro_id (pasan a "Cobrado", precio clavado) y las semanas de jornales y
+// contratistas vía cuenta_admin_imputaciones (el facturable de ese momento
+// queda guardado y la cuenta lo usa en lugar del cálculo vivo).
+
+export interface ItemImputable {
+  /** 'operarios' | 'contratistas' | 'material' */
+  tipo: 'operarios' | 'contratistas' | 'material'
+  /** sem_key para las patas semanales, id de MCC para materiales. */
+  clave: string
+  fecha: string
+  monto: number
+}
+
+export interface CobroCapacidad { id: number; capacidad: number }
+
+/**
+ * Reparte los ítems sobre los pagos: cronológico, ítems enteros (nunca se
+ * parte uno entre dos pagos), y si uno no entra en ningún pago se saltea y se
+ * sigue con el resto — igual que hace la pantalla al imputar a mano.
+ */
+export function asignarImputaciones(items: ItemImputable[], cobros: CobroCapacidad[]) {
+  const orden = { operarios: 0, contratistas: 1, material: 2 } as const
+  const pendientes = [...items].sort((a, b) =>
+    a.fecha.localeCompare(b.fecha) || orden[a.tipo] - orden[b.tipo] || a.clave.localeCompare(b.clave))
+  const restante = new Map(cobros.map(c => [c.id, c.capacidad]))
+  const asignados: (ItemImputable & { cobro_id: number })[] = []
+  const sinCubrir: ItemImputable[] = []
+  for (const item of pendientes) {
+    const cobro = cobros.find(c => (restante.get(c.id) ?? 0) >= item.monto)
+    if (!cobro) { sinCubrir.push(item); continue }
+    restante.set(cobro.id, (restante.get(cobro.id) ?? 0) - item.monto)
+    asignados.push({ ...item, cobro_id: cobro.id })
+  }
+  return { asignados, sinCubrir }
+}
+
 export const cuentaClienteService = {
   // ── Cuenta corriente (20260904ap) ────────────────────────────────────
 
@@ -167,6 +209,135 @@ export const cuentaClienteService = {
    * RPC gasto_interno_herramientas, y el front las muestra en su propia columna
    * etiquetada como patrimonio — no sumadas al consumo del mes.
    */
+  /**
+   * Imputa lo pagado de una obra: reparte los pagos sobre lo facturable,
+   * primero lo viejo, y congela lo cubierto. Materiales → cobro_id (estado
+   * "Cobrado"); semanas de jornales/contratistas → cuenta_admin_imputaciones
+   * con el facturable de este momento. Idempotente: lo ya congelado no se
+   * vuelve a repartir.
+   */
+  async imputarPagado(obraCod: string, userId: string) {
+    const { data: obra } = await supabaseAdmin
+      .from('obras').select('cod, por_administracion').eq('cod', obraCod).maybeSingle()
+    if (!obra) throw new CcHttpError(404, 'OBRA_INEXISTENTE')
+
+    // Capacidad de cada pago = monto − materiales ya imputados − semanas ya congeladas.
+    const [cobrosR, imputMat, imputSem] = await Promise.all([
+      supabaseAdmin.from('cuenta_cliente_cobros').select('id, fecha, monto').eq('obra_cod', obraCod).order('fecha').order('id'),
+      supabaseAdmin.from('materiales_a_cuenta_cliente').select('cobro_id, monto_cobrado').eq('obra_cod', obraCod).not('cobro_id', 'is', null),
+      supabaseAdmin.from('cuenta_admin_imputaciones').select('sem_key, pata, cobro_id, monto').eq('obra_cod', obraCod),
+    ])
+    for (const r of [cobrosR, imputMat, imputSem]) if (r.error) throw new Error(r.error.message)
+    const usado = new Map<number, number>()
+    for (const m of imputMat.data ?? []) usado.set(m.cobro_id!, (usado.get(m.cobro_id!) ?? 0) + Number(m.monto_cobrado ?? 0))
+    for (const i of imputSem.data ?? []) usado.set(i.cobro_id, (usado.get(i.cobro_id) ?? 0) + Number(i.monto))
+    const cobros: CobroCapacidad[] = (cobrosR.data ?? []).map(c => ({
+      id: c.id, capacidad: Number(c.monto) - (usado.get(c.id) ?? 0),
+    }))
+
+    const items: ItemImputable[] = []
+
+    // Materiales con precio, todavía vivos.
+    const { data: mats, error: eMat } = await supabaseAdmin
+      .from('materiales_a_cuenta_cliente')
+      .select('id, fecha_resolucion, precio_total, pagado_por')
+      .eq('obra_cod', obraCod).is('cobro_id', null).gt('precio_total', 0)
+    if (eMat) throw new Error(eMat.message)
+    for (const m of mats ?? []) {
+      // Lo que el cliente pagó directo al proveedor no es deuda: no se imputa.
+      if (m.pagado_por === 'cliente') continue
+      items.push({ tipo: 'material', clave: String(m.id), fecha: m.fecha_resolucion ?? '9999-12-31', monto: Number(m.precio_total) })
+    }
+
+    // Semanas de jornales y contratistas, solo en obras por administración y
+    // solo las TERMINADAS: la semana en curso todavía suma horas.
+    const yaCongeladas = new Set((imputSem.data ?? []).map(i => `${i.sem_key}|${i.pata}`))
+    const hoyISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10)
+    const viernesActual = viernesISO(hoyISO)
+    if (obra.por_administracion) {
+      const [horas, extras, personal, categorias, tarifas, catObra, pctsR, certsR] = await Promise.all([
+        todasLasFilas<{ leg: string; fecha: string; horas: number }>((d, h) =>
+          supabaseAdmin.from('horas').select('leg, fecha, horas').eq('obra_cod', obraCod).gt('horas', 0).order('fecha').order('id').range(d, h)),
+        supabaseAdmin.from('tarja_hs_extras').select('leg, sem_key, hs').eq('obra_cod', obraCod),
+        supabaseAdmin.from('personal').select('leg, cat_id, personal_cat_historial(cat_id, desde)'),
+        supabaseAdmin.from('categorias').select('id, vh, categoria_tarifas(vh, desde)'),
+        supabaseAdmin.from('tarifas').select('cat_id, vh, desde').eq('obra_cod', obraCod),
+        supabaseAdmin.from('cat_obra').select('leg, cat_id, desde').eq('obra_cod', obraCod),
+        supabaseAdmin.from('obras_admin_tarifas').select('desde, pct_operarios, pct_contratistas').eq('obra_cod', obraCod).order('desde'),
+        supabaseAdmin.from('certificaciones').select('sem_key, monto').eq('obra_cod', obraCod),
+      ])
+      for (const r of [extras, personal, categorias, tarifas, catObra, pctsR, certsR]) {
+        if ((r as { error: { message: string } | null }).error) throw new Error((r as { error: { message: string } }).error.message)
+      }
+      const pcts = pctsR.data ?? []
+      const pctEn = (sem: string, pata: 'pct_operarios' | 'pct_contratistas') => {
+        let vigente: number | null = null
+        for (const t of pcts) if (String(t.desde) <= sem) vigente = Number(t[pata])
+        return vigente ?? 0
+      }
+
+      const costo = calcularCostoObra({
+        horas: horas as never, hsExtras: (extras.data ?? []) as never,
+        personal: (personal.data ?? []) as never, categorias: (categorias.data ?? []) as never,
+        tarifas: (tarifas.data ?? []) as never, catObra: (catObra.data ?? []) as never,
+        hoyISO,
+      })
+      for (const sem of costo.semanas) {
+        if (sem.sem_key >= viernesActual) continue
+        if (sem.costo <= 0 || yaCongeladas.has(`${sem.sem_key}|operarios`)) continue
+        items.push({
+          tipo: 'operarios', clave: sem.sem_key, fecha: sem.sem_key,
+          monto: Math.round(sem.costo * (1 + pctEn(sem.sem_key, 'pct_operarios') / 100) * 100) / 100,
+        })
+      }
+      const certPorSem = new Map<string, number>()
+      for (const c of certsR.data ?? []) {
+        const k = String(c.sem_key).slice(0, 10)
+        certPorSem.set(k, (certPorSem.get(k) ?? 0) + Number(c.monto ?? 0))
+      }
+      for (const [sem, monto] of certPorSem) {
+        if (sem >= viernesActual || monto <= 0 || yaCongeladas.has(`${sem}|contratistas`)) continue
+        items.push({
+          tipo: 'contratistas', clave: sem, fecha: sem,
+          monto: Math.round(monto * (1 + pctEn(sem, 'pct_contratistas') / 100) * 100) / 100,
+        })
+      }
+    }
+
+    const { asignados, sinCubrir } = asignarImputaciones(items, cobros)
+
+    // Escribir: materiales primero (falla temprano si algo cambió), semanas después.
+    for (const a of asignados) {
+      if (a.tipo === 'material') {
+        const { error } = await supabaseAdmin
+          .from('materiales_a_cuenta_cliente')
+          .update({ cobro_id: a.cobro_id, monto_cobrado: a.monto, updated_at: new Date().toISOString() })
+          .eq('id', Number(a.clave)).is('cobro_id', null)
+        if (error) throw new Error(error.message)
+      }
+    }
+    const semanasNuevas = asignados
+      .filter(a => a.tipo !== 'material')
+      .map(a => ({
+        obra_cod: obraCod, sem_key: a.clave, pata: a.tipo,
+        monto: a.monto, cobro_id: a.cobro_id, created_by: userId,
+      }))
+    if (semanasNuevas.length) {
+      const { error } = await supabaseAdmin.from('cuenta_admin_imputaciones').insert(semanasNuevas)
+      if (error) throw new Error(error.message)
+    }
+
+    const suma = (xs: { monto: number }[]) => Math.round(xs.reduce((s, x) => s + x.monto, 0) * 100) / 100
+    return {
+      congelado: {
+        operarios:    { n: asignados.filter(a => a.tipo === 'operarios').length,    monto: suma(asignados.filter(a => a.tipo === 'operarios')) },
+        contratistas: { n: asignados.filter(a => a.tipo === 'contratistas').length, monto: suma(asignados.filter(a => a.tipo === 'contratistas')) },
+        materiales:   { n: asignados.filter(a => a.tipo === 'material').length,     monto: suma(asignados.filter(a => a.tipo === 'material')) },
+      },
+      sin_cubrir: { n: sinCubrir.length, monto: suma(sinCubrir) },
+    }
+  },
+
   async getGastoInterno(allowed: string[] | null, f: CuentaFiltro, grupo: 'obra' | 'mes' | 'proveedor', token: string) {
     const interno = { ...f, solo_internas: true }
     const supabase = createSupabaseClient(token)

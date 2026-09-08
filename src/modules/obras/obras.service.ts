@@ -337,6 +337,17 @@ export const obrasService = {
     return data ?? []
   },
 
+  /** Semanas congeladas por pagos (cuenta_admin_imputaciones), más viejas primero. */
+  async getAdminImputaciones(cod: string) {
+    const { data, error } = await supabaseAdmin
+      .from('cuenta_admin_imputaciones')
+      .select('sem_key, pata, monto, cobro_id')
+      .eq('obra_cod', cod)
+      .order('sem_key')
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
   /**
    * Nueva versión de porcentajes. Upsert por (obra, desde): corregir los
    * números del MISMO viernes es un arreglo, no una versión nueva. Y prende

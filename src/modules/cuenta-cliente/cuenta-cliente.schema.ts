@@ -59,3 +59,8 @@ export const CuentaCorrienteQuerySchema = z.object({
   offset:       z.coerce.number().int().min(0).default(0),
 })
 export type CuentaCorrienteQuery = z.infer<typeof CuentaCorrienteQuerySchema>
+
+/** Imputar lo pagado de una obra: congela lo cubierto, primero lo viejo. */
+export const ImputarPagadoSchema = z.object({
+  obra_cod: z.string().min(1),
+})
