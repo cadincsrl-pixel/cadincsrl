@@ -112,16 +112,22 @@ export function similitud(a: string, b: string): number {
  *   palabras → comparten las palabras con contenido ("pintura de latex blanca"
  *              ↔ "Latex interior x 20lts" + alias "pintura latex").
  */
-export type MotivoParecido = 'alias' | 'codigo' | 'nombre' | 'palabras'
+export type MotivoParecido = 'alias' | 'alias_parecido' | 'codigo' | 'nombre' | 'palabras'
 
 export type MaterialCandidato = {
   id: number
   nombre: string
   unidad: string | null
-  /** Similitud por trigramas contra el nombre (0..1). */
+  /** Similitud por trigramas: la mejor contra el nombre O contra un alias (0..1). */
   sim: number
   /** true si el nombre buscado coincide EXACTO con uno de sus alias. */
   por_alias: boolean
+  /**
+   * El alias al que más se parece el buscado, si es por ahí que entró
+   * (motivo 'alias_parecido'). Sirve para explicarlo en pantalla:
+   * "se escribe muy parecido a «maniful»".
+   */
+  alias_parecido?: string
   /** true si comparten un código de proveedor (ver `formasCodigo`). */
   por_codigo: boolean
   /** Qué parte de las palabras con contenido del buscado aparece en nombre+alias (0..1). */
@@ -195,7 +201,7 @@ const UMBRAL_PARECIDO = 0.45
 const UMBRAL_PALABRAS = 0.5
 const MAX_CANDIDATOS  = 5
 /** Orden de los candidatos: primero la señal más fuerte. */
-const PESO_MOTIVO: Record<MotivoParecido, number> = { alias: 4, codigo: 3, nombre: 2, palabras: 1 }
+const PESO_MOTIVO: Record<MotivoParecido, number> = { alias: 5, alias_parecido: 4, codigo: 3, nombre: 2, palabras: 1 }
 const PAGINA          = 1000 // tope duro de PostgREST: paginamos, no pedimos de más
 
 // ── Búsqueda para pedidos dictados al asistente ───────────────────────
@@ -505,12 +511,20 @@ export const stockService = {
 
   /**
    * Materiales activos parecidos a `nombre`, para el "¿no será este?" del alta
-   * (el 409 del candado y la lista en vivo del modal del pedido). Cuatro
-   * señales, ver `MotivoParecido`: alias exacto, código de proveedor
-   * compartido, trigramas > 0.45 contra el nombre, y palabras con contenido
-   * compartidas (al menos 2, o 1 si el buscado tiene una sola). Las dos
-   * últimas se sumaron el 2026-09-07: con trigramas solos, "pintura de latex
-   * blanca" daba 0.18 contra "Latex interior x 20lts" y el candado no saltaba.
+   * (el 409 del candado y la lista en vivo del modal del pedido). Cinco
+   * señales, ver `MotivoParecido`: alias exacto, alias PARECIDO (trigramas),
+   * código de proveedor compartido, trigramas > 0.45 contra el nombre, y
+   * palabras con contenido compartidas (al menos 2, o 1 si el buscado tiene
+   * una sola).
+   *
+   * Historia de por qué son cinco y no una:
+   *  - 2026-09-07: con trigramas contra el nombre solamente, "pintura de latex
+   *    blanca" daba 0.18 contra "Latex interior x 20lts" y el candado no
+   *    saltaba → se sumaron 'codigo' y 'palabras'.
+   *  - 2026-09-09: los alias se comparaban EXACTOS, así que "manifull" (una L
+   *    de más) no encontró el alias "maniful" y se creó una ficha duplicada
+   *    del manifold de aire. Contra el alias da 0.70; contra el nombre largo,
+   *    0.10 → se sumó 'alias_parecido'.
    */
   async buscarParecidos(nombre: string, token: string, excluirId?: number): Promise<MaterialCandidato[]> {
     const supabase = createSupabaseClient(token)
@@ -544,13 +558,30 @@ export const stockService = {
       const coinciden = palabrasBuscadas.filter(t => blob.includes(t)).length
       const palabras  = palabrasBuscadas.length ? coinciden / palabrasBuscadas.length : 0
       const precision = Math.min(1, coinciden / Math.max(1, tokensMaterial(f.nombre).length))
-      const sim       = Math.round(similitud(buscado, f.nombre) * 1000) / 1000
+      const simNombre = similitud(buscado, f.nombre)
+      // Los trigramas también contra CADA ALIAS, no solo contra el nombre.
+      // Un sinónimo es corto y específico ("maniful"), y el nombre del
+      // catálogo es largo y descriptivo ("Manifold p/ aire acondicionado
+      // (juego de manómetros)"): un error de tipeo de una letra da 0,70
+      // contra el alias y apenas 0,10 contra el nombre. Sin esto, el 09/09
+      // "manifull" no encontró nada y se creó una ficha duplicada; lo mismo
+      // "alfombra iglesia", que da 0,53 contra el alias "alfombra".
+      let simAlias = 0
+      let aliasParecido: string | undefined
+      for (const a of alias) {
+        const s = similitud(buscado, a)
+        if (s > simAlias) { simAlias = s; aliasParecido = a }
+      }
+      const sim       = Math.round(Math.max(simNombre, simAlias) * 1000) / 1000
       const por_alias = alias.some(a => normMaterial(a) === buscado)
       const por_codigo = codigosBuscados.size > 0 &&
         [f.nombre, ...alias].some(t => [...formasCodigo(t)].some(c => codigosBuscados.has(c)))
+      // Se parece a un sinónimo pero no al nombre: es el caso del tipeo.
+      const porAliasParecido = !por_alias && simAlias > UMBRAL_PARECIDO && simAlias > simNombre
 
       const motivo: MotivoParecido | null =
         por_alias ? 'alias'
+        : porAliasParecido ? 'alias_parecido'
         : por_codigo ? 'codigo'
         : sim > UMBRAL_PARECIDO ? 'nombre'
         : (coinciden >= minimoPalabras && palabras >= UMBRAL_PALABRAS) ? 'palabras'
@@ -559,6 +590,7 @@ export const stockService = {
       candidatos.push({
         id: f.id, nombre: f.nombre, unidad: f.unidad,
         sim, por_alias, por_codigo,
+        ...(motivo === 'alias_parecido' ? { alias_parecido: aliasParecido } : {}),
         palabras: Math.round(palabras * 100) / 100, precision: Math.round(precision * 100) / 100, motivo,
       })
     }

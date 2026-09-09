@@ -212,6 +212,46 @@ describe('buscarParecidos', () => {
   })
 
 
+  // Los dos casos reales del 2026-09-09: se creó una ficha duplicada porque
+  // el buscado se parecía a un ALIAS, no al nombre, y los alias solo se
+  // comparaban exactos.
+  it('encuentra por alias PARECIDO: un error de tipeo de una letra ("manifull" ↔ "maniful")', async () => {
+    estado.materiales = [
+      material(1322, 'Manifold p/ aire acondicionado (juego de manómetros)', ['manifold', 'maniful', 'manifol']),
+      material(30, 'Cemento Portland x 50kg'),
+    ]
+    const cs = await stockService.buscarParecidos('manifull', TOKEN)
+    expect(cs.map(c => c.id)).toEqual([1322])
+    expect(cs[0].motivo).toBe('alias_parecido')
+    expect(cs[0].alias_parecido).toBe('maniful')
+    // Contra el nombre largo da 0.10: sin mirar los alias no llegaba al umbral.
+    expect(cs[0].sim).toBeGreaterThan(0.45)
+  })
+
+  it('encuentra por alias parecido aunque el nombre no comparta casi nada ("alfombra iglesia")', async () => {
+    estado.materiales = [
+      material(1187, 'Alfombra alto tránsito (El Espartano Delos)', ['alfombra', 'alfombra espartano']),
+    ]
+    const cs = await stockService.buscarParecidos('alfombra iglesia', TOKEN)
+    expect(cs.map(c => c.id)).toEqual([1187])
+    expect(cs[0].sim).toBeGreaterThan(0.45)
+  })
+
+  it('el alias exacto sigue ganándole al parecido', async () => {
+    estado.materiales = [
+      material(1, 'Manifold p/ aire acondicionado', ['maniful']),
+      material(2, 'Otro manifold', ['manifull']),
+    ]
+    const cs = await stockService.buscarParecidos('manifull', TOKEN)
+    expect(cs[0].id).toBe(2)
+    expect(cs[0].motivo).toBe('alias')
+  })
+
+  it('un alias que NO se parece no arrastra al candidato', async () => {
+    estado.materiales = [material(1, 'Cemento Portland x 50kg', ['portland', 'bolsa de cemento'])]
+    expect(await stockService.buscarParecidos('manifull', TOKEN)).toEqual([])
+  })
+
   it('encuentra por alias exacto aunque el nombre no se parezca', async () => {
     estado.materiales = [
       material(1, 'Tornillo T1 autoperforante', ['t1']),
