@@ -8,7 +8,7 @@ import { solicitudesService, HttpError } from './solicitudes.service.js'
 import {
   CreateSolicitudSchema, UpdateSolicitudSchema,
   ComprarItemSchema, DespacharItemSchema, EnviarItemSchema, EditarItemSchema,
-  ResolverStockClienteSchema,
+  ResolverStockClienteSchema, ProponerPrecioSchema, RechazarPrecioSchema,
 } from './solicitudes.schema.js'
 
 // Variable de contexto usada por el gate de despacho forzado.
@@ -301,6 +301,52 @@ solicitudes.patch('/items/:itemId', requireResolverItems, requireItemObraScope, 
   }
   return solicitudesService.editarItem(
     Number(c.req.param('itemId')), dto, c.get('accessToken'), c.get('user').id
+  )
+}))
+
+// ─────────────────────────────────────────────────────────────────────────
+// Precios propuestos: los carga quien compra, los aprueba el dueño (20260912o)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Sin esto, el que tiene el dato choca contra el 403 de cargar_precios y el
+// precio no entra nunca: Nicolás compra en cuenta corriente y POLLANO le pasa
+// la cuenta una semana después. Proponer NO mueve la cuenta del cliente.
+
+/** Guard del que aprueba: el mismo flag que ya permite cargar precios. */
+async function requireCargarPrecios(c: any, next: any) {
+  const puede = await tienePermisoExtra(c.get('user').id, 'certificaciones', 'cargar_precios')
+  if (!puede) return c.json({ error: 'SIN_PERMISO_CARGAR_PRECIOS' }, 403)
+  await next()
+}
+
+// GET /items/precios-propuestos — la bandeja del que aprueba.
+solicitudes.get('/items/precios-propuestos', requireCargarPrecios, async (c) => {
+  return c.json(await solicitudesService.listarPreciosPropuestos(c.get('accessToken')))
+})
+
+// POST /items/:itemId/proponer-precio — lo puede hacer quien resuelve compras.
+solicitudes.post('/items/:itemId/proponer-precio',
+  requireResolverItems, requireItemObraScope,
+  zValidator('json', ProponerPrecioSchema), itemHandler(async (c) => {
+  const dto = c.req.valid('json')
+  return solicitudesService.proponerPrecio(
+    Number(c.req.param('itemId')), dto.precio_unit, dto.obs ?? null,
+    c.get('accessToken'), c.get('user').id,
+  )
+}))
+
+// POST /items/:itemId/aprobar-precio · /rechazar-precio — solo el aprobador.
+solicitudes.post('/items/:itemId/aprobar-precio', requireCargarPrecios, itemHandler(async (c) => {
+  return solicitudesService.aprobarPrecio(
+    Number(c.req.param('itemId')), c.get('accessToken'), c.get('user').id,
+  )
+}))
+
+solicitudes.post('/items/:itemId/rechazar-precio',
+  requireCargarPrecios, zValidator('json', RechazarPrecioSchema), itemHandler(async (c) => {
+  return solicitudesService.rechazarPrecio(
+    Number(c.req.param('itemId')), c.req.valid('json').motivo,
+    c.get('accessToken'), c.get('user').id,
   )
 }))
 

@@ -172,9 +172,26 @@ export const EditarItemSchema = z.object({
   path: ['cantidad'],
 })
 
+/**
+ * Precios propuestos (20260912o): quien compra deja el precio esperando el OK
+ * de quien tiene `cargar_precios`. La propuesta no mueve la cuenta del
+ * cliente, así que acá solo se valida que sea un precio de verdad.
+ */
+export const ProponerPrecioSchema = z.object({
+  precio_unit: z.number().positive(),
+  obs:         z.string().trim().max(300).optional(),
+})
+
+/** Rechazar exige motivo: el que lo cargó tiene que saber por qué. */
+export const RechazarPrecioSchema = z.object({
+  motivo: z.string().trim().min(3).max(300),
+})
+
 export type CreateSolicitudDto = z.infer<typeof CreateSolicitudSchema>
 export type UpdateSolicitudDto = z.infer<typeof UpdateSolicitudSchema>
 export type ComprarItemDto     = z.infer<typeof ComprarItemSchema>
 export type DespacharItemDto   = z.infer<typeof DespacharItemSchema>
 export type EnviarItemDto      = z.infer<typeof EnviarItemSchema>
 export type EditarItemDto      = z.infer<typeof EditarItemSchema>
+export type ProponerPrecioDto  = z.infer<typeof ProponerPrecioSchema>
+export type RechazarPrecioDto  = z.infer<typeof RechazarPrecioSchema>

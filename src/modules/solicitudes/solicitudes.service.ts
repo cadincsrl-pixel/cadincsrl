@@ -1396,6 +1396,140 @@ export const solicitudesService = {
     return data
   },
 
+  // ── Precios propuestos (20260912o) ────────────────────────────────────
+  //
+  // El precio de la cuenta lo aprueba quien tiene `cargar_precios`, pero el
+  // dato lo tiene el que compró: el proveedor pasa la cuenta días después.
+  // Estos tres métodos son el camino "lo carga uno, lo aprueba otro", copiado
+  // del que ya usan los ajustes de stock (declarar → aprobar/rechazar).
+  //
+  // La propuesta NO toca `precio_unit` ni la cuenta del cliente: hasta que se
+  // apruebe, el renglón sigue valiendo lo que valía.
+
+  /** Deja un precio esperando el OK. Lo puede hacer quien resuelve compras. */
+  async proponerPrecio(itemId: number, precio: number, obs: string | null, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    // Lo cobrado y lo certificado no se toca, ni siquiera para proponer: el
+    // precio ya se rindió. Mismo criterio que editarItem.
+    const { data: cong } = await supabase
+      .from('materiales_a_cuenta_cliente')
+      .select('cobro_id, certificado_id').eq('item_id', itemId)
+      .or('cobro_id.not.is.null,certificado_id.not.is.null').maybeSingle()
+    if (cong?.cobro_id != null) throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: cong.cobro_id })
+    if (cong?.certificado_id != null) throw new HttpError(409, 'ITEM_CERTIFICADO', { certificado_id: cong.certificado_id })
+
+    const { data, error } = await supabase
+      .from('solicitud_compra_item')
+      .update({
+        precio_propuesto: precio,
+        precio_propuesto_por: userId,
+        precio_propuesto_en: new Date().toISOString(),
+        precio_propuesto_obs: obs,
+        updated_by: userId,
+      })
+      .eq('id', itemId)
+      .in('estado', ['comprado', 'de_deposito', 'enviado', 'retirado'])
+      .select('*, solicitud_compra(id, obra_cod)')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) throw new HttpError(404, 'ITEM_NO_EXISTE')
+
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    data.solicitud_id ?? null,
+      accion:         'precio_propuesto',
+      estadoAnterior: data.estado,
+      estadoNuevo:    data.estado,
+      cantidad:       null,
+      comentario:     `Propone $${precio} (el renglón sigue en $${Number(data.precio_unit ?? 0)} hasta que se apruebe).`,
+      meta:           { precio_propuesto: precio, precio_actual: Number(data.precio_unit ?? 0), obs },
+      userId,
+    })
+    return data
+  },
+
+  /**
+   * Aprueba el precio propuesto: pasa a ser el precio real del renglón y de la
+   * cuenta del cliente. Reusa `editarItem`, así el recálculo del MCC (cantidad
+   * efectiva incluida) sale de un solo lugar.
+   */
+  async aprobarPrecio(itemId: number, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data: item, error } = await supabase
+      .from('solicitud_compra_item')
+      .select('id, estado, precio_unit, precio_propuesto, precio_propuesto_por, precio_propuesto_obs, solicitud_id')
+      .eq('id', itemId).maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!item) throw new HttpError(404, 'ITEM_NO_EXISTE')
+    if (item.precio_propuesto == null) throw new HttpError(409, 'SIN_PRECIO_PROPUESTO')
+
+    const propuesto = Number(item.precio_propuesto)
+    const anterior  = Number(item.precio_unit ?? 0)
+    await this.editarItem(itemId, { precio_unit: propuesto }, token, userId)
+
+    await supabase.from('solicitud_compra_item').update({
+      precio_propuesto: null, precio_propuesto_por: null,
+      precio_propuesto_en: null, precio_propuesto_obs: null,
+      updated_by: userId,
+    }).eq('id', itemId)
+
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    item.solicitud_id ?? null,
+      accion:         'precio_aprobado',
+      estadoAnterior: item.estado,
+      estadoNuevo:    item.estado,
+      cantidad:       null,
+      comentario:     `Precio aprobado: $${anterior} → $${propuesto}.`,
+      meta:           { precio_anterior: anterior, precio_nuevo: propuesto, propuesto_por: item.precio_propuesto_por },
+      userId,
+    })
+    return { id: itemId, precio_unit: propuesto }
+  },
+
+  /** Rechaza la propuesta. El motivo queda en el evento, para que el que la cargó sepa por qué. */
+  async rechazarPrecio(itemId: number, motivo: string, token: string, userId: string) {
+    const supabase = createSupabaseClient(token)
+    const { data: item } = await supabase
+      .from('solicitud_compra_item')
+      .select('id, estado, precio_propuesto, precio_propuesto_por, solicitud_id')
+      .eq('id', itemId).maybeSingle()
+    if (!item) throw new HttpError(404, 'ITEM_NO_EXISTE')
+    if (item.precio_propuesto == null) throw new HttpError(409, 'SIN_PRECIO_PROPUESTO')
+
+    const { error } = await supabase.from('solicitud_compra_item').update({
+      precio_propuesto: null, precio_propuesto_por: null,
+      precio_propuesto_en: null, precio_propuesto_obs: null,
+      updated_by: userId,
+    }).eq('id', itemId)
+    if (error) throw new Error(error.message)
+
+    await registrarItemEvento(supabase, {
+      itemId,
+      solicitudId:    item.solicitud_id ?? null,
+      accion:         'precio_rechazado',
+      estadoAnterior: item.estado,
+      estadoNuevo:    item.estado,
+      cantidad:       null,
+      comentario:     `Precio rechazado ($${Number(item.precio_propuesto)}): ${motivo}`,
+      meta:           { precio_rechazado: Number(item.precio_propuesto), motivo, propuesto_por: item.precio_propuesto_por },
+      userId,
+    })
+    return { id: itemId }
+  },
+
+  /** Los precios esperando aprobación, para la bandeja del que aprueba. */
+  async listarPreciosPropuestos(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('v_cuenta_corriente')
+      .select('id, item_id, obra_cod, obra_nom, descripcion, cantidad, unidad, precio_unit, precio_total, precio_propuesto, precio_propuesto_por, precio_propuesto_en, precio_propuesto_obs, proveedor_nom, fecha_resolucion')
+      .not('precio_propuesto', 'is', null)
+      .order('precio_propuesto_en', { ascending: true })
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
   // Corta el despacho de depósito cuando la obra destino ES el depósito.
   // Ver el comentario largo en despacharItem(): el movimiento no existe
   // físicamente y el stock que descuenta no vuelve nunca.
