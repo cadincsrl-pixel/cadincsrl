@@ -75,6 +75,24 @@ stock.get('/catalogo/:id/compras', async (c) => {
   return c.json(await stockService.getMaterialCompras(id, c.get('accessToken')))
 })
 
+// PATCH /api/stock/compras/:itemId/referencia — descartar (o volver a tomar)
+// una compra como referencia de precio (20260912a). Mismo permiso que editar
+// el catálogo: es una decisión sobre el precio de la ficha, no sobre el pedido
+// —el renglón sigue valuado igual en la cuenta de la obra—.
+const ReferenciaSchema = z.object({ usar: z.boolean() })
+stock.patch('/compras/:itemId/referencia',
+  requirePermiso('certificaciones', 'actualizacion'), requireTab('certificaciones', 'catalogo'),
+  zValidator('json', ReferenciaSchema), async (c) => {
+  const itemId = Number(c.req.param('itemId'))
+  if (!Number.isInteger(itemId) || itemId <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
+  try {
+    return c.json(await stockService.marcarPrecioReferencia(itemId, c.req.valid('json').usar, c.get('user').id))
+  } catch (e) {
+    if (e instanceof StockHttpError) return c.json({ error: e.message, code: e.code, ...e.extra }, e.status)
+    throw e
+  }
+})
+
 // GET /api/stock/catalogo/:id/precios — historial de precio_ref (20260911a).
 stock.get('/catalogo/:id/precios', async (c) => {
   const id = Number(c.req.param('id'))

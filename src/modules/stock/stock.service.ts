@@ -418,6 +418,26 @@ export const stockService = {
   },
 
   /**
+   * Descartar (o volver a aceptar) una compra como referencia de precio
+   * (20260912a). Marca el RENGLÓN, no el material: lo que está mal es ese dato
+   * puntual — otra pieza vinculada a la ficha equivocada, una urgencia
+   * carísima, un combo cargado como unidad — y el resto del historial sigue
+   * sirviendo. No toca el precio cobrado a la obra: si además está mal ahí, se
+   * corrige por separado.
+   */
+  async marcarPrecioReferencia(itemId: number, usar: boolean, userId: string) {
+    const { data, error } = await supabaseAdmin
+      .from('solicitud_compra_item')
+      .update({ precio_no_referencia: !usar, updated_by: userId })
+      .eq('id', itemId)
+      .select('id, material_id, precio_unit, precio_no_referencia')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) throw new StockHttpError(404, 'ITEM_INEXISTENTE', 'ITEM_INEXISTENTE')
+    return data
+  },
+
+  /**
    * Historial de compras de un material (v_material_compras, 20260906f): una
    * fila por compra real, de la más nueva a la más vieja, y el resumen por
    * proveedor (último precio, cuántas veces, mínimo y máximo). Es lo que le
