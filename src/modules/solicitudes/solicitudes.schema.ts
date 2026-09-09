@@ -104,10 +104,13 @@ export const UpdateSolicitudSchema = z.object({
 // - 'cliente': el cliente pagó directo. Solo registro de rendición, no genera deuda.
 export const ComprarItemSchema = z.object({
   proveedor_id:        z.number().int().positive(),
-  // Compra externa: el precio se conoce al momento (factura). Obligatorio > 0
-  // para no generar materiales a cuenta del cliente en $0. El despacho de
-  // depósito SÍ admite 0 (lo tasan Alina/Nicolás después; ver DespacharItemSchema).
-  precio_unit:         z.number().positive(),
+  // Compra externa: el precio se conoce al momento (factura), así que es
+  // obligatorio > 0 para no generar materiales a cuenta del cliente en $0...
+  // salvo cuando el proveedor lo pasa después (cuenta corriente): ahí entra en
+  // 0 con `esperando_precio` y el renglón queda marcado hasta que se cargue
+  // (20260912c). El refine de abajo exige una de las dos cosas. El despacho de
+  // depósito SÍ admite 0 siempre (lo tasan después; ver DespacharItemSchema).
+  precio_unit:         z.number().min(0),
   factura_id:          z.number().int().positive().nullable().optional(),
   queda_en_proveedor:  z.boolean().optional().default(false),
   pagado_por:          z.enum(['cadinc', 'cliente']).optional().default('cadinc'),
@@ -119,6 +122,13 @@ export const ComprarItemSchema = z.object({
   // factura no anterior al precio vigente) y llama fijar_precio_ref DESPUES,
   // con fuente 'compra' y el renglon. El route exige permiso de catalogo.
   actualizar_catalogo: z.boolean().optional().default(false),
+  // La compra entra sin precio porque el proveedor todavía no lo pasó
+  // (20260912c). La marca se apaga sola cuando se carga el precio (trigger
+  // trg_item_esperando_precio), venga por Cargar precios o por el PATCH.
+  esperando_precio:    z.boolean().optional().default(false),
+}).refine(d => d.precio_unit > 0 || d.esperando_precio === true, {
+  message: 'Cargá un precio mayor a 0 o marcá "esperando precio del proveedor"',
+  path: ['precio_unit'],
 })
 
 // Resolver ítem: despachar de depósito
@@ -148,6 +158,9 @@ export const EditarItemSchema = z.object({
   // el caso real son renglones que quedaron como "CADINC adelantó" cuando en
   // realidad el cliente los pagó directo — cambiaba la deuda entera.
   pagado_por:   z.enum(['cadinc', 'cliente']).optional(),
+  // Prender o apagar la marca a mano (20260912c). Cargar un precio > 0 la
+  // apaga solo (trigger), no hace falta mandarla.
+  esperando_precio: z.boolean().optional(),
 })
 
 export type CreateSolicitudDto = z.infer<typeof CreateSolicitudSchema>

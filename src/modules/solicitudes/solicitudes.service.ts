@@ -475,8 +475,9 @@ export const solicitudesService = {
         },
         userId,
       })
-      if (!catalogo) return item
-      return { ...item, catalogo: await this._aplicarActualizacionCatalogo(catalogo, itemId, token, userId) }
+      const marcado = await this._marcarEsperandoPrecio(item, dto, itemId, token, userId)
+      if (!catalogo) return marcado
+      return { ...marcado, catalogo: await this._aplicarActualizacionCatalogo(catalogo, itemId, token, userId) }
     }
 
     // Camino RPC: el evento 'comprado' lo escribe la RPC DENTRO de la TX
@@ -485,8 +486,44 @@ export const solicitudesService = {
       ? await this.comprarItemViaRPC(itemId, dto, token, userId)
       : await this.comprarItemLegacy(itemId, dto, token, userId)
     const resuelto = await this._promoverSiYaEnviado(item, token, userId)
-    if (!catalogo) return resuelto
-    return { ...resuelto, catalogo: await this._aplicarActualizacionCatalogo(catalogo, itemId, token, userId) }
+    const marcado = await this._marcarEsperandoPrecio(resuelto, dto, itemId, token, userId)
+    if (!catalogo) return marcado
+    return { ...marcado, catalogo: await this._aplicarActualizacionCatalogo(catalogo, itemId, token, userId) }
+  },
+
+  /**
+   * Compra sin precio porque el proveedor lo pasa después (20260912c): deja la
+   * marca en el renglón y un evento en el historial. Corre DESPUÉS de resolver
+   * y es best-effort: la compra ya está hecha, un fallo acá no puede volver
+   * como 500. La marca se apaga sola cuando alguien carga el precio (trigger
+   * trg_item_esperando_precio), así que acá solo se prende.
+   */
+  async _marcarEsperandoPrecio(item: any, dto: ComprarItemDto, itemId: number, token: string, userId: string) {
+    if (!dto.esperando_precio) return item
+    try {
+      const supabase = createSupabaseClient(token)
+      const { data, error } = await supabase
+        .from('solicitud_compra_item')
+        .update({ esperando_precio: true })
+        .eq('id', itemId)
+        .select('id, solicitud_id, estado')
+        .maybeSingle()
+      if (error || !data) return item
+      await registrarItemEvento(supabase, {
+        itemId,
+        solicitudId:    data.solicitud_id ?? null,
+        accion:         'esperando_precio',
+        estadoAnterior: data.estado,
+        estadoNuevo:    data.estado,
+        cantidad:       null,
+        comentario:     'Compra sin precio: el proveedor lo pasa después. Cargarlo desde "Cargar precios" en la cuenta corriente.',
+        meta:           { proveedor_id: dto.proveedor_id, factura_id: dto.factura_id ?? null },
+        userId,
+      })
+      return { ...item, esperando_precio: true }
+    } catch {
+      return item
+    }
   },
 
   /** Lee ficha, unidad y factura y corre la regla; tira 400 con el motivo. */
