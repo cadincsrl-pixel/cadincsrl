@@ -431,10 +431,10 @@ export const cuentaClienteService = {
     // obras cerradas), y el chip de una archivada SÍ lleva a sus renglones,
     // porque con `obra_cod` puesto `getRenglones()` saltea el filtro. Lo que
     // faltaba era que el front pudiera distinguirlas y decirlo.
-    const base = supabase.from('v_cuenta_cliente_pendientes').select('obra_cod, sin_precio, obra_archivada')
+    const base = supabase.from('v_cuenta_cliente_pendientes').select('obra_cod, sin_precio, obra_archivada, obra_nom, esperando')
     const { data, error } = obraCods != null ? await base.in('obra_cod', obraCods) : await base
     if (error) throw new Error(error.message)
-    return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number; obra_archivada: boolean }>)
+    return ((data ?? []) as Array<{ obra_cod: string; sin_precio: number; obra_archivada: boolean; obra_nom: string; esperando: number }>)
       // Las vivas primero: son las accionables. Dentro de cada grupo, por volumen.
       .sort((a, b) => Number(a.obra_archivada) - Number(b.obra_archivada) || b.sin_precio - a.sin_precio)
   },

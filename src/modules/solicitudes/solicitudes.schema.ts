@@ -161,6 +161,15 @@ export const EditarItemSchema = z.object({
   // Prender o apagar la marca a mano (20260912c). Cargar un precio > 0 la
   // apaga solo (trigger), no hace falta mandarla.
   esperando_precio: z.boolean().optional(),
+  // "Pasar el renglón a la unidad de la ficha" (fase 3, 2026-09-09): la
+  // cantidad viene ya expresada en la unidad nueva ("15 m de piola" → "0,3
+  // rollo"). Van siempre juntos; el service recalcula la cuenta del cliente,
+  // los envíos y el stock descontado en proporción.
+  unidad:   z.enum(['unid', 'kg', 'tn', 'lt', 'm', 'm2', 'm3', 'gl', 'rollo', 'bolsa', 'balde', 'lata']).optional(),
+  cantidad: z.number().positive().optional(),
+}).refine(d => (d.unidad === undefined) === (d.cantidad === undefined), {
+  message: 'Para cambiar la unidad hay que mandar unidad y cantidad juntas',
+  path: ['cantidad'],
 })
 
 export type CreateSolicitudDto = z.infer<typeof CreateSolicitudSchema>

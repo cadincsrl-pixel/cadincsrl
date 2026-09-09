@@ -33,3 +33,16 @@ describe('EditarItemSchema · esperando_precio', () => {
     expect(EditarItemSchema.safeParse({ esperando_precio: 'si' }).success).toBe(false)
   })
 })
+
+// "Pasar el renglón a la unidad de la ficha" (fase 3): unidad y cantidad van juntas.
+describe('EditarItemSchema · unidad + cantidad', () => {
+  it('acepta las dos juntas', () => {
+    expect(EditarItemSchema.safeParse({ unidad: 'rollo', cantidad: 0.3 }).success).toBe(true)
+  })
+  it('rechaza una sola, una cantidad en 0 o una unidad inventada', () => {
+    expect(EditarItemSchema.safeParse({ unidad: 'rollo' }).success).toBe(false)
+    expect(EditarItemSchema.safeParse({ cantidad: 2 }).success).toBe(false)
+    expect(EditarItemSchema.safeParse({ unidad: 'rollo', cantidad: 0 }).success).toBe(false)
+    expect(EditarItemSchema.safeParse({ unidad: 'caja', cantidad: 1 }).success).toBe(false)
+  })
+})

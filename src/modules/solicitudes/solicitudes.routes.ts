@@ -295,7 +295,7 @@ solicitudes.post('/items/:itemId/revertir-envio', requireResolverItems, requireI
 // factura siguen siendo del comprador con resolver_items.
 solicitudes.patch('/items/:itemId', requireResolverItems, requireItemObraScope, zValidator('json', EditarItemSchema), itemHandler(async (c) => {
   const dto = c.req.valid('json')
-  if (dto.precio_unit !== undefined || dto.pagado_por !== undefined) {
+  if (dto.precio_unit !== undefined || dto.pagado_por !== undefined || dto.unidad !== undefined || dto.cantidad !== undefined) {
     const puede = await tienePermisoExtra(c.get('user').id, 'certificaciones', 'cargar_precios')
     if (!puede) throw new HttpError(403, 'SIN_PERMISO_CARGAR_PRECIOS')
   }

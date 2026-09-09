@@ -1284,20 +1284,44 @@ export const solicitudesService = {
 
   async editarItem(itemId: number, dto: EditarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
-    // El precio Y el "quién lo pagó" de un item ya cobrado están congelados
-    // (el cobro imputó monto_cobrado = precio_total al registrarse): tocarlos
-    // descuadraría la rendición. Eliminar el cobro primero si hace falta.
-    if (dto.precio_unit !== undefined || dto.pagado_por !== undefined) {
-      const { data: mccCobrado } = await supabase
+    const cambiaUnidad = dto.unidad !== undefined && dto.cantidad !== undefined
+    // El precio, el "quién lo pagó" y la cantidad de un item ya cobrado están
+    // congelados (el cobro imputó monto_cobrado = precio_total al registrarse):
+    // tocarlos descuadraría la rendición. Eliminar el cobro primero si hace
+    // falta. Lo certificado tampoco se toca (20260911i).
+    if (dto.precio_unit !== undefined || dto.pagado_por !== undefined || cambiaUnidad) {
+      const { data: mccCong } = await supabase
         .from('materiales_a_cuenta_cliente')
-        .select('cobro_id').eq('item_id', itemId).not('cobro_id', 'is', null).maybeSingle()
-      if (mccCobrado) {
-        throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: mccCobrado.cobro_id })
-      }
+        .select('cobro_id, certificado_id').eq('item_id', itemId)
+        .or('cobro_id.not.is.null,certificado_id.not.is.null').maybeSingle()
+      if (mccCong?.cobro_id != null) throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: mccCong.cobro_id })
+      if (mccCong?.certificado_id != null) throw new HttpError(409, 'ITEM_CERTIFICADO', { certificado_id: mccCong.certificado_id })
     }
+
+    // "Pasar el renglón a la unidad de la ficha" (fase 3, 2026-09-09): "15 m de
+    // piola" se convierte en "0,3 rollo". La cantidad nueva viene ya en la
+    // unidad nueva; los envíos, la cantidad comprada y el stock descontado se
+    // escalan en la misma proporción para que nada quede en la unidad vieja.
+    let previo: { cantidad: number; unidad: string; cantidad_enviada: number; cantidad_comprada: number | null; material_id: number | null } | null = null
+    const patch: Record<string, unknown> = { ...dto }
+    if (cambiaUnidad) {
+      const { data: it, error: itErr } = await supabase
+        .from('solicitud_compra_item')
+        .select('cantidad, unidad, cantidad_enviada, cantidad_comprada, material_id')
+        .eq('id', itemId).maybeSingle()
+      if (itErr) throw new Error(itErr.message)
+      if (!it) throw new HttpError(404, 'ITEM_NO_EXISTE')
+      previo = { ...it, cantidad: Number(it.cantidad), cantidad_enviada: Number(it.cantidad_enviada ?? 0) }
+      const ratio = previo.cantidad > 0 ? dto.cantidad! / previo.cantidad : 1
+      const r4 = (n: number) => Math.round(n * 10000) / 10000
+      // Lo enviado completo sigue completo; lo parcial se escala.
+      patch.cantidad_enviada = previo.cantidad_enviada >= previo.cantidad ? dto.cantidad : r4(previo.cantidad_enviada * ratio)
+      if (previo.cantidad_comprada != null) patch.cantidad_comprada = r4(Number(previo.cantidad_comprada) * ratio)
+    }
+
     const { data, error } = await supabase
       .from('solicitud_compra_item')
-      .update(dto)
+      .update(patch)
       .eq('id', itemId)
       .in('estado', ['comprado', 'de_deposito', 'enviado'])
       .select('*, solicitud_compra(id, obra_cod)')
@@ -1307,14 +1331,19 @@ export const solicitudesService = {
 
     // Actualizar materiales_a_cuenta_cliente si existe
     const updates: any = {}
+    // Recalcular con la cantidad EFECTIVA (la comprada si difiere de la
+    // solicitada), igual que _registrarMaterialCliente. Antes usaba
+    // data.cantidad (solicitada) y descuadraba el precio_total del MCC
+    // cuando cantidad_comprada != cantidad.
+    const cantidadEfectiva = Number(data.cantidad_comprada ?? data.cantidad)
     if (dto.precio_unit !== undefined) {
-      // Recalcular con la cantidad EFECTIVA (la comprada si difiere de la
-      // solicitada), igual que _registrarMaterialCliente. Antes usaba
-      // data.cantidad (solicitada) y descuadraba el precio_total del MCC
-      // cuando cantidad_comprada != cantidad.
-      const cantidadEfectiva = data.cantidad_comprada ?? data.cantidad
       updates.precio_unit = dto.precio_unit
       updates.precio_total = cantidadEfectiva * dto.precio_unit
+    }
+    if (cambiaUnidad) {
+      updates.cantidad = cantidadEfectiva
+      updates.unidad = data.unidad
+      if (dto.precio_unit === undefined) updates.precio_total = cantidadEfectiva * Number(data.precio_unit ?? 0)
     }
     if (dto.proveedor_id !== undefined) updates.proveedor_id = dto.proveedor_id
     if (dto.factura_id !== undefined) updates.factura_id = dto.factura_id
@@ -1324,6 +1353,44 @@ export const solicitudesService = {
       // .is('cobro_id', null): si un cobro imputó la fila entre el guard y
       // este update (carrera), el precio congelado no se pisa.
       await supabase.from('materiales_a_cuenta_cliente').update(updates).eq('item_id', itemId).is('cobro_id', null)
+    }
+
+    if (cambiaUnidad && previo) {
+      // El despacho descontó stock en la unidad vieja (stock_movimientos no
+      // tiene unidad: 20260911 memoria "unidad_stock_movimientos"). Se escala el
+      // movimiento y se devuelve/descuenta la diferencia a stock_actual.
+      const ratio = previo.cantidad > 0 ? dto.cantidad! / previo.cantidad : null
+      if (ratio != null) {
+        const { data: movs } = await supabase
+          .from('stock_movimientos')
+          .select('id, material_id, tipo, cantidad')
+          .eq('solicitud_item_id', itemId)
+        for (const mov of movs ?? []) {
+          const nueva = Math.round(Number(mov.cantidad) * ratio * 10000) / 10000
+          if (!(nueva > 0)) continue
+          const diferencia = Number(mov.cantidad) - nueva
+          if (diferencia !== 0 && mov.material_id != null) {
+            const { data: mat } = await supabase.from('stock_materiales').select('stock_actual').eq('id', mov.material_id).maybeSingle()
+            if (mat) {
+              // salida: se había descontado de más → vuelve; entrada: se había sumado de más → se resta
+              const delta = mov.tipo === 'salida' ? diferencia : -diferencia
+              await supabase.from('stock_materiales').update({ stock_actual: Number(mat.stock_actual) + delta }).eq('id', mov.material_id)
+            }
+          }
+          await supabase.from('stock_movimientos').update({ cantidad: nueva }).eq('id', mov.id)
+        }
+      }
+      await registrarItemEvento(supabase, {
+        itemId,
+        solicitudId:    data.solicitud_id ?? null,
+        accion:         'unidad_corregida',
+        estadoAnterior: data.estado,
+        estadoNuevo:    data.estado,
+        cantidad:       dto.cantidad ?? null,
+        comentario:     `El renglón pasa de ${previo.cantidad} ${previo.unidad} a ${dto.cantidad} ${dto.unidad} (la unidad de la ficha).`,
+        meta:           { unidad_anterior: previo.unidad, cantidad_anterior: previo.cantidad, unidad_nueva: dto.unidad, cantidad_nueva: dto.cantidad },
+        userId,
+      })
     }
 
     return data
