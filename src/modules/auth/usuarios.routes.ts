@@ -88,6 +88,12 @@ const ModuloPermisosSchema = z.object({
   // silencio al guardar un usuario (2026-07-17): el gate de stock chequea
   // aprobar_ajustes_stock, y el wizard escribe obras_scope por módulo.
   aprobar_ajustes_stock: z.boolean().optional(),
+  // Certificaciones: `cargar_precios` mueve lo que se le cobra al cliente;
+  // `precio_al_resolver` (default TRUE, se apaga a propósito) decide si esa
+  // persona puede tipear el precio al comprar o despachar. Apagado, resuelve
+  // igual y el renglón queda esperando precio.
+  cargar_precios:        z.boolean().optional(),
+  precio_al_resolver:    z.boolean().optional(),
   obras_scope:       z.enum(['todas', 'asignadas']).optional(),
 })
 

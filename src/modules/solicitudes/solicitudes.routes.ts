@@ -16,6 +16,7 @@ import {
 declare module 'hono' {
   interface ContextVariableMap {
     forzarSinStock: boolean
+    sinPrecioAlResolver: boolean
   }
 }
 
@@ -133,6 +134,22 @@ async function tienePermisoExtra(userId: string, modulo: string, flag: string): 
   return permisos?.[modulo]?.[flag] === true
 }
 
+/**
+ * ¿Esta persona puede tipear el precio al resolver? Default TRUE: el flag
+ * `precio_al_resolver` se APAGA a propósito para quien maneja el depósito
+ * pero no los números (Sosa, 09/09). Apagado, resuelve igual y el renglón
+ * queda esperando precio para que lo cargue quien corresponde — antes ponía
+ * "11" o "1" para salir del paso y eso terminaba facturado.
+ */
+async function puedePonerPrecioAlResolver(userId: string): Promise<boolean> {
+  const { data: profile } = await supabase
+    .from('profiles').select('rol, permisos').eq('id', userId).single()
+  if (!profile) return false
+  if (profile.rol === 'admin') return true
+  const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
+  return permisos?.certificaciones?.precio_al_resolver !== false
+}
+
 // Guard: las acciones de resolución de items (comprar/despachar/enviar/
 // rechazar/revertir) son del comprador o encargado de depósito, no del
 // jefe de obra. Se chequea con el flag `certificaciones.resolver_items`.
@@ -196,11 +213,17 @@ solicitudes.get('/items/:itemId/sugerencia-precio', requireItemObraScope, itemHa
 }))
 
 solicitudes.post('/items/:itemId/comprar', requireResolverItems, requireItemObraScope, zValidator('json', ComprarItemSchema), itemHandler(async (c) => {
-  if (c.req.valid('json').actualizar_catalogo && !(await puedeActualizarCatalogo(c.get('user').id))) {
+  const dto = c.req.valid('json')
+  if (dto.actualizar_catalogo && !(await puedeActualizarCatalogo(c.get('user').id))) {
     throw new HttpError(403, 'SIN_PERMISO_CATALOGO')
   }
+  // Sin `precio_al_resolver` la compra entra SIN precio, marcada como
+  // esperando: no se rechaza el pedido —la compra se hizo igual— y tampoco se
+  // guarda un precio que esa persona no tiene por qué decidir.
+  const conPrecio = await puedePonerPrecioAlResolver(c.get('user').id)
+  const limpio = conPrecio ? dto : { ...dto, precio_unit: 0, esperando_precio: true, actualizar_catalogo: false }
   return solicitudesService.comprarItem(
-    Number(c.req.param('itemId')), c.req.valid('json'), c.get('accessToken'), c.get('user').id
+    Number(c.req.param('itemId')), limpio, c.get('accessToken'), c.get('user').id
   )
 }))
 
@@ -226,12 +249,17 @@ solicitudes.post('/items/:itemId/despachar',
     }
     // Flag autorizado: guardarlo en el context para el handler final.
     c.set('forzarSinStock', forzar)
+    // Sin `precio_al_resolver`, el despacho va en 0 y queda a tasar (que es
+    // lo que el despacho ya admitía; acá se vuelve obligatorio para esa
+    // persona en vez de depender de que se acuerde).
+    c.set('sinPrecioAlResolver', !(await puedePonerPrecioAlResolver(c.get('user').id)))
     await next()
   },
   itemHandler(async (c) => {
+    const body = c.req.valid('json')
     return solicitudesService.despacharItem(
       Number(c.req.param('itemId')),
-      c.req.valid('json'),
+      c.get('sinPrecioAlResolver') ? { ...body, precio_unit: 0 } : body,
       c.get('accessToken'),
       c.get('user').id,
       c.get('forzarSinStock') ?? false,
