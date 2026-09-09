@@ -574,9 +574,12 @@ export const cuentaClienteService = {
       p_mano_de_obra: dto.mano_de_obra ?? 0,
       p_obs:          dto.obs ?? null,
       p_user_id:      userId,
+      p_item_ids:     dto.item_ids ?? null,
     })
     if (error) {
       const msg = error.message || ''
+      if (msg.includes('ITEM_NO_CERTIFICABLE'))  throw new CcHttpError(400, 'ITEM_NO_CERTIFICABLE', (error as { details?: string }).details ?? null)
+      if (msg.includes('SIN_RENGLONES'))         throw new CcHttpError(400, 'SIN_RENGLONES')
       if (msg.includes('OBRA_INEXISTENTE'))      throw new CcHttpError(404, 'OBRA_INEXISTENTE')
       if (msg.includes('OBRA_ES_DEPOSITO'))      throw new CcHttpError(409, 'OBRA_ES_DEPOSITO')
       if (msg.includes('OBRA_ARCHIVADA'))        throw new CcHttpError(409, 'OBRA_ARCHIVADA')

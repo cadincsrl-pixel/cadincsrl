@@ -28,6 +28,10 @@ export const EmitirCertificadoSchema = z.object({
   fecha_corte:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   mano_de_obra: z.number().min(0).optional().default(0),
   obs:          z.string().max(500).optional().nullable(),
+  // Que renglones entran (ids de materiales_a_cuenta_cliente). Sin lista =
+  // todos los elegibles hasta el corte. Con lista, la RPC exige que cada uno
+  // sea elegible o rechaza la emision entera (ITEM_NO_CERTIFICABLE).
+  item_ids:     z.array(z.number().int().positive()).min(1).max(1000).optional(),
 })
 export const AnularCertificadoSchema = z.object({
   motivo: z.string().trim().min(3).max(300),
