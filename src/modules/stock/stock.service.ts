@@ -16,8 +16,16 @@ export interface MaterialComprasResumen { compras: MaterialCompra[]; por_proveed
 import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto } from './stock.schema.js'
 import { puedeActualizarCatalogo } from '../../middleware/permission.js'
 
-/** Estados de precio que calcula `v_catalogo_materiales` (20260904z), más 'sin_precio' como agrupador. */
-export const CATALOGO_ESTADOS = ['sin_precio', 'tasar', 'desactualizado', 'al_dia', 'sin_compra', 'unidad_distinta'] as const
+/**
+ * Estados de precio que calcula `v_catalogo_materiales` (20260904z), más tres
+ * agrupadores que no están en la vista y se arman acá:
+ *   sin_precio  — todo lo que no tiene precio de referencia, con o sin compra.
+ *   mas_caro    — desactualizados donde la última COMPRA salió más cara que la
+ *                 referencia (dif_pct > 0): el precio cargado quedó corto y se
+ *                 le está cobrando de menos al cliente.
+ *   mas_barato  — al revés (dif_pct < 0): se está cobrando de más.
+ */
+export const CATALOGO_ESTADOS = ['sin_precio', 'tasar', 'desactualizado', 'al_dia', 'sin_compra', 'unidad_distinta', 'mas_caro', 'mas_barato'] as const
 export type CatalogoEstado = typeof CATALOGO_ESTADOS[number]
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -361,16 +369,25 @@ export const stockService = {
       .select('*', { count: 'exact' })
     if (!f.incluir_inactivos) q = q.eq('activo', true)
     if (f.rubro_id) q = q.eq('rubro_id', f.rubro_id)
-    // 'sin_precio' es "todo lo que no tiene precio" (con o sin compra); los
-    // demás son el estado exacto que calcula la vista (20260904z).
+    // 'sin_precio' es "todo lo que no tiene precio" (con o sin compra);
+    // 'mas_caro' / 'mas_barato' parten los desactualizados por el signo de la
+    // diferencia; los demás son el estado exacto que calcula la vista
+    // (20260904z).
     if (f.estado === 'sin_precio') q = q.eq('precio_ref', 0)
+    else if (f.estado === 'mas_caro')   q = q.eq('estado_precio', 'desactualizado').gt('dif_pct', 0)
+    else if (f.estado === 'mas_barato') q = q.eq('estado_precio', 'desactualizado').lt('dif_pct', 0)
     else if (f.estado) q = q.eq('estado_precio', f.estado)
     for (const w of normTxt(f.q ?? '').split(' ').filter(Boolean)) q = q.ilike('busq', `%${w}%`)
-    // Los desactualizados, del que más difiere al que menos: es la lista de
-    // trabajo. El resto, alfabético.
-    q = f.estado === 'desactualizado'
+    // Cada lista de trabajo ordenada por lo que la hace útil: los que
+    // compramos más caro, del que más se disparó al que menos; los más
+    // baratos, del que más bajó (dif_pct más negativo primero); los
+    // desactualizados en general, por diferencia absoluta. El resto,
+    // alfabético.
+    q = f.estado === 'desactualizado' || f.estado === 'mas_caro'
       ? q.order('dif_pct', { ascending: false, nullsFirst: false }).order('nombre')
-      : q.order('nombre').order('id')
+      : f.estado === 'mas_barato'
+        ? q.order('dif_pct', { ascending: true, nullsFirst: false }).order('nombre')
+        : q.order('nombre').order('id')
     const { data, error, count } = await q.range(f.offset, f.offset + f.limit - 1)
     if (error) throw new Error(error.message)
     return { items: data ?? [], total: count ?? 0 }
@@ -378,23 +395,26 @@ export const stockService = {
 
   /**
    * Cuántos materiales activos hay en cada estado de precio, para los chips
-   * del filtro. Un count con `head: true` por estado: son 5 requests
-   * livianos, y evita traer las ~1000 filas (cap de PostgREST) para contarlas.
+   * del filtro. Un count con `head: true` por estado: son requests livianos,
+   * y evita traer las ~1000 filas (cap de PostgREST) para contarlas.
    */
   async getCatalogoStats(token: string) {
     const supabase = createSupabaseClient(token)
     const contar = async (estado?: CatalogoEstado) => {
       let q = supabase.from('v_catalogo_materiales').select('id', { count: 'exact', head: true }).eq('activo', true)
       if (estado === 'sin_precio') q = q.eq('precio_ref', 0)
+      else if (estado === 'mas_caro')   q = q.eq('estado_precio', 'desactualizado').gt('dif_pct', 0)
+      else if (estado === 'mas_barato') q = q.eq('estado_precio', 'desactualizado').lt('dif_pct', 0)
       else if (estado) q = q.eq('estado_precio', estado)
       const { count, error } = await q
       if (error) throw new Error(error.message)
       return count ?? 0
     }
-    const [total, sin_precio, tasar, desactualizado, al_dia, unidad_distinta] = await Promise.all([
+    const [total, sin_precio, tasar, desactualizado, al_dia, unidad_distinta, mas_caro, mas_barato] = await Promise.all([
       contar(), contar('sin_precio'), contar('tasar'), contar('desactualizado'), contar('al_dia'), contar('unidad_distinta'),
+      contar('mas_caro'), contar('mas_barato'),
     ])
-    return { total, sin_precio, tasar, desactualizado, al_dia, unidad_distinta }
+    return { total, sin_precio, tasar, desactualizado, al_dia, unidad_distinta, mas_caro, mas_barato }
   },
 
   /**
