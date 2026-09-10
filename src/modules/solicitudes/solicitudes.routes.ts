@@ -259,7 +259,7 @@ solicitudes.post('/items/:itemId/despachar',
     const body = c.req.valid('json')
     return solicitudesService.despacharItem(
       Number(c.req.param('itemId')),
-      c.get('sinPrecioAlResolver') ? { ...body, precio_unit: 0 } : body,
+      c.get('sinPrecioAlResolver') ? { ...body, precio_unit: 0, esperando_precio: true } : body,
       c.get('accessToken'),
       c.get('user').id,
       c.get('forzarSinStock') ?? false,

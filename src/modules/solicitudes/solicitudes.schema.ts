@@ -142,6 +142,12 @@ export const DespacharItemSchema = z.object({
   // lo extrae, lo valida y lo pasa como argumento explícito a
   // `solicitudesService.despacharItem(..., forzarSinStock)`.
   forzar_sin_stock:   z.boolean().optional(),
+  // El renglon sale en 0 a proposito y queda marcado para tasar (20260913).
+  // Lo pone el route cuando quien despacha no tiene `precio_al_resolver`; no
+  // se espera que lo mande el cliente. Sin esto el $0 del deposito se mezcla
+  // con los $0 viejos y no hay forma de distinguir "todavia no lo tasaron" de
+  // "esto quedo sin precio hace meses".
+  esperando_precio:   z.boolean().optional().default(false),
 })
 
 // Enviar ítem

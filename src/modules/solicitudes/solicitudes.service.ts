@@ -709,6 +709,25 @@ export const solicitudesService = {
     const item = useRpcResolver()
       ? await this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
       : await this.despacharItemLegacy(itemId, dto, token, userId, forzarSinStock)
+
+    // Sin `precio_al_resolver` el renglon sale en 0 a proposito: se marca
+    // "esperando precio" para que caiga en la lista de pendientes de tasar en
+    // vez de mezclarse con los $0 viejos (hoy hay ~194). La marca va ACA y no
+    // en cada camino porque los dos tienen que quedar iguales y la RPC
+    // `resolver_item_despacho` no recibe el flag.
+    // Comprar ya lo hacia (route, dto.esperando_precio); despachar no, y como
+    // el deposito casi siempre despacha, para esa persona el flag no hacia
+    // nada. El trigger trg_item_esperando_precio lo apaga solo cuando llega
+    // un precio > 0, asi que no hay que limpiarlo a mano.
+    if (dto.esperando_precio && !(dto.precio_unit > 0)) {
+      const { error } = await createSupabaseClient(token)
+        .from('solicitud_compra_item')
+        .update({ esperando_precio: true })
+        .eq('id', itemId)
+      if (error) throw new Error(error.message)
+      if (item) (item as { esperando_precio?: boolean }).esperando_precio = true
+    }
+
     return await this._promoverSiYaEnviado(item, token, userId)
   },
 
