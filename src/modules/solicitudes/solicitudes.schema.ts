@@ -206,3 +206,13 @@ export type EnviarItemDto      = z.infer<typeof EnviarItemSchema>
 export type EditarItemDto      = z.infer<typeof EditarItemSchema>
 export type ProponerPrecioDto  = z.infer<typeof ProponerPrecioSchema>
 export type RechazarPrecioDto  = z.infer<typeof RechazarPrecioSchema>
+
+// Devolver material de la obra al deposito (20260913k). La cantidad es lo que
+// VUELVE, no lo que queda: es como lo dice quien recibe en el galpon.
+// El motivo es opcional pero se guarda en el movimiento de stock, en el evento
+// del renglon y en la nota de credito, asi que conviene escribirlo.
+export const DevolverItemSchema = z.object({
+  cantidad: z.number().positive({ message: 'La cantidad devuelta tiene que ser mayor a 0' }),
+  motivo:   z.string().trim().max(300).optional(),
+})
+export type DevolverItemDto = z.infer<typeof DevolverItemSchema>

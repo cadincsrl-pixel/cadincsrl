@@ -8,6 +8,7 @@ import { solicitudesService, HttpError } from './solicitudes.service.js'
 import {
   CreateSolicitudSchema, UpdateSolicitudSchema,
   ComprarItemSchema, DespacharItemSchema, EnviarItemSchema, EditarItemSchema,
+  DevolverItemSchema,
   ResolverStockClienteSchema, ProponerPrecioSchema, RechazarPrecioSchema,
 } from './solicitudes.schema.js'
 
@@ -263,6 +264,34 @@ solicitudes.post('/items/:itemId/despachar',
       c.get('accessToken'),
       c.get('user').id,
       c.get('forzarSinStock') ?? false,
+    )
+  }),
+)
+
+// POST /items/:itemId/devolver
+// La obra devuelve material que sobró, o se cierra un despacho que nunca salió
+// del galpón (que resulta ser lo mismo: en los dos casos hay que reponer stock
+// y bajar lo que se le cobra al cliente).
+//
+// Dos permisos, no uno. Devolver algo TODAVÍA NO cobrado es trabajo de
+// depósito y alcanza con `resolver_items`. Si el renglón ya está cobrado o
+// certificado, la devolución emite una NOTA DE CRÉDITO, que es una decisión de
+// plata: ahí hace falta `cargar_precios`. El corte lo hace el service porque
+// necesita leer la fila de la cuenta para saber en cuál de los dos casos está.
+solicitudes.post('/items/:itemId/devolver',
+  requireResolverItems,
+  requireItemObraScope,
+  zValidator('json', DevolverItemSchema),
+  itemHandler(async (c) => {
+    const puedeAcreditar = await tienePermisoExtra(
+      c.get('user').id, 'certificaciones', 'cargar_precios',
+    )
+    return solicitudesService.devolverItem(
+      Number(c.req.param('itemId')),
+      c.req.valid('json'),
+      c.get('accessToken'),
+      c.get('user').id,
+      puedeAcreditar,
     )
   }),
 )

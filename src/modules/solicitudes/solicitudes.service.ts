@@ -5,7 +5,7 @@ import { registrarItemEvento } from '../../lib/item-eventos.js'
 import { validarActualizacionCatalogo, fechaART } from './actualizar-catalogo.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
-  ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto,
+  ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto, DevolverItemDto,
 } from './solicitudes.schema.js'
 
 type ItemEstado = 'pendiente' | 'comprado' | 'de_deposito' | 'en_proveedor' | 'retirado' | 'de_stock_cliente' | 'enviado' | 'rechazado'
@@ -61,6 +61,10 @@ export function mapRpcError(error: PostgrestError): HttpError {
     /PRECIO_INVALIDO/.test(msg)     ? 'PRECIO_INVALIDO' :
     /FUENTE_INVALIDA/.test(msg)     ? 'FUENTE_INVALIDA' :
     /MATERIAL_INEXISTENTE/.test(msg) ? 'MATERIAL_INEXISTENTE' :
+    /CANTIDAD_INVALIDA/.test(msg)   ? 'CANTIDAD_INVALIDA' :
+    /CANTIDAD_MAYOR_A_LA_DESPACHADA/.test(msg) ? 'CANTIDAD_MAYOR_A_LA_DESPACHADA' :
+    /ITEM_NO_RESUELTO/.test(msg)    ? 'ITEM_NO_RESUELTO' :
+    /ES_HERRAMIENTA/.test(msg)      ? 'ES_HERRAMIENTA' :
     error.code || 'UNKNOWN'
 
   switch (code) {
@@ -79,6 +83,11 @@ export function mapRpcError(error: PostgrestError): HttpError {
     case 'STOCK_INSUFICIENTE':    return new HttpError(400, code, parseDetail(error.details))
     case 'ITEM_YA_REGISTRADO':    return new HttpError(409, code)
     case 'DESPACHO_A_DEPOSITO':   return new HttpError(400, code)
+    // Devoluciones (20260913k).
+    case 'CANTIDAD_INVALIDA':     return new HttpError(400, code)
+    case 'CANTIDAD_MAYOR_A_LA_DESPACHADA': return new HttpError(400, code, parseDetail(error.details))
+    case 'ITEM_NO_RESUELTO':      return new HttpError(409, code, parseDetail(error.details))
+    case 'ES_HERRAMIENTA':        return new HttpError(400, code)
     case '23503':                 return new HttpError(500, 'INTEGRIDAD_REFERENCIAL')
     default:                      return new HttpError(500, 'DB_ERROR', { dbMessage: msg })
   }
@@ -927,6 +936,65 @@ export const solicitudesService = {
    * la fila nace con `sentido = 'devolucion'` sin que este service sepa nada de
    * `herr_entregas` (migración 20260904b).
    */
+  /**
+   * Devolver material de la obra al depósito (20260913k).
+   *
+   * OJO: no confundir con `recibirDevolucion`, que es OTRA cosa. Aquella es
+   * para renglones marcados `devuelve` (la obra devuelve una herramienta al
+   * pañol) y cierra el renglón entero. Esta es para material común que sobró:
+   * vuelve una parte, el resto se queda en la obra, y hay plata de por medio.
+   *
+   * Las reglas son del user (10/09): si el renglón YA está cobrado o
+   * certificado, la cuenta NO se toca y el cliente recibe una NOTA DE CRÉDITO;
+   * si todavía no, se descuenta de lo enviado. Las dos ramas viven dentro de
+   * la RPC `devolver_material`, que corre con lock sobre el renglón porque
+   * toca stock, ficha, renglón y cuenta y ninguna puede quedar a medias.
+   *
+   * `puedeAcreditar` lo resuelve el route: emitir una nota de crédito es una
+   * decisión de plata, no de depósito, así que exige `cargar_precios`. Devolver
+   * algo que todavía no se cobró es trabajo de depósito y alcanza con
+   * `resolver_items`. El chequeo se hace ACÁ y no en la RPC porque la RPC no
+   * conoce permisos (recibe `p_user_id` y nada más, §9).
+   */
+  async devolverItem(
+    itemId: number, dto: DevolverItemDto, token: string, userId: string, puedeAcreditar: boolean,
+  ) {
+    // Pre-chequeo del permiso: si el renglón está congelado, esto termina en
+    // nota de crédito. Se corta antes de tocar el stock para no dejar la
+    // entrada hecha y la cuenta sin ajustar.
+    const { data: mcc, error: eMcc } = await supabaseAdmin
+      .from('materiales_a_cuenta_cliente')
+      .select('id, cobro_id, certificado_id')
+      .eq('item_id', itemId)
+      .maybeSingle()
+    if (eMcc) throw new Error(eMcc.message)
+
+    const congelada = !!mcc && (mcc.cobro_id != null || mcc.certificado_id != null)
+    if (congelada && !puedeAcreditar) {
+      throw new HttpError(403, 'SIN_PERMISO_ACREDITAR', {
+        motivo: 'El renglón ya está cobrado o certificado: devolverlo emite una nota de crédito.',
+      })
+    }
+
+    const { data, error } = await supabaseAdmin.rpc('devolver_material', {
+      p_item_id:  itemId,
+      p_cantidad: dto.cantidad,
+      p_motivo:   dto.motivo ?? null,
+      p_user_id:  userId,
+    })
+    if (error) throw mapRpcError(error)
+
+    // El token se usa solo para leer de vuelta el renglón con el mismo cliente
+    // que el resto del módulo; la escritura ya la hizo la RPC.
+    const { data: item } = await createSupabaseClient(token)
+      .from('solicitud_compra_item')
+      .select('*, solicitud_compra(id, obra_cod)')
+      .eq('id', itemId)
+      .maybeSingle()
+
+    return { ...(data as Record<string, unknown>), item }
+  },
+
   async recibirDevolucion(itemId: number, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
