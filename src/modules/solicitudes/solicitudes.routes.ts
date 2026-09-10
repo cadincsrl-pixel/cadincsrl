@@ -327,6 +327,18 @@ solicitudes.patch('/items/:itemId', requireResolverItems, requireItemObraScope, 
     const puede = await tienePermisoExtra(c.get('user').id, 'certificaciones', 'cargar_precios')
     if (!puede) throw new HttpError(403, 'SIN_PERMISO_CARGAR_PRECIOS')
   }
+  // Tocar el catálogo mueve el precio de referencia de TODAS las obras: tiene
+  // su propia guarda, la misma que el tilde de la compra.
+  if (dto.actualizar_catalogo) {
+    if (!(await puedeActualizarCatalogo(c.get('user').id))) throw new HttpError(403, 'SIN_PERMISO_CATALOGO')
+  }
+  // Apagar "esperando precio" sin cargar ninguno saca el renglón en $0 de la
+  // lista de pendientes y lo deja certificarse en cero: es una decisión de
+  // precio, no de compra.
+  if (dto.esperando_precio === false) {
+    const puede = await tienePermisoExtra(c.get('user').id, 'certificaciones', 'cargar_precios')
+    if (!puede) throw new HttpError(403, 'SIN_PERMISO_CARGAR_PRECIOS')
+  }
   return solicitudesService.editarItem(
     Number(c.req.param('itemId')), dto, c.get('accessToken'), c.get('user').id
   )
@@ -349,7 +361,7 @@ async function requireCargarPrecios(c: any, next: any) {
 
 // GET /items/precios-propuestos — la bandeja del que aprueba.
 solicitudes.get('/items/precios-propuestos', requireCargarPrecios, async (c) => {
-  return c.json(await solicitudesService.listarPreciosPropuestos(c.get('accessToken')))
+  return c.json(await solicitudesService.listarPreciosPropuestos(c.get('accessToken'), c.get('user').id))
 })
 
 // POST /items/:itemId/proponer-precio — lo puede hacer quien resuelve compras.
@@ -364,14 +376,14 @@ solicitudes.post('/items/:itemId/proponer-precio',
 }))
 
 // POST /items/:itemId/aprobar-precio · /rechazar-precio — solo el aprobador.
-solicitudes.post('/items/:itemId/aprobar-precio', requireCargarPrecios, itemHandler(async (c) => {
+solicitudes.post('/items/:itemId/aprobar-precio', requireCargarPrecios, requireItemObraScope, itemHandler(async (c) => {
   return solicitudesService.aprobarPrecio(
     Number(c.req.param('itemId')), c.get('accessToken'), c.get('user').id,
   )
 }))
 
 solicitudes.post('/items/:itemId/rechazar-precio',
-  requireCargarPrecios, zValidator('json', RechazarPrecioSchema), itemHandler(async (c) => {
+  requireCargarPrecios, requireItemObraScope, zValidator('json', RechazarPrecioSchema), itemHandler(async (c) => {
   return solicitudesService.rechazarPrecio(
     Number(c.req.param('itemId')), c.req.valid('json').motivo,
     c.get('accessToken'), c.get('user').id,

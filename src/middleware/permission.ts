@@ -156,12 +156,16 @@ export async function tieneFlag(
 }
 
 /**
- * ¿Puede fijar el precio de referencia del catálogo? UNA regla para los dos
- * escritores de precio_ref (PATCH /api/stock/materiales/:id con precio_ref, y
- * la compra con actualizar_catalogo): activo y (admin, o `actualizacion` de
- * certificaciones y además el flag `cargar_precios` o la pestaña Catálogo —
- * lista ausente o vacía = todas, igual que requireTab). Fase 1 de precios,
- * 2026-09-08.
+ * ¿Puede fijar el precio de referencia del catálogo? UNA regla para los tres
+ * escritores de precio_ref (PATCH /api/stock/materiales/:id con precio_ref, la
+ * compra con actualizar_catalogo, y desde el 10/09 también el PATCH del ítem):
+ * activo y (admin, o `actualizacion` de certificaciones **y** el flag
+ * `cargar_precios`).
+ *
+ * Hasta el 10/09 alcanzaba con tener la pestaña Catálogo, y "lista ausente o
+ * vacía" contaba como tenerlas todas. Eso dejaba el camino GLOBAL (el precio
+ * de referencia vale para todas las obras) más abierto que el camino de UNA
+ * obra, que siempre exigió `cargar_precios`. Auditoría de precios del 10/09.
  */
 export async function puedeActualizarCatalogo(userId: string): Promise<boolean> {
   const profile = await fetchPermisos(userId)
@@ -170,7 +174,5 @@ export async function puedeActualizarCatalogo(userId: string): Promise<boolean> 
   const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
   const cert = permisos?.certificaciones ?? {}
   if (cert.actualizacion !== true) return false
-  if (cert.cargar_precios === true) return true
-  const tabs = cert.tabs
-  return !Array.isArray(tabs) || tabs.length === 0 || (tabs as unknown[]).includes('catalogo')
+  return cert.cargar_precios === true
 }

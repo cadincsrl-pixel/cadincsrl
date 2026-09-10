@@ -1393,6 +1393,24 @@ export const solicitudesService = {
       })
     }
 
+    // "Poner este precio en el catálogo", pero cargándolo DESPUÉS de comprar.
+    // Mismas reglas y mismo registro que el tilde de la compra (ficha, unidad
+    // compatible, factura no anterior al precio vigente) y también
+    // best-effort: el precio del renglón ya se guardó, un fallo acá se informa
+    // pero no lo deshace.
+    if (dto.actualizar_catalogo && dto.precio_unit !== undefined && dto.precio_unit > 0) {
+      try {
+        const prep = await this._prepararActualizacionCatalogo(itemId, {
+          precio_unit: dto.precio_unit,
+          factura_id:  (data.factura_id as number | null) ?? null,
+        } as ComprarItemDto)
+        const catalogo = await this._aplicarActualizacionCatalogo(prep, itemId, token, userId)
+        return { ...data, catalogo }
+      } catch (e) {
+        return { ...data, catalogo: { ok: false as const, code: e instanceof HttpError ? e.code : 'CATALOGO_NO_ACTUALIZADO' } }
+      }
+    }
+
     return data
   },
 
@@ -1462,6 +1480,13 @@ export const solicitudesService = {
     if (error) throw new Error(error.message)
     if (!item) throw new HttpError(404, 'ITEM_NO_EXISTE')
     if (item.precio_propuesto == null) throw new HttpError(409, 'SIN_PRECIO_PROPUESTO')
+    // El circuito existe para que el precio lo cargue uno y lo mire otro. Que
+    // el mismo que propuso apruebe deja el evento diciendo que hubo control
+    // cruzado cuando no lo hubo. El admin sí puede: es el dueño del circuito.
+    if (item.precio_propuesto_por === userId) {
+      const { data: perfil } = await supabaseAdmin.from('profiles').select('rol').eq('id', userId).maybeSingle()
+      if (perfil?.rol !== 'admin') throw new HttpError(409, 'NO_APRUEBA_SU_PROPIA_PROPUESTA')
+    }
 
     const propuesto = Number(item.precio_propuesto)
     const anterior  = Number(item.precio_unit ?? 0)
@@ -1518,14 +1543,23 @@ export const solicitudesService = {
     return { id: itemId }
   },
 
-  /** Los precios esperando aprobación, para la bandeja del que aprueba. */
-  async listarPreciosPropuestos(token: string) {
+  /**
+   * Los precios esperando aprobación, para la bandeja del que aprueba.
+   * Respeta el alcance por obra: la bandeja muestra precios de compra y
+   * proveedores, que es justo lo que alguien con acceso acotado no debe ver
+   * de otras obras.
+   */
+  async listarPreciosPropuestos(token: string, userId?: string) {
     const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
+    const allowed = userId ? await getObrasDelUsuarioCached(userId, 'certificaciones') : null
+    if (allowed != null && allowed.length === 0) return []
+    let q = supabase
       .from('v_cuenta_corriente')
       .select('id, item_id, obra_cod, obra_nom, descripcion, cantidad, unidad, precio_unit, precio_total, precio_propuesto, precio_propuesto_por, precio_propuesto_en, precio_propuesto_obs, proveedor_nom, fecha_resolucion')
       .not('precio_propuesto', 'is', null)
       .order('precio_propuesto_en', { ascending: true })
+    if (allowed != null) q = q.in('obra_cod', allowed)
+    const { data, error } = await q
     if (error) throw new Error(error.message)
     return data ?? []
   },

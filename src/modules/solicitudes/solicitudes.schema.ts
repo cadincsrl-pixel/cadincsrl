@@ -151,6 +151,11 @@ export const EnviarItemSchema = z.object({
 
 // Editar ítem resuelto (corregir precio/proveedor)
 export const EditarItemSchema = z.object({
+  /** Llevar este precio al catálogo, igual que el tilde de la compra. Hasta
+   *  el 10/09 "actualizar catálogo" solo existía en el instante de comprar:
+   *  la compra en cuenta corriente, que es la que trae el precio real días
+   *  después, nunca podía devolverle el número a la ficha. */
+  actualizar_catalogo: z.boolean().optional(),
   proveedor_id: z.number().int().positive().optional(),
   precio_unit:  z.number().min(0).optional(),
   factura_id:   z.number().int().positive().nullable().optional(),
