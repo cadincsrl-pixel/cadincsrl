@@ -11,6 +11,7 @@ import {
   CreateMovimientoSchema,
   RechazarAjusteSchema,
   ComprobanteUploadUrlSchema,
+  FraccionarSchema,
 } from './stock.schema.js'
 import { randomUUID } from 'crypto'
 import { supabase as supabaseAdmin } from '../../lib/supabase.js'
@@ -138,6 +139,31 @@ stock.patch('/materiales/:id', zValidator('json', UpdateMaterialSchema), async (
 
 stock.delete('/materiales/:id', async (c) => {
   return c.json(await stockService.deleteMaterial(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
+})
+
+// ── Fraccionar bultos (20260913n) ──
+// GET /equivalencias — en qué se fracciona cada bulto. Vienen todas de una (hoy
+// 9) y el front las mapea por origen_id: más barato que sumar un join a la
+// consulta del catálogo, que trae miles de filas.
+stock.get('/equivalencias', async (c) => {
+  return c.json(await stockService.getEquivalencias(c.get('accessToken')))
+})
+
+// POST /materiales/:id/fraccionar — abrir un bulto.
+// Es un movimiento de stock, así que va con el mismo permiso que declarar uno
+// (creacion) y la tab de catálogo: quien maneja el depósito lo hace. NO toca
+// precios, así que no pide `cargar_precios`.
+stock.post('/materiales/:id/fraccionar',
+  requireTab('certificaciones', 'catalogo'),
+  zValidator('json', FraccionarSchema), async (c) => {
+  try {
+    return c.json(await stockService.fraccionarMaterial(
+      Number(c.req.param('id')), c.req.valid('json'), c.get('user').id,
+    ))
+  } catch (e) {
+    if (e instanceof StockHttpError) return c.json({ error: e.message, code: e.code, ...e.extra }, e.status)
+    throw e
+  }
 })
 
 // ── Movimientos ──

@@ -470,6 +470,21 @@ export const cuentaClienteService = {
   // ── Cobros (pagos del cliente a cuenta de la obra) ───────────────────
 
   /** Cobros de una obra, más recientes primero. */
+  /**
+   * Notas de crédito vigentes de una obra: el saldo a favor del cliente por
+   * material devuelto cuyo renglón ya estaba cobrado o certificado (20260913k).
+   *
+   * Va con detalle y no solo el total porque lo consumen tres cosas: el saldo
+   * del panel por administración, la línea "menos: devoluciones" del PDF que se
+   * le entrega al cliente, y la lista de la pantalla. Las anuladas no salen.
+   */
+  async getNotasCredito(obraCod: string, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase.rpc('cuenta_corriente_notas_detalle', { p_obra_cod: obraCod })
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
   async getCobros(obraCod: string, token: string) {
     const supabase = createSupabaseClient(token)
     return fetchAllMcc((from, to) => supabase

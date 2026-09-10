@@ -13,7 +13,7 @@ export interface MaterialCompraProveedor {
   compras: number; minimo: number; maximo: number
 }
 export interface MaterialComprasResumen { compras: MaterialCompra[]; por_proveedor: MaterialCompraProveedor[] }
-import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto } from './stock.schema.js'
+import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto, FraccionarDto } from './stock.schema.js'
 import { puedeActualizarCatalogo } from '../../middleware/permission.js'
 
 /**
@@ -720,6 +720,52 @@ export const stockService = {
         candidatos: ordenados,
       }
     })
+  },
+
+  /**
+   * Equivalencias vigentes: en qué se fracciona cada bulto (20260913n).
+   *
+   * Vienen todas de una (hoy son 9) y el front las mapea por `origen_id` para
+   * saber a qué ficha ofrecerle el botón. Es más barato que sumar un join a la
+   * consulta del catálogo, que trae miles de filas.
+   */
+  async getEquivalencias(token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase
+      .from('material_equivalencias')
+      .select('id, origen_id, destino_id, factor, obs')
+      .eq('activo', true)
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
+  /**
+   * Abrir un bulto: descuenta el envase y suma su contenido en la ficha
+   * fraccionada, con las dos patas del movimiento enlazadas por la obs.
+   *
+   * NO toca el precio de nadie. El costo prorrateado vuelve en la respuesta
+   * como dato —para que quien lo hace sepa a cuánto le salió la unidad— pero
+   * `precio_ref` es precio de VENTA y fraccionar tiene su propio costo
+   * (ensacar la arena, por ejemplo), así que pisarlo cambiaría la tarifa al
+   * cliente por abrir un tambor.
+   */
+  async fraccionarMaterial(materialId: number, dto: FraccionarDto, userId: string) {
+    const { data, error } = await supabaseAdmin.rpc('fraccionar_material', {
+      p_origen_id: materialId,
+      p_cantidad:  dto.cantidad,
+      p_user_id:   userId,
+      p_obs:       dto.obs ?? null,
+    })
+    if (error) {
+      const msg = error.message || ''
+      const code =
+        /SIN_EQUIVALENCIA/.test(msg)    ? 'SIN_EQUIVALENCIA'    :
+        /STOCK_INSUFICIENTE/.test(msg)  ? 'STOCK_INSUFICIENTE'  :
+        /CANTIDAD_INVALIDA/.test(msg)   ? 'CANTIDAD_INVALIDA'   :
+        /MATERIAL_INEXISTENTE/.test(msg)? 'MATERIAL_INEXISTENTE': 'DB_ERROR'
+      throw new StockHttpError(code === 'MATERIAL_INEXISTENTE' ? 404 : 400, code, code)
+    }
+    return data
   },
 
   async createMaterial(dto: CreateMaterialDto, token: string, userId: string) {

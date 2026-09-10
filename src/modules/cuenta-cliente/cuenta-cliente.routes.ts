@@ -154,6 +154,17 @@ cuentaCliente.get('/cobros', soloCuenta, requirePermiso('certificaciones', 'lect
   return c.json(data)
 })
 
+// GET /api/cuenta-cliente/notas-credito?obra_cod=… — devoluciones que ya
+// estaban cobradas. Solo lectura del módulo: quien ve la cuenta ve el saldo a
+// favor. Emitirlas es otra cosa y pide `cargar_precios` (ver el endpoint de
+// devolución en solicitudes).
+cuentaCliente.get('/notas-credito', soloCuenta, requirePermiso('certificaciones', 'lectura'), async (c) => {
+  const obraCod = c.req.query('obra_cod')
+  if (!obraCod) return c.json({ error: 'obra_cod es requerido' }, 400)
+  await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
+  return c.json(await cuentaClienteService.getNotasCredito(obraCod, c.get('accessToken')))
+})
+
 // POST /api/cuenta-cliente/cobros — registra el cobro imputando items (RPC).
 cuentaCliente.post('/cobros', soloCuenta, requirePermiso('certificaciones', 'creacion'), zValidator('json', CrearCobroSchema), handler(async (c) => {
   const dto = c.req.valid('json')

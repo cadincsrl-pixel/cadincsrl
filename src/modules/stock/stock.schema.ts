@@ -134,3 +134,12 @@ export type CreateMaterialDto   = z.infer<typeof CreateMaterialSchema>
 export type UpdateMaterialDto   = z.infer<typeof UpdateMaterialSchema>
 export type CreateMovimientoDto = z.infer<typeof CreateMovimientoSchema>
 export type RechazarAjusteDto   = z.infer<typeof RechazarAjusteSchema>
+
+// Fraccionar un bulto: abrir un tambor y que salgan litros (20260913n).
+// La cantidad es EN UNIDADES DE ORIGEN — cuántos tambores se abren, no cuántos
+// litros salen. Se puede abrir medio bulto, de ahí el positive() sin entero.
+export const FraccionarSchema = z.object({
+  cantidad: z.number().positive({ message: 'Poné cuántos bultos se abren' }),
+  obs:      z.string().trim().max(300).optional(),
+})
+export type FraccionarDto = z.infer<typeof FraccionarSchema>
