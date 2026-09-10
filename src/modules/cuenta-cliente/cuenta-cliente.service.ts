@@ -237,7 +237,7 @@ export const cuentaClienteService = {
   async getResumen(allowed: string[] | null, f: CuentaFiltro, grupo: 'obra' | 'mes' | 'proveedor', token: string) {
     const supabase = createSupabaseClient(token)
     const pal = palabras(f.q)
-    const [g, p] = await Promise.all([
+    const [g, p, n] = await Promise.all([
       supabase.rpc('cuenta_corriente_resumen', {
         p_obras:        allowed,
         p_obra_cod:     f.obra_cod ?? null,
@@ -252,10 +252,15 @@ export const cuentaClienteService = {
         p_solo_internas: f.solo_internas ?? null,
       }),
       supabase.rpc('cuenta_corriente_pagos', { p_obras: allowed, p_obra_cod: f.obra_cod ?? null }),
+      // Notas de crédito por obra (20260913l). Van en su propio array y NO
+      // dentro de `pagos`: una nota no es plata que entró, es deuda que baja.
+      // Si se mezclaran, una devolución aparecería como cobranza.
+      supabase.rpc('cuenta_corriente_notas_credito', { p_obras: allowed, p_obra_cod: f.obra_cod ?? null }),
     ])
     if (g.error) throw new Error(g.error.message)
     if (p.error) throw new Error(p.error.message)
-    return { grupos: g.data ?? [], pagos: p.data ?? [] }
+    if (n.error) throw new Error(n.error.message)
+    return { grupos: g.data ?? [], pagos: p.data ?? [], notas: n.data ?? [] }
   },
 
   /**
@@ -300,15 +305,38 @@ export const cuentaClienteService = {
     const items: ItemImputable[] = []
 
     // Materiales con precio, todavía vivos.
-    const { data: mats, error: eMat } = await supabaseAdmin
-      .from('materiales_a_cuenta_cliente')
-      .select('id, fecha_resolucion, precio_total, pagado_por')
-      .eq('obra_cod', obraCod).is('cobro_id', null).gt('precio_total', 0)
+    const [{ data: mats, error: eMat }, { data: notas, error: eNotas }] = await Promise.all([
+      supabaseAdmin
+        .from('materiales_a_cuenta_cliente')
+        .select('id, item_id, fecha_resolucion, precio_total, pagado_por')
+        .eq('obra_cod', obraCod).is('cobro_id', null).gt('precio_total', 0),
+      // Devoluciones (20260913k): lo devuelto ya no se le debe al cliente, así
+      // que el renglón necesita MENOS plata para quedar cubierto. Se descuenta
+      // del ítem que la originó y NO de la capacidad del cobro: una nota no es
+      // plata que entró. Si no se contemplara, el algoritmo congelaría material
+      // por más de lo que el cliente debe e inventaría `sin_cubrir` falsos.
+      supabaseAdmin
+        .from('cuenta_cliente_notas_credito')
+        .select('item_id, monto')
+        .eq('obra_cod', obraCod).eq('anulada', false),
+    ])
     if (eMat) throw new Error(eMat.message)
+    if (eNotas) throw new Error(eNotas.message)
+
+    const creditoPorItem = new Map<number, number>()
+    for (const n of notas ?? []) {
+      if (n.item_id == null) continue
+      creditoPorItem.set(n.item_id, (creditoPorItem.get(n.item_id) ?? 0) + Number(n.monto ?? 0))
+    }
+
     for (const m of mats ?? []) {
       // Lo que el cliente pagó directo al proveedor no es deuda: no se imputa.
       if (m.pagado_por === 'cliente') continue
-      items.push({ tipo: 'material', clave: String(m.id), fecha: m.fecha_resolucion ?? '9999-12-31', monto: Number(m.precio_total) })
+      const credito = m.item_id != null ? (creditoPorItem.get(m.item_id) ?? 0) : 0
+      const monto = Math.round(Math.max(Number(m.precio_total) - credito, 0) * 100) / 100
+      // Devuelto entero: no queda nada que cubrir, no entra al reparto.
+      if (monto <= 0) continue
+      items.push({ tipo: 'material', clave: String(m.id), fecha: m.fecha_resolucion ?? '9999-12-31', monto })
     }
 
     // Semanas de jornales y contratistas, solo en obras por administración y
