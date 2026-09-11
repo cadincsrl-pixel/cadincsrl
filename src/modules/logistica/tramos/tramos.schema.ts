@@ -31,6 +31,11 @@ export const CreateTramoSchema = z.object({
   // Qué variante de tarifa factura este tramo (cuando la ruta tiene más de
   // una en tarifas_empresa_cantera.variante). null = tarifa base.
   tarifa_variante: z.string().trim().min(1).max(60).nullable().optional(),
+  // Qué se transportó: maíz, soja, harina de soja, arena… Sirve para que el
+  // cliente y CADINC hablen del mismo viaje al facturar ("ya te pagaron la
+  // harina de soja"). Solo tiene sentido en los cargados; en un vacío se
+  // ignora. Pedido de Alina, 2026-09-11.
+  producto: z.string().trim().min(1).max(60).nullable().optional(),
   obs: z.string().optional().default(''),
 })
 .refine(
@@ -57,6 +62,7 @@ export const UpdateTramoSchema = z.object({
   remito_descarga_img_url: z.string().url().nullable().optional(),
   fecha_vacio:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   tarifa_variante:    z.string().trim().min(1).max(60).nullable().optional(),
+  producto:           z.string().trim().min(1).max(60).nullable().optional(),
   obs:                z.string().optional(),
   estado:             z.enum(['en_curso', 'completado']).optional(),
 })
