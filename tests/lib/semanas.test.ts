@@ -24,10 +24,15 @@ async function codigo(p: Promise<unknown>): Promise<number | 'ok'> {
 describe('semanaCerrada', () => {
   const sem = '2026-08-28' // viernes; jueves = 2026-09-03
   it('jueves', () => { expect(juevesISO(sem)).toBe('2026-09-03') })
-  it('sin fila: cerrada solo cuando el jueves ya pasó', () => {
-    expect(semanaCerrada(undefined, sem, '2026-09-03')).toBe(false) // el mismo jueves sigue abierta
-    expect(semanaCerrada(undefined, sem, '2026-09-04')).toBe(true)  // viernes siguiente: cerrada
-    expect(semanaCerrada(undefined, sem, '2026-08-30')).toBe(false)
+  it('sin fila: el viernes siguiente sigue abierto, cierra el sábado', () => {
+    // La semana se trabaja hasta el jueves, se termina de cargar el viernes y
+    // se paga el sábado: el margen de un día es lo que hace que el viernes a
+    // la mañana no haya que reabrir nada (2026-09-11).
+    expect(semanaCerrada(undefined, sem, '2026-08-30')).toBe(false) // en curso
+    expect(semanaCerrada(undefined, sem, '2026-09-03')).toBe(false) // el jueves, último día trabajado
+    expect(semanaCerrada(undefined, sem, '2026-09-04')).toBe(false) // VIERNES: se cargan las horas
+    expect(semanaCerrada(undefined, sem, '2026-09-05')).toBe(true)  // sábado: se paga y se cierra sola
+    expect(semanaCerrada(undefined, sem, '2026-09-12')).toBe(true)  // una semana después, cerradísima
   })
   it('la fila manda: pendiente reabre, cerrado cierra', () => {
     expect(semanaCerrada('pendiente', sem, '2026-10-01')).toBe(false)

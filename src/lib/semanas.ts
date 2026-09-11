@@ -12,7 +12,20 @@ import { viernesISO } from '../modules/horas/costo-obra.js'
  * pantalla de Cierres desde siempre ("Cerrada · Automática"); hasta hoy el
  * backend solo bloqueaba las que tenían fila 'cerrado', así que casi ninguna
  * semana pagada estaba protegida de verdad.
+ *
+ * MARGEN DEL VIERNES (2026-09-11). La semana se trabaja de viernes a jueves,
+ * pero las horas se terminan de cargar el VIERNES y recién el SÁBADO se paga
+ * (user: "el viernes terminamos de cargar las horas de los que trabajaron
+ * hasta el jueves; pagamos el sábado"). Cerrando apenas pasaba el jueves, el
+ * viernes a la mañana —justo cuando se carga— ya estaba todo trabado y había
+ * que reabrir obra por obra. Ahora el cierre automático cae el SÁBADO: el
+ * viernes siguiente sigue editable. Lo que protege no cambia: cualquier
+ * semana más vieja que esa sigue cerrada, que es donde está el riesgo real
+ * (editar en silencio algo ya pagado).
  */
+
+/** Días de gracia después del jueves antes de que la semana se cierre sola. */
+export const DIAS_DE_GRACIA = 1
 
 /** Hoy en Argentina como YYYY-MM-DD (el server corre en UTC). */
 export function hoyArgentinaISO(): string {
@@ -39,7 +52,18 @@ export type EstadoCierre = 'cerrado' | 'pendiente'
 export function semanaCerrada(estado: string | null | undefined, semKey: string, hoyISO: string = hoyArgentinaISO()): boolean {
   if (estado === 'cerrado') return true
   if (estado === 'pendiente') return false
-  return hoyISO > juevesISO(semKey)
+  return hoyISO > ultimoDiaEditable(semKey)
+}
+
+/**
+ * Último día en que la semana se puede editar sin reabrirla: el jueves más
+ * los días de gracia. Con DIAS_DE_GRACIA = 1 es el viernes siguiente, así que
+ * la semana se cierra sola el sábado.
+ */
+export function ultimoDiaEditable(semKey: string): string {
+  const d = new Date(juevesISO(semKey) + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + DIAS_DE_GRACIA)
+  return d.toISOString().slice(0, 10)
 }
 
 /** Viernes consecutivos desde `desde` (inclusive) hasta `hasta` (inclusive). */
