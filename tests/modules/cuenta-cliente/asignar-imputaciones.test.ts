@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 // testea la función pura de reparto, así que el cliente es de mentira.
 vi.mock('../../../src/lib/supabase.js', () => ({ supabase: {}, createSupabaseClient: () => ({}) }))
 
-import { asignarImputaciones, type ItemImputable } from '../../../src/modules/cuenta-cliente/cuenta-cliente.service.js'
+import { asignarImputaciones, esMaterialImputable, type ItemImputable } from '../../../src/modules/cuenta-cliente/cuenta-cliente.service.js'
 
 const item = (tipo: ItemImputable['tipo'], clave: string, fecha: string, monto: number): ItemImputable =>
   ({ tipo, clave, fecha, monto })
@@ -94,5 +94,44 @@ describe('cuando la plata alcanza para todo, se empaqueta todo', () => {
     )
     expect(sinCubrir).toHaveLength(0)
     expect(asignados).toHaveLength(4)
+  })
+})
+
+// ── Qué material entra al reparto (2026-09-11) ────────────────────────
+// `imputarPagado` filtraba solo por cobro_id y precio: agarraba gastos de
+// CADINC y renglones ya certificados. Las tres exclusiones son las que
+// `emitir_certificado_cliente` ya tenía del otro lado.
+describe('esMaterialImputable', () => {
+  const base = { pagado_por: 'cadinc', a_cargo_de: 'cliente', certificado_id: null }
+
+  it('entra el renglón normal: a cargo del cliente, pagado por CADINC, sin certificar', () => {
+    expect(esMaterialImputable(base)).toBe(true)
+  })
+
+  it('queda afuera lo que el cliente ya pagó directo al proveedor', () => {
+    expect(esMaterialImputable({ ...base, pagado_por: 'cliente' })).toBe(false)
+  })
+
+  it('queda afuera el gasto de CADINC: no se le cobra al cliente', () => {
+    expect(esMaterialImputable({ ...base, a_cargo_de: 'cadinc' })).toBe(false)
+  })
+
+  it('queda afuera lo ya certificado: ese pago va contra el certificado', () => {
+    expect(esMaterialImputable({ ...base, certificado_id: 7 })).toBe(false)
+  })
+
+  it('un pago a cuenta no le come la plata al facturable con gastos de CADINC', () => {
+    // El caso que motivó el fix: el gasto propio es más viejo, así que la regla
+    // de "primero lo viejo" lo ponía adelante y se quedaba con el pago.
+    const renglones = [
+      { id: 'gasto',      ...base, a_cargo_de: 'cadinc', fecha: '2026-08-01', monto: 700 },
+      { id: 'facturable', ...base,                       fecha: '2026-08-20', monto: 700 },
+    ]
+    const items = renglones
+      .filter(esMaterialImputable)
+      .map(r => ({ tipo: 'material' as const, clave: r.id, fecha: r.fecha, monto: r.monto }))
+    const { asignados, sinCubrir } = asignarImputaciones(items, [{ id: 1, capacidad: 700 }])
+    expect(asignados.map(a => a.clave)).toEqual(['facturable'])
+    expect(sinCubrir).toEqual([])
   })
 })

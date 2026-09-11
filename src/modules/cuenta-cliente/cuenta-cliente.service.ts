@@ -115,6 +115,34 @@ export interface ItemImputable {
 
 export interface CobroCapacidad { id: number; capacidad: number }
 
+/** Lo que mira `esMaterialImputable` de un renglón de MCC. */
+export interface MaterialImputable {
+  pagado_por?: string | null
+  a_cargo_de?: string | null
+  certificado_id?: number | null
+}
+
+/**
+ * Qué renglón de material entra al reparto de un pago a cuenta. Las tres
+ * exclusiones son las mismas que ya aplicaba `emitir_certificado_cliente`, que
+ * era el único de los dos caminos que las tenía completas:
+ *
+ * - `pagado_por = 'cliente'`: lo pagó directo al proveedor, no es deuda.
+ * - `a_cargo_de <> 'cliente'`: es gasto de CADINC, no se le cobra. Faltaba, y
+ *   el reparto se comía plata del cliente en gastos propios dejando sin cubrir
+ *   facturable real (3 renglones por $7.344,50 al 11/09; hay $91,5M esperando).
+ * - `certificado_id` puesto: ya está en un certificado. Faltaba, y un pago a
+ *   cuenta podía cubrir medio certificado por fecha, dejándolo figurando impago
+ *   aunque el cliente lo pagó. El pago de un certificado va CONTRA el
+ *   certificado (`certificado_id` en el cobro), nunca por "Imputar lo pagado".
+ */
+export function esMaterialImputable(m: MaterialImputable): boolean {
+  if (m.pagado_por === 'cliente') return false
+  if (m.a_cargo_de !== 'cliente') return false
+  if (m.certificado_id != null) return false
+  return true
+}
+
 /**
  * Reparte los ítems sobre los pagos: cronológico, ítems enteros (nunca se
  * parte uno entre dos pagos), y si uno no entra en ningún pago se saltea y se
@@ -308,7 +336,7 @@ export const cuentaClienteService = {
     const [{ data: mats, error: eMat }, { data: notas, error: eNotas }] = await Promise.all([
       supabaseAdmin
         .from('materiales_a_cuenta_cliente')
-        .select('id, item_id, fecha_resolucion, precio_total, pagado_por')
+        .select('id, item_id, fecha_resolucion, precio_total, pagado_por, a_cargo_de, certificado_id')
         .eq('obra_cod', obraCod).is('cobro_id', null).gt('precio_total', 0),
       // Devoluciones (20260913k): lo devuelto ya no se le debe al cliente, así
       // que el renglón necesita MENOS plata para quedar cubierto. Se descuenta
@@ -330,8 +358,7 @@ export const cuentaClienteService = {
     }
 
     for (const m of mats ?? []) {
-      // Lo que el cliente pagó directo al proveedor no es deuda: no se imputa.
-      if (m.pagado_por === 'cliente') continue
+      if (!esMaterialImputable(m)) continue
       const credito = m.item_id != null ? (creditoPorItem.get(m.item_id) ?? 0) : 0
       const monto = Math.round(Math.max(Number(m.precio_total) - credito, 0) * 100) / 100
       // Devuelto entero: no queda nada que cubrir, no entra al reparto.
