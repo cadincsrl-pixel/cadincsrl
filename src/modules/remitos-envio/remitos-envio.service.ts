@@ -1,6 +1,7 @@
 import { createSupabaseClient } from '../../lib/supabase.js'
 import { registrarItemEvento } from '../../lib/item-eventos.js'
 import type { CreateRemitoEnvioDto } from './remitos-envio.schema.js'
+import { descConColor } from '../../lib/desc-con-color.js'
 
 export const remitosEnvioService = {
 
@@ -78,11 +79,29 @@ export const remitosEnvioService = {
       .single()
     if (error) throw new Error(error.message)
 
+    // El color del renglón se resuelve ACÁ, en el server, y no se confía en lo
+    // que manda el cliente: el remito es el papel que firma la obra, así que el
+    // color tiene que salir de `solicitud_compra_item` y no poder saltearse
+    // desde el front (20260913t).
+    const itemIds = dto.items.map(it => it.item_id).filter((x): x is number => typeof x === 'number')
+    const colorPorItem = new Map<number, string | null>()
+    if (itemIds.length) {
+      const { data: conColor, error: eColor } = await supabase
+        .from('solicitud_compra_item')
+        .select('id, color')
+        .in('id', itemIds)
+      if (eColor) throw new Error(eColor.message)
+      for (const r of conColor ?? []) colorPorItem.set(r.id, r.color)
+    }
+
     // Insertar ítems del remito
     const itemsData = dto.items.map(it => ({
       remito_id:   remito.id,
       item_id:     it.item_id ?? null,
-      descripcion: it.descripcion,
+      descripcion: descConColor(
+        it.descripcion,
+        it.item_id != null ? colorPorItem.get(it.item_id) : null,
+      ),
       cantidad:    it.cantidad,
       unidad:      it.unidad,
       precio_unit: it.precio_unit ?? null,

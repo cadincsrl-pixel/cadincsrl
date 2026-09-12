@@ -3,6 +3,7 @@ import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supab
 import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import { registrarItemEvento } from '../../lib/item-eventos.js'
 import { validarActualizacionCatalogo, fechaART } from './actualizar-catalogo.js'
+import { descConColor } from '../../lib/desc-con-color.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
   ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto, DevolverItemDto,
@@ -1720,7 +1721,9 @@ export const solicitudesService = {
       obra_cod:         sol.obra_cod,
       solicitud_id:     solicitudId,
       item_id:          item.id,
-      descripcion:      item.descripcion,
+      // El color del renglón entra en la descripción: es lo que imprime el PDF
+      // del certificado y el Excel de la cuenta corriente (20260913t).
+      descripcion:      descConColor(item.descripcion, item.color),
       cantidad:         cantidadEfectiva,
       unidad:           item.unidad,
       precio_unit:      item.precio_unit ?? 0,
