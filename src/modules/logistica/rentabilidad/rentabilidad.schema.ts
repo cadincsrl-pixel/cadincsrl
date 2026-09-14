@@ -46,6 +46,10 @@ const baseViaje = z.object({
   // Porcentaje entero (15 = 15%), misma convención que choferes.pct_facturacion.
   // Hasta 2026-07-31 era fracción (0.15) — los datos viejos se convirtieron ×100.
   pct_sobre_tarifa:     z.number().min(0).max(100),
+  // Comisión del dador de carga, entero (8 = 8%). La tarifa que pasa el dador ya
+  // la incluye, así que se descuenta. Tope abierto en 100 igual que el CHECK de
+  // la tabla: una comisión del 100% dejaría el viaje en ingreso cero.
+  comision_pct:         z.number().min(0).max(99.99).optional(),
   obs:                  z.string().optional().nullable(),
 })
 
