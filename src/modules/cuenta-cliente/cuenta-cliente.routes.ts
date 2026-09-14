@@ -186,6 +186,17 @@ cuentaCliente.get('/notas-credito', soloCuenta, requirePermiso('certificaciones'
   return c.json(await cuentaClienteService.getNotasCredito(obraCod, c.get('accessToken')))
 })
 
+// GET /api/cuenta-cliente/devoluciones?obra_cod=… — todo lo que volvió al
+// depósito desde esta obra, haya dejado nota de crédito o no (20260914ai).
+// Sin esto, una devolución sobre un renglón no cobrado desaparece de la
+// cuenta sin rastro. Solo lectura, misma guardia que las notas.
+cuentaCliente.get('/devoluciones', soloCuenta, requirePermiso('certificaciones', 'lectura'), async (c) => {
+  const obraCod = c.req.query('obra_cod')
+  if (!obraCod) return c.json({ error: 'obra_cod es requerido' }, 400)
+  await validarObraDelUsuario(c.get('user').id, obraCod, 'certificaciones')
+  return c.json(await cuentaClienteService.getDevoluciones(obraCod, c.get('accessToken')))
+})
+
 // POST /api/cuenta-cliente/cobros — registra el cobro imputando items (RPC).
 cuentaCliente.post('/cobros', soloCuenta, requirePermiso('certificaciones', 'creacion'), zValidator('json', CrearCobroSchema), handler(async (c) => {
   const dto = c.req.valid('json')

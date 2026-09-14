@@ -512,6 +512,21 @@ export const cuentaClienteService = {
     return data ?? []
   },
 
+  /**
+   * Devoluciones al depósito de una obra (20260914ai): TODAS, no solo las que
+   * dejaron nota de crédito. `devolver_material` descuenta de la cuenta y, si
+   * vuelve todo, borra la fila de MCC: el renglón desaparece de la cuenta
+   * corriente sin dejar rastro. Esta lista responde "¿me devolvieron algo de
+   * esta obra?" sin tener que recordar el pedido ni la ficha. Sale de los
+   * eventos del renglón, que son los únicos que guardan la obra.
+   */
+  async getDevoluciones(obraCod: string, token: string) {
+    const supabase = createSupabaseClient(token)
+    const { data, error } = await supabase.rpc('cuenta_corriente_devoluciones_detalle', { p_obra_cod: obraCod })
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
   async getCobros(obraCod: string, token: string) {
     const supabase = createSupabaseClient(token)
     return fetchAllMcc((from, to) => supabase
