@@ -14,7 +14,7 @@ import { cuentaClienteService, CcHttpError } from './cuenta-cliente.service.js'
 import {
   CrearCobroSchema, EditarCobroSchema, UploadComprobanteCobroSchema,
   CuentaCorrienteQuerySchema, CUENTA_ESTADOS, ImputarPagadoSchema, type CuentaCorrienteQuery,
-  EmitirCertificadoSchema, AnularCertificadoSchema,
+  EmitirCertificadoSchema, AnularCertificadoSchema, MarcarConsumibleSchema,
 } from './cuenta-cliente.schema.js'
 import type { CuentaFiltro } from './cuenta-cliente.service.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -122,6 +122,27 @@ cuentaCliente.post('/imputar-pagado', soloCuenta, requirePermiso('certificacione
     const userId = c.get('user').id
     await validarObraDelUsuario(userId, obra_cod, 'certificaciones')
     return c.json(await cuentaClienteService.imputarPagado(obra_cod, userId))
+  }))
+
+// POST /api/cuenta-cliente/consumible
+// Marca (o desmarca) renglones como consumible propio de CADINC: lo que ponemos
+// nosotros para ejecutar la tarea y no se le cobra al cliente.
+//
+// Pide `actualizacion` y NO `creacion`: no crea nada, cambia quién paga un
+// renglón que ya existe. Y pide el flag `cargar_precios`, el mismo que habilita
+// tocar la cuenta del cliente y el catálogo (CLAUDE.md §5.14): sacar un renglón
+// de la deuda mueve exactamente la misma plata que valuarlo.
+cuentaCliente.post('/consumible', soloCuenta, requirePermiso('certificaciones', 'actualizacion'),
+  zValidator('json', MarcarConsumibleSchema), handler(async (c) => {
+    const dto = c.req.valid('json')
+    const userId = c.get('user').id
+    await validarObraDelUsuario(userId, dto.obra_cod, 'certificaciones')
+    // Mismo código de error y mismo default que usa emitir certificado, para
+    // que el frontend no tenga que aprender una variante nueva.
+    if (!(await tieneFlag(userId, 'certificaciones', 'cargar_precios', false))) {
+      return c.json({ error: 'SIN_PERMISO_CARGAR_PRECIOS' }, 403)
+    }
+    return c.json(await cuentaClienteService.marcarConsumible(dto, userId))
   }))
 
 // GET /api/cuenta-cliente/pendientes-precio

@@ -85,3 +85,23 @@ export type CuentaCorrienteQuery = z.infer<typeof CuentaCorrienteQuerySchema>
 export const ImputarPagadoSchema = z.object({
   obra_cod: z.string().min(1),
 })
+
+/**
+ * Marcar renglones como CONSUMIBLE PROPIO de CADINC (20260914aa).
+ *
+ * Lo que pone CADINC para ejecutar la tarea y no se le cobra al cliente: discos
+ * de corte, maderas de encofrado. Sólo en obras de presupuesto cerrado; la RPC
+ * rechaza las de administración y las llave en mano.
+ *
+ * El tope de 500 es el mismo criterio que usa el resto del módulo para una
+ * tanda: la pantalla marca de a una página (50) o un filtro entero, y un lote
+ * mayor que eso es casi siempre un error de quien llama, no una intención.
+ */
+export const MarcarConsumibleSchema = z.object({
+  obra_cod: z.string().min(1),
+  item_ids: z.array(z.number().int().positive()).min(1).max(500),
+  marcar:   z.boolean(),
+  // Texto corto del estilo "discos de corte". Sólo se guarda al marcar.
+  motivo:   z.string().trim().max(120).optional(),
+})
+export type MarcarConsumibleDto = z.infer<typeof MarcarConsumibleSchema>

@@ -14,7 +14,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase as supabaseAdmin } from '../../lib/supabase.js'
-import type { CrearCobroDto, EditarCobroDto, EmitirCertificadoDto } from './cuenta-cliente.schema.js'
+import type { CrearCobroDto, EditarCobroDto, EmitirCertificadoDto, MarcarConsumibleDto } from './cuenta-cliente.schema.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { calcularCostoObra, viernesISO } from '../horas/costo-obra.js'
 import { todasLasFilas } from '../../lib/paginar.js'
@@ -669,6 +669,44 @@ export const cuentaClienteService = {
       if (msg.includes('CERTIFICADO_YA_ANULADO'))  throw new CcHttpError(409, 'CERTIFICADO_YA_ANULADO')
       if (msg.includes('CERTIFICADO_CON_COBROS'))  throw new CcHttpError(409, 'CERTIFICADO_CON_COBROS')
       if (msg.includes('MOTIVO_OBLIGATORIO'))      throw new CcHttpError(400, 'MOTIVO_OBLIGATORIO')
+      throw new Error(msg)
+    }
+    return data
+  },
+
+  /**
+   * Marcar o desmarcar renglones como CONSUMIBLE PROPIO de CADINC (20260914aa).
+   *
+   * Todo o nada: la RPC valida el lote entero antes de escribir, así que si un
+   * renglón no se puede marcar no se marca ninguno. Las guardas viven en la
+   * base y no acá a propósito: una regla escrita sólo en el backend se saltea
+   * por SQL, y esto saca plata de la deuda del cliente.
+   */
+  async marcarConsumible(dto: MarcarConsumibleDto, userId: string) {
+    const { data, error } = await supabaseAdmin.rpc('marcar_consumible_propio', {
+      p_obra_cod: dto.obra_cod,
+      p_item_ids: dto.item_ids,
+      p_marcar:   dto.marcar,
+      p_motivo:   dto.motivo ?? null,
+      p_user_id:  userId,
+    })
+    if (error) {
+      const msg = error.message || ''
+      const det = (error as { details?: string }).details ?? null
+      // La obra no admite la marca: en administración se factura todo con %, y
+      // en llave en mano ya es todo gasto propio.
+      if (msg.includes('OBRA_POR_ADMINISTRACION')) throw new CcHttpError(409, 'OBRA_POR_ADMINISTRACION')
+      if (msg.includes('OBRA_LLAVE_EN_MANO'))      throw new CcHttpError(409, 'OBRA_LLAVE_EN_MANO')
+      if (msg.includes('OBRA_NO_EXISTE'))          throw new CcHttpError(404, 'OBRA_NO_EXISTE')
+      // Congelados: lo cobrado o certificado no se reinterpreta nunca.
+      if (msg.includes('MCC_COBRADO'))             throw new CcHttpError(409, 'MCC_COBRADO', det)
+      if (msg.includes('MCC_CERTIFICADO'))         throw new CcHttpError(409, 'MCC_CERTIFICADO', det)
+      // El cliente ya le pagó al proveedor: no salió de la caja de CADINC.
+      if (msg.includes('ITEM_PAGO_DIRECTO'))       throw new CcHttpError(400, 'ITEM_PAGO_DIRECTO', det)
+      // El EPP ya es gasto propio por su clase.
+      if (msg.includes('ITEM_ES_EPP'))             throw new CcHttpError(400, 'ITEM_ES_EPP', det)
+      if (msg.includes('ITEM_NO_ES_DE_LA_OBRA'))   throw new CcHttpError(400, 'ITEM_NO_ES_DE_LA_OBRA', det)
+      if (msg.includes('SIN_ITEMS'))               throw new CcHttpError(400, 'SIN_ITEMS')
       throw new Error(msg)
     }
     return data
