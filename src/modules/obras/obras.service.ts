@@ -174,6 +174,10 @@ export const obrasService = {
         // mano nacia como 'cliente' y solo se arreglaba si alguien la editaba
         // (el PATCH si la escribe, por eso el bug era invisible).
         materiales_a_cargo_de: dto.materiales_a_cargo_de ?? 'cliente',
+        // Mismo cuidado que la linea de arriba: enumerar columnas una por una
+        // hace que una nueva se olvide en silencio. Desde el 14/09 el tipo de
+        // contratacion se elige en el alta, asi que esta tiene que viajar.
+        por_administracion: dto.por_administracion ?? false,
         archivada: false,
         created_by: userId,
         updated_by: userId,

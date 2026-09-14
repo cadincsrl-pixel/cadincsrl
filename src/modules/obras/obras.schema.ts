@@ -32,6 +32,11 @@ export const CreateObraSchema = z.object({
   capataz_user_id:   UserIdField,
   jefe_obra_user_id: UserIdField,
   materiales_a_cargo_de: ACargoDeField,
+  // El tipo de contratacion se elige AL CREAR la obra (14/09). Antes solo se
+  // podia elegir quien pone los materiales, y "por administracion" se prendia
+  // semanas despues, de costado, al cargar los porcentajes desde la cuenta
+  // corriente. Eso hizo que una obra cambiara de regimen sola el 14/09.
+  por_administracion: z.boolean().optional(),
 })
 
 export const UpdateObraSchema = z.object({
