@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+const TipoCarga = z
+  .union([z.enum(['escalable', 'estandar']), z.literal(''), z.null()])
+  .optional()
+
 export const CreateCamionSchema = z.object({
   patente:     z.string().min(1, 'La patente es requerida'),
   modelo:      z.string().optional().default(''),
@@ -13,6 +17,10 @@ export const CreateCamionSchema = z.object({
   // false = camión de un fletero: se le factura el viaje pero el equipo no es
   // de CADINC y los gastos los pone él. Excluido de Gastos > Reportes.
   es_propio:   z.boolean().optional().default(true),
+  // Configuración para la solicitud de turno: escalable (hasta 35 tn) o
+  // estandar (hasta 31 tn). Dato informativo, no valida ni calcula nada.
+  // Un <select> vacío manda '': es "sin definir", y el service lo pasa a null.
+  tipo_carga:  TipoCarga,
 })
 
 // No usar .partial() sobre el create: arrastra los .default() y zod
@@ -26,6 +34,7 @@ export const UpdateCamionSchema = z.object({
   obs:         z.string().optional(),
   km_actuales: z.number().min(0).optional(),
   es_propio:   z.boolean().optional(),
+  tipo_carga:  TipoCarga,
 })
 
 export type CreateCamionDto = z.infer<typeof CreateCamionSchema>

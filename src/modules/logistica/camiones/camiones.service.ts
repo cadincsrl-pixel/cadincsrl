@@ -1,6 +1,17 @@
 import { createSupabaseClient } from '../../../lib/supabase.js'
 import type { CreateCamionDto, UpdateCamionDto } from './camiones.schema.js'
 
+/**
+ * `tipo_carga` viene del <select> de la ficha, y un select vacío manda '' — que
+ * la columna rechaza por su CHECK. '' es "sin definir": a null.
+ * Solo devuelve la clave si vino en el dto, para no pisar el valor guardado en
+ * un update parcial que no la incluya.
+ */
+function normTipoCarga(dto: { tipo_carga?: string | null }) {
+  if (!('tipo_carga' in dto)) return {}
+  return { tipo_carga: dto.tipo_carga ? dto.tipo_carga : null }
+}
+
 export const camionesService = {
   async getAll(token: string) {
     const supabase = createSupabaseClient(token)
@@ -30,7 +41,7 @@ export const camionesService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('camiones')
-      .insert({ ...dto, created_by: userId, updated_by: userId })
+      .insert({ ...dto, ...normTipoCarga(dto), created_by: userId, updated_by: userId })
       .select()
       .single()
     if (error) throw new Error(error.message)
@@ -41,7 +52,7 @@ export const camionesService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('camiones')
-      .update({ ...dto, updated_by: userId })
+      .update({ ...dto, ...normTipoCarga(dto), updated_by: userId })
       .eq('id', id)
       .select()
       .single()
