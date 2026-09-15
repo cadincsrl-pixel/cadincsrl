@@ -41,7 +41,10 @@ const materialFields = {
   // ABM o el espejo queda inerte (solo se podria marcar por SQL).
   // 'epp' (20260904ak): elemento de protección personal, costo de CADINC. Su
   // fila en la cuenta del cliente nace con a_cargo_de='cadinc' (trigger).
-  clase:         z.enum(['material', 'herramienta', 'epp']),
+  // 'servicio' (15/09/2026): fletes, envios, volquetes, cortes y plegados de
+  // taller. Entra por el pedido como cualquier renglon y cae en la cuenta de la
+  // obra, pero NO tiene stock: hay una guarda en stock_movimientos que lo ataja.
+  clase:         z.enum(['material', 'herramienta', 'epp', 'servicio']),
 }
 
 export const CreateMaterialSchema = z.object({

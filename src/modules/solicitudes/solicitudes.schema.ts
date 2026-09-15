@@ -29,7 +29,7 @@ const ItemSchema = z.object({
   color:       z.string().nullable().optional().default(null),
   // material | herramienta. La derivacion al pañol es un filtro sobre esto.
   // Default 'material': todo lo existente y todo lo que nadie marque sigue igual.
-  clase:       z.enum(['material', 'herramienta']).optional().default('material'),
+  clase:       z.enum(['material', 'herramienta', 'servicio']).optional().default('material'),
   // Solo con clase='herramienta': la obra DEVUELVE en vez de pedir. Es el
   // disparador de la devolucion, que hasta ahora no existia (11 devoluciones
   // contra 22 asignaciones en el historico).
@@ -70,7 +70,7 @@ const UpdateItemSchema = z.object({
   color:       z.string().nullable().optional().default(null),
   // material | herramienta. La derivacion al pañol es un filtro sobre esto.
   // Default 'material': todo lo existente y todo lo que nadie marque sigue igual.
-  clase:       z.enum(['material', 'herramienta']).optional().default('material'),
+  clase:       z.enum(['material', 'herramienta', 'servicio']).optional().default('material'),
   // Solo con clase='herramienta': la obra DEVUELVE en vez de pedir. Es el
   // disparador de la devolucion, que hasta ahora no existia (11 devoluciones
   // contra 22 asignaciones en el historico).
