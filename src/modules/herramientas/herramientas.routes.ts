@@ -388,18 +388,54 @@ herramientas.get('/', requirePermiso('herramientas', 'lectura'), async (c) => {
 // `marca_id` / `modelo_id` opcionales — el backend resuelve el snapshot
 // del nombre y lo guarda en marca/modelo (text) para listados sin join.
 // Si se pasan marca/modelo como string libre (compat legacy), se respeta.
-const CreateSchema = z.object({
-  codigo:        z.string().min(1),
+// Un <input> vacío manda '', no null ni undefined. Para `fecha_ingreso` eso
+// terminaba en una columna `date` y reventaba con 22007 (500 crudo en inglés
+// al usuario), así que el schema lo acepta y el handler lo normaliza a null.
+const FechaOpcional = z
+  .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Usá el formato AAAA-MM-DD'), z.literal(''), z.null()])
+  .optional()
+
+/** '' y '   ' son "sin dato", no un dato vacío: a null, que es lo que la tabla espera. */
+function sinVacios(v: string | null | undefined): string | null {
+  const t = (v ?? '').trim()
+  return t === '' ? null : t
+}
+
+export const CreateSchema = z.object({
+  // Opcional a propósito: si no viene, lo asigna el backend sobre la tabla
+  // COMPLETA. Calcularlo en el cliente sobre las fichas ACTIVAS chocaba contra
+  // `herramientas_codigo_key`, que es UNIQUE global y no tiene predicado
+  // parcial: bastaba dar de baja la ficha del número más alto para que el alta
+  // quedara rota para todos.
+  codigo:        z.string().trim().min(1).optional(),
   nom:           z.string().min(1),
-  tipo_id:       z.number().optional(),
+  // `.nullable()` como sus vecinos marca_id/modelo_id: la columna admite null y
+  // "— Sin tipo —" es la opción por defecto del formulario.
+  tipo_id:       z.number().nullable().optional(),
   marca:         z.string().optional(),
   marca_id:      z.number().nullable().optional(),
   modelo:        z.string().optional(),
   modelo_id:     z.number().nullable().optional(),
-  serie:         z.string().optional(),
-  fecha_ingreso: z.string().optional(),
-  obs:           z.string().optional(),
+  serie:         z.string().nullish(),
+  fecha_ingreso: FechaOpcional,
+  obs:           z.string().nullish(),
 })
+
+/**
+ * Próximo HER-NNN libre, mirando TODAS las fichas (activas y de baja).
+ * El índice único no distingue, así que este cálculo tampoco puede.
+ */
+async function proximoCodigo(): Promise<string> {
+  const { data } = await supabase
+    .from('herramientas')
+    .select('codigo')
+    .like('codigo', 'HER-%')
+  const max = (data ?? []).reduce((m, r) => {
+    const n = /^HER-(\d+)$/.exec(r.codigo ?? '')
+    return n ? Math.max(m, parseInt(n[1] ?? '0', 10)) : m
+  }, 0)
+  return `HER-${String(max + 1).padStart(3, '0')}`
+}
 
 async function resolverMarcaModelo(input: { marca?: string; marca_id?: number | null; modelo?: string; modelo_id?: number | null }) {
   let marcaSnap  = input.marca  ?? null
@@ -432,21 +468,46 @@ herramientas.post('/', requirePermiso('herramientas', 'creacion'), zValidator('j
     .limit(1)
     .maybeSingle()
 
-  const { data: herr, error: herrErr } = await supabase
-    .from('herramientas')
-    .insert({
-      ...dto,
-      marca:      marcaSnap,
-      modelo:     modeloSnap,
-      estado_key: 'disponible',
-      obra_cod:   obraDepo?.cod ?? null,
-      created_by: userId,
-      updated_by: userId,
-    })
-    .select()
-    .single()
+  // El código: el que mandó el usuario, o el próximo libre de la tabla entera.
+  // Cuando lo genera el backend se reintenta ante 23505, que es la carrera de
+  // dos altas simultáneas; cuando lo eligió el usuario no se reintenta —
+  // pisarle el número que escribió sería peor que decirle que está ocupado.
+  const codigoPedido = dto.codigo?.trim() || null
+  const MAX_INTENTOS = 5
+  let herr: any = null
 
-  if (herrErr) return c.json({ error: herrErr.message }, 500)
+  for (let intento = 0; ; intento++) {
+    const codigo = codigoPedido ?? (await proximoCodigo())
+    const { data, error } = await supabase
+      .from('herramientas')
+      .insert({
+        codigo,
+        nom:           dto.nom,
+        tipo_id:       dto.tipo_id ?? null,
+        serie:         sinVacios(dto.serie),
+        fecha_ingreso: sinVacios(dto.fecha_ingreso),
+        obs:           sinVacios(dto.obs),
+        marca:         marcaSnap,
+        modelo:        modeloSnap,
+        marca_id:      dto.marca_id ?? null,
+        modelo_id:     dto.modelo_id ?? null,
+        estado_key:    'disponible',
+        obra_cod:      obraDepo?.cod ?? null,
+        created_by:    userId,
+        updated_by:    userId,
+      })
+      .select()
+      .single()
+
+    if (!error) { herr = data; break }
+
+    // 23505 = unique_violation sobre herramientas_codigo_key.
+    if (error.code === '23505') {
+      if (!codigoPedido && intento < MAX_INTENTOS) continue
+      return c.json({ error: 'CODIGO_DUPLICADO', detail: { codigo, libre: await proximoCodigo() } }, 409)
+    }
+    return c.json({ error: error.message }, 500)
+  }
 
   await supabase.from('herr_movimientos').insert({
     herramienta_id:   herr.id,
@@ -502,16 +563,16 @@ herramientas.get('/:id', requirePermiso('herramientas', 'lectura'), async (c) =>
 })
 
 // PATCH /api/herramientas/:id
-const UpdateSchema = z.object({
+export const UpdateSchema = z.object({
   nom:           z.string().min(1).optional(),
-  tipo_id:       z.number().optional(),
+  tipo_id:       z.number().nullable().optional(),
   marca:         z.string().optional(),
   marca_id:      z.number().nullable().optional(),
   modelo:        z.string().optional(),
   modelo_id:     z.number().nullable().optional(),
-  serie:         z.string().optional(),
-  fecha_ingreso: z.string().optional(),
-  obs:           z.string().optional(),
+  serie:         z.string().nullish(),
+  fecha_ingreso: FechaOpcional,
+  obs:           z.string().nullish(),
 })
 
 herramientas.patch('/:id', requirePermiso('herramientas', 'actualizacion'), zValidator('json', UpdateSchema), async (c) => {
@@ -522,6 +583,10 @@ herramientas.patch('/:id', requirePermiso('herramientas', 'actualizacion'), zVal
   // Si vinieron marca_id / modelo_id (incluso null para desasignar),
   // resolvemos el snapshot del nombre. Si solo vino la text, la respetamos.
   const payload: Record<string, any> = { ...dto, updated_by: userId }
+  // Mismo criterio que el alta: '' es "sin dato", no un dato vacío.
+  for (const campo of ['serie', 'fecha_ingreso', 'obs'] as const) {
+    if (campo in dto) payload[campo] = sinVacios(dto[campo])
+  }
   if ('marca_id' in dto || 'modelo_id' in dto) {
     const { marcaSnap, modeloSnap } = await resolverMarcaModelo(dto)
     if ('marca_id'  in dto) payload.marca  = marcaSnap
@@ -535,7 +600,10 @@ herramientas.patch('/:id', requirePermiso('herramientas', 'actualizacion'), zVal
     .select()
     .single()
 
-  if (error) return c.json({ error: error.message }, 500)
+  if (error) {
+    if (error.code === '23505') return c.json({ error: 'CODIGO_DUPLICADO' }, 409)
+    return c.json({ error: error.message }, 500)
+  }
   return c.json(data)
 })
 
