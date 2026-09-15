@@ -25,8 +25,62 @@ const solicitudes = new Hono()
 solicitudes.use('*', authMiddleware)
 solicitudes.on(['GET'],            '*', requirePermiso('certificaciones', 'lectura'))
 solicitudes.on(['POST'],           '*', requirePermiso('certificaciones', 'creacion'))
-solicitudes.on(['PATCH', 'PUT'],   '*', requirePermiso('certificaciones', 'actualizacion'))
+solicitudes.on(['PATCH', 'PUT'],   '*', requireEditarOFlag)
 solicitudes.on(['DELETE'],         '*', requirePermiso('certificaciones', 'eliminacion'))
+
+/**
+ * Guard de PATCH/PUT en /api/solicitudes. Admite DOS caminos:
+ *
+ *  - `certificaciones.actualizacion`: edita cualquier pedido. Es lo que tienen
+ *    Nicolás, Diego, Alina, Sosa y los jefes de obra con las tabs acotadas.
+ *    No cambia nada para ellos.
+ *  - flag `certificaciones.editar_pedidos` (default false): edita SOLO los
+ *    pedidos que creó él mismo. Es para el que carga su propio pedido y se
+ *    equivocó en una cantidad (Juan Pablo, 15/09), sin abrirle el resto del
+ *    módulo: con `actualizacion` también podría marcar consumible propio,
+ *    editar cobros, proveedores, facturas y fichas de stock.
+ *
+ * El dueño se chequea en `requireDuenoDelPedido`, sobre la ruta /:id, porque
+ * acá el patrón es '*' y no hay params. Y lo que NINGUNO de los dos toca es un
+ * renglón ya comprado o enviado: el service filtra por estado='pendiente' al
+ * actualizar y al borrar, así que la corrección sólo alcanza a lo pendiente.
+ *
+ * PATCH /items/:itemId no se debilita: sigue exigiendo el flag `resolver_items`
+ * por su cuenta, que es del comprador. Al 15/09 todos los que lo tienen tienen
+ * además `actualizacion`, así que nadie gana acceso por este cambio.
+ */
+async function requireEditarOFlag(c: any, next: any) {
+  const { data: profile } = await supabase
+    .from('profiles').select('rol, permisos, activo').eq('id', c.get('user').id).single()
+  if (!profile) return c.json({ error: 'SIN_PERFIL' }, 403)
+  if (profile.activo === false) return c.json({ error: 'USUARIO_INACTIVO' }, 403)
+  if (profile.rol === 'admin') return next()
+
+  const permisos = profile.permisos as Record<string, Record<string, unknown>> | null
+  const cert = permisos?.certificaciones
+  if (cert?.actualizacion === true || cert?.editar_pedidos === true) return next()
+  return c.json({ error: 'SIN_PERMISO' }, 403)
+}
+
+/**
+ * Con el flag `editar_pedidos` SOLO, el pedido tiene que ser propio. Quien
+ * tiene `actualizacion` pasa derecho, como siempre.
+ */
+async function requireDuenoDelPedido(c: any, next: any) {
+  const userId = c.get('user').id
+  const { data: profile } = await supabase
+    .from('profiles').select('rol, permisos').eq('id', userId).single()
+  if (profile?.rol === 'admin') return next()
+  const permisos = profile?.permisos as Record<string, Record<string, unknown>> | null
+  if (permisos?.certificaciones?.actualizacion === true) return next()
+
+  const { data: pedido, error } = await supabase
+    .from('solicitud_compra').select('created_by').eq('id', Number(c.req.param('id'))).maybeSingle()
+  if (error) return c.json({ error: error.message }, 500)
+  if (!pedido) return c.json({ error: 'SOLICITUD_NO_EXISTE' }, 404)
+  if (pedido.created_by !== userId) return c.json({ error: 'PEDIDO_AJENO' }, 403)
+  await next()
+}
 
 // Helper: el service tira HttpError(403,'OBRA_SIN_ACCESO') cuando el user
 // pidió/operó sobre una obra a la que no está asignado. Lo mapeamos a JSON.
@@ -85,7 +139,7 @@ solicitudes.post('/', zValidator('json', CreateSolicitudSchema), async (c) => {
   }
 })
 
-solicitudes.patch('/:id', zValidator('json', UpdateSolicitudSchema), async (c) => {
+solicitudes.patch('/:id', requireDuenoDelPedido, zValidator('json', UpdateSolicitudSchema), async (c) => {
   return withAccess(() =>
     solicitudesService.update(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id),
   )(c)
