@@ -25,7 +25,16 @@ import { ASISTENTE_TOOLS, fetchPerfil, type ToolCtx } from './asistente.tools.js
 import { PEDIDO_TOOLS, type PedidoCtx } from './asistente.pedidos.js'
 
 const MAX_ITER_HERRAMIENTAS = 8
-const MAX_TOKENS = 2048
+// 8192 y no 2048 (15/09/2026). El modelo ahora devuelve bloques `thinking`
+// junto con la respuesta, y esos tokens salen del MISMO presupuesto de salida.
+// Medido sobre el pedido de 10 renglones que falló en prod ("4 balde de albañil
+// / 2 tachos de 20 / ..."), con las herramientas y el system reales: el
+// pensamiento se comió entre 526 y 1.345 tokens en dos corridas de la MISMA
+// consulta. Con 2048 de techo, cuando piensa del lado alto no le queda espacio
+// para escribir la tabla de candidatos de 10 renglones, la respuesta vuelve sin
+// un solo bloque de texto y el usuario ve "No pude generar una respuesta".
+// Por eso fallaba de a ratos y no siempre.
+const MAX_TOKENS = 8192
 
 export class AsistenteError extends Error {
   constructor(public status: 400 | 403 | 500 | 502 | 503, public code: string) {
@@ -191,12 +200,24 @@ export const asistenteService = {
             .join('\n')
             .trim()
           if (!reply) {
+            const bloques = response.content.map(b => b.type)
             console.error(
-              `[asistente] respuesta vacía — stop_reason=${response.stop_reason}, iteraciones=${iteraciones}, bloques=${response.content.map(b => b.type).join(',')}`,
+              `[asistente] respuesta vacía — stop_reason=${response.stop_reason}, iteraciones=${iteraciones}, ` +
+              `bloques=${bloques.join(',') || 'ninguno'}, out=${response.usage?.output_tokens ?? '?'}, ` +
+              `thinking=${(response.usage as { output_tokens_details?: { thinking_tokens?: number } } | undefined)
+                ?.output_tokens_details?.thinking_tokens ?? '?'}`,
             )
           }
+          // Cuando se corta por techo de tokens NO hay que pedirle al usuario
+          // que reformule: la pregunta estaba bien, lo que faltó fue lugar para
+          // contestarla. Pasaba con los pedidos largos, porque el pensamiento
+          // del modelo sale del mismo presupuesto que la respuesta y se comía
+          // el techo antes del primer bloque de texto.
+          const sinLugar = response.stop_reason === 'max_tokens'
           return {
-            reply: reply || 'No pude generar una respuesta. Probá reformular la pregunta.',
+            reply: reply || (sinLugar
+              ? 'Me quedé sin espacio para escribir la respuesta. Si es un pedido largo, pasámelo en dos tandas; si era una consulta, acotala un poco.'
+              : 'No pude generar una respuesta. Probá reformular la pregunta.'),
             herramientas_usadas: [...new Set(usadas)],
           }
         }
