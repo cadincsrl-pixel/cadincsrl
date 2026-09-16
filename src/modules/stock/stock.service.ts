@@ -972,6 +972,30 @@ export const stockService = {
   async createMovimiento(dto: CreateMovimientoDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
 
+    // Ni la herramienta ni el servicio llevan saldo de depósito (migración
+    // 20260916c). El candado real está en la base: el trigger
+    // `trg_stock_solo_materiales` descarta la fila en silencio, y
+    // `trg_stock_congelado_sin_deposito` deja `stock_actual` quieto. Pero acá
+    // abajo el insert pide `.single()`, así que sin este chequeo el usuario
+    // vería el error crudo de PostgREST ("JSON object requested, 0 rows") en
+    // vez de enterarse de dónde va lo que está cargando.
+    const { data: ficha } = await supabase
+      .from('stock_materiales')
+      .select('clase, nombre')
+      .eq('id', dto.material_id)
+      .maybeSingle()
+    if (ficha?.clase === 'herramienta') {
+      throw new Error(
+        `«${ficha.nombre}» es una herramienta y no lleva stock de depósito: el pañol es la única verdad. ` +
+        'Registralo en Herramientas › Salidas / Retornos.',
+      )
+    }
+    if (ficha?.clase === 'servicio') {
+      throw new Error(
+        `«${ficha.nombre}» es un servicio y no lleva stock de depósito: se entrega cuando se compra.`,
+      )
+    }
+
     // Los ajustes nacen como PENDIENTE — no impactan el stock hasta que
     // alguien con permiso `aprobar_ajustes_stock` los apruebe.
     // Los movimientos de entrada/salida (compra/despacho/devolución) siguen
