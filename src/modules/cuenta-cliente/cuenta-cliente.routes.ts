@@ -18,6 +18,7 @@ import {
 } from './cuenta-cliente.schema.js'
 import type { CuentaFiltro } from './cuenta-cliente.service.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
+import { cargarResumenObras } from './resumen-obras.service.js'
 
 const cuentaCliente = new Hono()
 
@@ -71,6 +72,26 @@ cuentaCliente.get('/renglones', soloCuenta, requirePermiso('certificaciones', 'l
   const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
   if (allowed != null && allowed.length === 0) return c.json({ items: [], total: 0, limit: f.limit, offset: f.offset })
   return c.json(await cuentaClienteService.getRenglones(allowed, filtroDeQuery(f), f.limit, f.offset, c.get('accessToken')))
+})
+
+// GET /api/cuenta-cliente/resumen-obras — cuánto debe cada obra (17/09).
+//
+// Una fila por obra de cliente con jornales, contratistas y materiales (cada
+// pata con su %), total, pagado, notas de crédito y saldo. Es la cuenta "POR
+// ADMINISTRACIÓN" de una obra, calculada en el servidor para todas a la vez:
+// hacerlo en el navegador era bajar las horas de 30 obras cada vez (el
+// tráfico que fundió Render en agosto) y pisar el tope de 1000 filas.
+//
+// Jornales y contratistas son COSTO, así que van con la misma llave que
+// GET /api/horas/costo-obra: lectura de tarja + flag ver_costos. Sin eso la
+// fila viene sin esas dos patas y marcada `parcial` — nunca un total que
+// parezca completo sin serlo.
+cuentaCliente.get('/resumen-obras', soloCuenta, requirePermiso('certificaciones', 'lectura'), async (c) => {
+  const userId = c.get('user').id
+  const allowed = await getObrasDelUsuarioCached(userId, 'certificaciones')
+  if (allowed != null && allowed.length === 0) return c.json({ filas: [], con_tarja: false, generado_en: new Date().toISOString() })
+  const conTarja = (await tieneFlag(userId, 'tarja', 'lectura', false)) && (await tieneFlag(userId, 'tarja', 'ver_costos', true))
+  return c.json(await cargarResumenObras(allowed, conTarja))
 })
 
 // GET /api/cuenta-cliente/resumen — totales por grupo (obra | mes | proveedor)
