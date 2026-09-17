@@ -24,6 +24,20 @@ function useRpcResolver(): boolean {
 // El handler de rutas (itemHandler) respeta esta clase: si se lanza,
 // devuelve status/code/detail como JSON. Si se lanza un Error común,
 // cae al flujo anterior (legacy).
+export type DestinoCompras = 'a_deposito' | 'devuelta_proveedor'
+
+export interface EliminarSolicitudResultado {
+  success:            boolean
+  solicitud_id:       number
+  compras:            DestinoCompras | null
+  vueltos_al_estante: number
+  compras_a_deposito: number
+  compras_devueltas:  number
+  omitidos_sin_stock: number
+  /** back-compat: vueltos_al_estante + compras_a_deposito */
+  items_revertidos:   number
+}
+
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -52,6 +66,11 @@ export function mapRpcError(error: PostgrestError): HttpError {
     /SIN_PERMISO/.test(msg)         ? 'SIN_PERMISO' :
     /SOLICITUD_NO_EXISTE/.test(msg) ? 'SOLICITUD_NO_EXISTE' :
     /SOLICITUD_TIENE_REMITOS/.test(msg) ? 'SOLICITUD_TIENE_REMITOS' :
+    /SOLICITUD_TIENE_ENVIOS/.test(msg)  ? 'SOLICITUD_TIENE_ENVIOS' :
+    /SOLICITUD_TIENE_RETIROS/.test(msg) ? 'SOLICITUD_TIENE_RETIROS' :
+    /ELEGIR_DESTINO_COMPRAS/.test(msg)  ? 'ELEGIR_DESTINO_COMPRAS' :
+    /COMPRA_SIN_FICHA/.test(msg)        ? 'COMPRA_SIN_FICHA' :
+    /DESTINO_INVALIDO/.test(msg)        ? 'DESTINO_INVALIDO' :
     /ITEM_NO_EXISTE/.test(msg)      ? 'ITEM_NO_EXISTE' :
     /ITEM_NO_DISPONIBLE/.test(msg)  ? 'ITEM_NO_DISPONIBLE' :
     /PROVEEDOR_INVALIDO/.test(msg)  ? 'PROVEEDOR_INVALIDO' :
@@ -74,6 +93,13 @@ export function mapRpcError(error: PostgrestError): HttpError {
     case 'SIN_PERMISO':           return new HttpError(403, code, parseDetail(error.details))
     case 'SOLICITUD_NO_EXISTE':   return new HttpError(404, code)
     case 'SOLICITUD_TIENE_REMITOS': return new HttpError(409, code)
+    // Borrar un pedido (20260917j): lo enviado está en la obra y no se borra;
+    // las compras sin enviar exigen destino; una compra sin ficha no entra al depósito.
+    case 'SOLICITUD_TIENE_ENVIOS':  return new HttpError(409, code)
+    case 'SOLICITUD_TIENE_RETIROS': return new HttpError(409, code)
+    case 'ELEGIR_DESTINO_COMPRAS':  return new HttpError(409, code, parseDetail(error.details))
+    case 'COMPRA_SIN_FICHA':        return new HttpError(409, code, parseDetail(error.details))
+    case 'DESTINO_INVALIDO':        return new HttpError(400, code)
     case 'ITEM_NO_EXISTE':        return new HttpError(404, code)
     case 'ITEM_NO_DISPONIBLE':    return new HttpError(404, code) // mantiene 404 legacy
     case 'PROVEEDOR_INVALIDO':    return new HttpError(400, code)
@@ -378,7 +404,12 @@ export const solicitudesService = {
     return this.getById(id, token, userId)
   },
 
-  async delete(id: number, token: string, userId: string) {
+  // `compras` (20260917j): qué pasa con las compras sin enviar del pedido.
+  //   'a_deposito'         → quedan en CADINC: entrada de stock por compra.
+  //   'devuelta_proveedor' → vuelven al proveedor: no tocan stock.
+  //   null                 → si hay compras sin enviar, la RPC responde
+  //                          ELEGIR_DESTINO_COMPRAS y la pantalla pregunta.
+  async delete(id: number, token: string, userId: string, compras: DestinoCompras | null = null) {
     const supabase = createSupabaseClient(token)
 
     // Validar acceso a la obra antes de borrar.
@@ -406,17 +437,19 @@ export const solicitudesService = {
       throw new HttpError(409, 'SOLICITUD_TIENE_COBROS', { cobro_id: cobrados[0]!.cobro_id })
     }
 
-    // RPC transaccional: revierte stock con FOR UPDATE, valida remitos_envio,
-    // y borra solicitud_compra (CASCADE borra items + MCC).
-    // Migración 20260424_rpc_eliminar_solicitud.
+    // RPC transaccional (20260424, reescrita en 20260917j): lo despachado de
+    // depósito y sin enviar vuelve al estante; las compras sin enviar van a
+    // depósito o al proveedor según `compras`; lo enviado bloquea (está en la
+    // obra). Después borra solicitud_compra (CASCADE borra items + MCC).
     // Vía supabaseAdmin: es SECURITY DEFINER y la migración 20260527 revocó
     // EXECUTE para `authenticated` (rol efectivo del token client). Ver P0.
     const { data, error } = await supabaseAdmin.rpc('eliminar_solicitud', {
       p_solicitud_id: id,
       p_user_id:      userId,
+      p_compras:      compras,
     })
     if (error) throw mapRpcError(error)
-    return data as { success: boolean; solicitud_id: number; items_revertidos: number }
+    return data as EliminarSolicitudResultado
   },
 
   // ── Acciones sobre ítems ─────────────────────────────────

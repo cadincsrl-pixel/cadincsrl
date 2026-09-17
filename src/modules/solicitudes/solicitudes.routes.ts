@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, puedeActualizarCatalogo } from '../../middleware/permission.js'
 import { supabase } from '../../lib/supabase.js'
@@ -145,9 +146,22 @@ solicitudes.patch('/:id', requireDuenoDelPedido, zValidator('json', UpdateSolici
   )(c)
 })
 
+// Body opcional: { compras?: 'a_deposito' | 'devuelta_proveedor' } (20260917j).
+// Un DELETE sin body es lo normal (pedido sin compras sin enviar). Si las
+// hay, la RPC responde 409 ELEGIR_DESTINO_COMPRAS y la pantalla vuelve a
+// pedir con el destino elegido. El middleware de auditoría guarda el body.
+const EliminarSolicitudSchema = z.object({
+  compras: z.enum(['a_deposito', 'devuelta_proveedor']).optional(),
+})
+
 solicitudes.delete('/:id', async (c) => {
+  const crudo  = await c.req.json().catch(() => ({}))
+  const parsed = EliminarSolicitudSchema.safeParse(crudo ?? {})
+  if (!parsed.success) return c.json({ error: 'DESTINO_INVALIDO' }, 400)
   return withAccess(() =>
-    solicitudesService.delete(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id),
+    solicitudesService.delete(
+      Number(c.req.param('id')), c.get('accessToken'), c.get('user').id, parsed.data.compras ?? null,
+    ),
   )(c)
 })
 
