@@ -15,6 +15,7 @@ import { logger } from 'hono/logger'
 import { HTTPException } from 'hono/http-exception'
 import { authMiddleware } from './middleware/auth.js'
 import { auditMiddleware } from './middleware/audit.js'
+import { realtimeMiddleware } from './middleware/realtime.js'
 
 
 import categoriasRoutes from './modules/categorias/categorias.routes.js'
@@ -103,6 +104,10 @@ app.get('/api/me', authMiddleware, (c) => {
 // Audit middleware — loguea acciones POST/PATCH/DELETE exitosas
 // Debe declararse ANTES de las rutas para que Hono lo encadene
 app.use('/api/*', auditMiddleware)
+
+// Aviso en vivo de cambios en pedidos, para las pantallas ya abiertas. Mismo
+// lugar y mismo motivo que el de auditoría: corre después del handler.
+app.use('/api/*', realtimeMiddleware)
 
 // Rutas
 app.route('/api/categorias', categoriasRoutes)
