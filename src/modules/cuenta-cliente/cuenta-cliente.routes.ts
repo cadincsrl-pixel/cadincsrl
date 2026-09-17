@@ -150,9 +150,12 @@ cuentaCliente.post('/imputar-pagado', soloCuenta, requirePermiso('certificacione
 // nosotros para ejecutar la tarea y no se le cobra al cliente.
 //
 // Pide `actualizacion` y NO `creacion`: no crea nada, cambia quién paga un
-// renglón que ya existe. Y pide el flag `cargar_precios`, el mismo que habilita
-// tocar la cuenta del cliente y el catálogo (CLAUDE.md §5.14): sacar un renglón
-// de la deuda mueve exactamente la misma plata que valuarlo.
+// renglón que ya existe. Y pide UNO de dos flags: `cargar_precios`, el que
+// habilita tocar la cuenta del cliente y el catálogo (CLAUDE.md §5.14), o
+// `marcar_consumibles` (20260917n), que es sólo esta capacidad: decidir qué
+// pone CADINC sin poder valuar la cuenta, aprobar precios ni certificar. Nació
+// para Diego en las obras de presupuesto cerrado; la RPC ya rechaza las obras
+// por administración y las llave en mano, así que el flag no llega más lejos.
 cuentaCliente.post('/consumible', soloCuenta, requirePermiso('certificaciones', 'actualizacion'),
   zValidator('json', MarcarConsumibleSchema), handler(async (c) => {
     const dto = c.req.valid('json')
@@ -160,9 +163,9 @@ cuentaCliente.post('/consumible', soloCuenta, requirePermiso('certificaciones', 
     await validarObraDelUsuario(userId, dto.obra_cod, 'certificaciones')
     // Mismo código de error y mismo default que usa emitir certificado, para
     // que el frontend no tenga que aprender una variante nueva.
-    if (!(await tieneFlag(userId, 'certificaciones', 'cargar_precios', false))) {
-      return c.json({ error: 'SIN_PERMISO_CARGAR_PRECIOS' }, 403)
-    }
+    const puede = (await tieneFlag(userId, 'certificaciones', 'cargar_precios', false))
+               || (await tieneFlag(userId, 'certificaciones', 'marcar_consumibles', false))
+    if (!puede) return c.json({ error: 'SIN_PERMISO_MARCAR_CONSUMIBLES' }, 403)
     return c.json(await cuentaClienteService.marcarConsumible(dto, userId))
   }))
 
