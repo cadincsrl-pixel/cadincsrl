@@ -44,6 +44,8 @@ export type Regimen = 'administracion' | 'presupuesto_cerrado'
 export interface ObraResumenInput {
   cod: string
   nom: string
+  /** `obras.cc`, el centro de costo: el CLIENTE, que puede pagar varias obras juntas. */
+  cc: string | null
   archivada: boolean
   por_administracion: boolean
 }
@@ -87,6 +89,12 @@ export interface PataResumen {
 export interface ResumenObraFila {
   obra_cod:     string
   obra_nom:     string
+  /**
+   * El centro de costo, para agrupar: ANIMAR paga sus cuatro clínicas con un
+   * solo saldo, BRADEL sus farmacias. Sin `cc` cargado, la obra es su propio
+   * centro — nunca queda fuera de la agrupación.
+   */
+  centro_costo: string
   archivada:    boolean
   regimen:      Regimen
   /** null cuando el que pide no puede ver costos de tarja (`parcial = true`). */
@@ -208,7 +216,9 @@ export function armarResumenObras(d: DatosResumenObras, hoyISO: string, conTarja
     const notas  = r2((notasPor.get(cod) ?? []).reduce((s, n) => s + Number(n.monto ?? 0), 0))
 
     filas.push({
-      obra_cod: cod, obra_nom: obra.nom, archivada: obra.archivada, regimen,
+      obra_cod: cod, obra_nom: obra.nom,
+      centro_costo: (obra.cc ?? '').trim() || obra.nom,
+      archivada: obra.archivada, regimen,
       jornales, contratistas, materiales,
       total, pagado, notas, saldo: r2(total - pagado - notas),
       sin_pct: esAdmin && pcts.length === 0,

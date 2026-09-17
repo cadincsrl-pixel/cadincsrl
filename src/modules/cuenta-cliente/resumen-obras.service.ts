@@ -29,12 +29,12 @@ function ok<T>(r: { data: T[] | null; error: { message: string } | null }): T[] 
 export async function cargarResumenObras(allowed: string[] | null, conTarja: boolean): Promise<ResumenObras> {
   let q = supabaseAdmin
     .from('obras')
-    .select('cod, nom, archivada, por_administracion')
+    .select('cod, nom, cc, archivada, por_administracion')
     .eq('materiales_a_cargo_de', 'cliente')
     .eq('es_deposito', false)
     .eq('es_interna', false)
   if (allowed != null) q = q.in('cod', allowed)
-  const obras = ok<{ cod: string; nom: string; archivada: boolean; por_administracion: boolean }>(await q)
+  const obras = ok<{ cod: string; nom: string; cc: string | null; archivada: boolean; por_administracion: boolean }>(await q)
   const codes = obras.map(o => o.cod)
   const hoyISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10)
 

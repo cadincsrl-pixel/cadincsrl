@@ -20,7 +20,7 @@ const CATEGORIAS = [{ id: 1, vh: 5000, categoria_tarifas: [{ vh: 5000, desde: '2
 
 function base(over: Partial<DatosResumenObras> = {}): DatosResumenObras {
   return {
-    obras: [{ cod: 'ADM', nom: 'Por administración', archivada: false, por_administracion: true }],
+    obras: [{ cod: 'ADM', nom: 'Por administración', cc: 'ANIMAR', archivada: false, por_administracion: true }],
     horasSemLeg: [
       { obra_cod: 'ADM', sem_key: '2026-08-28', leg: '001', horas: 40 },
       { obra_cod: 'ADM', sem_key: '2026-09-04', leg: '001', horas: 40 },
@@ -97,7 +97,7 @@ describe('armarResumenObras — obra por administración', () => {
 describe('armarResumenObras — obra de presupuesto cerrado', () => {
   it('jornales y contratistas se devuelven como costo pero NO entran al total ni al saldo', () => {
     const [f] = armarResumenObras(base({
-      obras: [{ cod: 'ADM', nom: 'Presupuesto cerrado', archivada: false, por_administracion: false }],
+      obras: [{ cod: 'ADM', nom: 'Presupuesto cerrado', cc: null, archivada: false, por_administracion: false }],
     }), HOY, true)
     expect(f!.regimen).toBe('presupuesto_cerrado')
     expect(f!.jornales).toMatchObject({ costo: 400000, facturable: 400000, en_cuenta: false, pct: null })
@@ -114,8 +114,8 @@ describe('armarResumenObras — varias obras', () => {
   it('ordena por saldo descendente y no mezcla los datos entre obras', () => {
     const filas = armarResumenObras(base({
       obras: [
-        { cod: 'A', nom: 'Chica',  archivada: false, por_administracion: false },
-        { cod: 'B', nom: 'Grande', archivada: true,  por_administracion: false },
+        { cod: 'A', nom: 'Chica',  cc: '  ',    archivada: false, por_administracion: false },
+        { cod: 'B', nom: 'Grande', cc: 'BRADEL', archivada: true,  por_administracion: false },
       ],
       horasSemLeg: [], certs: [], pcts: [], imputaciones: [], cobros: [], notas: [],
       materiales: [
@@ -127,5 +127,17 @@ describe('armarResumenObras — varias obras', () => {
     expect(filas[0]!.saldo).toBe(99000)
     expect(filas[0]!.archivada).toBe(true)
     expect(filas[1]!.saldo).toBe(1000)
+  })
+
+  it('el centro de costo es el cc de la obra, y sin cc la obra es su propio centro', () => {
+    const filas = armarResumenObras(base({
+      obras: [
+        { cod: 'A', nom: 'Chica',  cc: '  ',    archivada: false, por_administracion: false },
+        { cod: 'B', nom: 'Grande', cc: 'BRADEL', archivada: false, por_administracion: false },
+      ],
+      horasSemLeg: [], certs: [], pcts: [], imputaciones: [], cobros: [], notas: [], materiales: [],
+    }), HOY, true)
+    expect(filas.find(f => f.obra_cod === 'B')!.centro_costo).toBe('BRADEL')
+    expect(filas.find(f => f.obra_cod === 'A')!.centro_costo).toBe('Chica') // cc en blanco no deja a nadie afuera
   })
 })
