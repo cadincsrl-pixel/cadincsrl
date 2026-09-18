@@ -20,8 +20,11 @@ export const MODULOS = [
   'flota',
   'alquiler',
   'aridos',
+  'pagos',
   'admin',
 ] as const
+// 2026-09-18: `pagos` (facturas de proveedor, aprobación y órdenes de pago).
+// Módulo independiente: no es tab de certificaciones ni reutiliza `caja`.
 // 2026-09-06: `ropa`, `prestamos` y `configuracion` salieron del catálogo.
 // Ningún endpoint los exigía (todo va por tarja.*) y en la UI son tabs de
 // tarja; como módulos solo desalineaban `modulos[]` con `permisos`.

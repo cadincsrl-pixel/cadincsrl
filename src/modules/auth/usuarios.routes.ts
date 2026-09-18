@@ -102,6 +102,12 @@ const ModuloPermisosSchema = z.object({
   // flag nuevo con `tieneFlag`/`requireFlag` tiene que estar acá también.
   editar_pedidos:        z.boolean().optional(),
   marcar_consumibles:    z.boolean().optional(),
+  // Pagos (2026-09-18): `aprobar_facturas` (Diego; Franco por admin),
+  // `registrar_pagos` y `anular_pagos` (el contador, desde el arranque).
+  // `ver_pii` en pagos significa CBU/alias completos del proveedor.
+  aprobar_facturas:      z.boolean().optional(),
+  registrar_pagos:       z.boolean().optional(),
+  anular_pagos:          z.boolean().optional(),
   obras_scope:       z.enum(['todas', 'asignadas']).optional(),
 })
 

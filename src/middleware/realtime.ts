@@ -53,6 +53,10 @@ const METODOS_MUTATIVOS = new Set(['POST', 'PATCH', 'PUT', 'DELETE'])
 const RUTAS_QUE_AVISAN = [
   /^\/api\/solicitudes/,
   /^\/api\/remitos-envio/,
+  // Pagos NO va acá: el tópico es único (`cadinc-solicitudes`) y el front lo
+  // traduce en invalidar ['solicitudes'] en cada pestaña de Certificaciones
+  // abierta (~400 KB por aviso). Si en fase 2 se quiere aviso en vivo para la
+  // bandeja de facturas, va un tópico propio `cadinc-pagos` con su suscriptor.
 ]
 
 export const TOPICO_CAMBIOS = 'cadinc-solicitudes'

@@ -65,6 +65,11 @@ export const VERBOS: Record<string, string> = {
   remito: 'adjuntar remito', orden: 'reordenar', bulk: 'confirmar en bloque', lote: 'cargar en lote',
   aumento: 'aumento general', chat: 'consultar', entrada: 'entrada', salida: 'salida',
   aplicar: 'aplicar a sus usuarios',
+  // Pagos (2026-09-18). `aprobar`, `baja`, `upload-url` y `upload-comprobante`
+  // ya existen arriba; `anular` no se usa para el reintegro a chofer.
+  observar: 'observar', corregida: 'marcar corregida', anular: 'anular', reactivar: 'reactivar',
+  'datos-pago': 'cargar datos de pago', 'comprobante-pendiente': 'descartar comprobante',
+  reimputar: 'reimputar', 'aplicar-anticipo': 'aplicar anticipo',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
@@ -131,6 +136,12 @@ export const ENTIDADES: Record<string, string> = {
   oficina: 'oficina', 'oficina/personas': 'persona de oficina', 'oficina/personas/sueldos': 'sueldo de oficina',
   'oficina/sueldos': 'sueldos de oficina',
   asistente: 'asistente IA', admin: 'administración',
+  // Pagos a proveedores. Sin las entradas de adjuntos, DELETE
+  // /pagos/facturas/12/adjuntos/7 se leería como «eliminar factura 7».
+  pagos: 'factura de proveedor', 'pagos/facturas': 'factura de proveedor',
+  'pagos/facturas/adjuntos': 'adjunto de factura',
+  'pagos/ordenes': 'orden de pago', 'pagos/ordenes/adjuntos': 'adjunto de orden de pago',
+  'pagos/proveedores': 'proveedor (pagos)', 'pagos/catalogos': 'catálogo',
 }
 
 /** Palabras que aparecen como segmentos de ruta: nunca son un id. */
