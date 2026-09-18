@@ -94,6 +94,14 @@ const ModuloPermisosSchema = z.object({
   // igual y el renglón queda esperando precio.
   cargar_precios:        z.boolean().optional(),
   precio_al_resolver:    z.boolean().optional(),
+  // Dos flags que nacieron con su guardia en el backend pero NO acá (17/09):
+  // `editar_pedidos` (15/09, Juan Pablo corrige su propio pedido) y
+  // `marcar_consumibles` (17/09, 20260917n). Como este objeto descarta las
+  // claves que no conoce, guardar el usuario desde Admin los borraba en
+  // silencio: el permiso existía hasta la próxima edición del perfil. Todo
+  // flag nuevo con `tieneFlag`/`requireFlag` tiene que estar acá también.
+  editar_pedidos:        z.boolean().optional(),
+  marcar_consumibles:    z.boolean().optional(),
   obras_scope:       z.enum(['todas', 'asignadas']).optional(),
 })
 
