@@ -11,6 +11,15 @@ import { z } from 'zod'
 
 export const TIPOS_COMPROBANTE = ['A', 'B', 'C', 'recibo', 'ticket', 'otro'] as const
 export const ESTADOS_FACTURA = ['pendiente', 'observada', 'aprobada', 'pagada_parcial', 'pagada', 'anulada'] as const
+/**
+ * Cómo se sugiere el vencimiento de las facturas de un proveedor (20260921g).
+ *   dias           → fecha de la factura + plazo_pago_dias (lo de siempre; ABC S.A.).
+ *   cierre_mensual → cuenta corriente: todo el mes cierra y vence junto (Silva).
+ * El cálculo vive en el frontend (`vencimientoSugerido`), que es donde se
+ * propone la fecha; acá sólo se valida y se guarda la configuración.
+ */
+export const VENCIMIENTO_MODOS = ['dias', 'cierre_mensual'] as const
+
 export const FORMAS_PREVISTAS = ['efectivo', 'transferencia', 'tarjeta', 'cheque', 'echeq', 'debito_automatico', 'cta_cte', 'otro'] as const
 /**
  * Forma REAL de una orden de pago que elige el contador. Sin `cta_cte` (quedar
@@ -333,6 +342,8 @@ export const CreateProveedorSchema = z.object({
   cbu:             Texto(40).nullable().optional(),
   banco:           Texto(80).optional().default(''),
   plazo_pago_dias: z.number().int().min(0).max(365).optional().default(30),
+  vencimiento_modo: z.enum(VENCIMIENTO_MODOS).optional().default('dias'),
+  cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   contacto:        Texto(120).optional().default(''),
   telefono:        Texto(40).optional().default(''),
   email:           Texto(120).optional().default(''),
@@ -348,6 +359,8 @@ export const UpdateProveedorSchema = z.object({
   cbu:             Texto(40).nullable().optional(),
   banco:           Texto(80).optional(),
   plazo_pago_dias: z.number().int().min(0).max(365).optional(),
+  vencimiento_modo: z.enum(VENCIMIENTO_MODOS).optional(),
+  cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   contacto:        Texto(120).optional(),
   telefono:        Texto(40).optional(),
   email:           Texto(120).optional(),

@@ -23,7 +23,7 @@ import { PagosHttpError, errorDeCampo } from './pagos.errors.js'
 import { normCuit, cuitValido, normCbu, cbuValido, normAlias, aliasValido, enmascarar, enmascararTexto } from './pagos.util.js'
 import { esBoolQ, type CreateProveedorDto, type UpdateProveedorDto, type DatosPagoDto, type ListProveedoresQuery } from './pagos.schema.js'
 
-const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by'
+const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by'
 
 export interface Aviso { code: string; [k: string]: unknown }
 
@@ -63,9 +63,14 @@ function normalizar(dto: Partial<CreateProveedorDto>): Record<string, unknown> {
     if (alias !== null && !aliasValido(alias)) throw errorDeCampo('ALIAS_INVALIDO', 'alias_cbu')
     out.alias_cbu = alias
   }
-  for (const k of ['banco', 'plazo_pago_dias', 'contacto', 'telefono', 'email', 'obs'] as const) {
+  for (const k of ['banco', 'plazo_pago_dias', 'vencimiento_modo', 'contacto', 'telefono', 'email', 'obs'] as const) {
     if (dto[k] !== undefined) out[k] = dto[k]
   }
+  // `cierre_dia` va aparte porque el CHECK de la tabla lo ata al modo: sólo
+  // se admite con `cierre_mensual`. Al volver a 'dias' hay que limpiarlo en el
+  // mismo UPDATE o el constraint rebota con el valor viejo.
+  if (dto.vencimiento_modo === 'dias') out.cierre_dia = null
+  else if (dto.cierre_dia !== undefined) out.cierre_dia = dto.cierre_dia
   return out
 }
 
