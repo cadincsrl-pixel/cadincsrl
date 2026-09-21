@@ -127,7 +127,11 @@ export type OrdenAlCargarDto = z.infer<typeof OrdenAlCargarSchema>
 export const CreateFacturaSchema = z.object({
   proveedor_id:        Id,
   tipo_comprobante:    z.enum(TIPOS_COMPROBANTE),
-  numero:              z.string().trim().max(60).nullable().optional(),
+  // OBLIGATORIO desde el 2026-09-21 (decisión del dueño). La pantalla lo pide
+  // en dos campos —punto de venta y comprobante— y manda "0013-00402141".
+  // Las 2 facturas que se cargaron sin número antes de la regla siguen como
+  // están: la validación es de alta, no rompe lo ya guardado.
+  numero:              z.string().trim().min(1).max(60),
   fecha:               FechaISO,
   vence_el:            FechaISO.nullable().optional(),
   neto:                MontoNoNeg.nullable().optional(),
@@ -153,7 +157,10 @@ export type CreateFacturaDto = z.infer<typeof CreateFacturaSchema>
 export const UpdateFacturaSchema = z.object({
   proveedor_id:        Id.optional(),
   tipo_comprobante:    z.enum(TIPOS_COMPROBANTE).optional(),
-  numero:              z.string().trim().max(60).nullable().optional(),
+  // Al editar no se puede BORRAR el número (ni null ni vacío), pero tampoco se
+  // exige mandarlo: omitirlo significa «no lo toques», así que las 2 viejas sin
+  // número se pueden seguir editando en otros campos.
+  numero:              z.string().trim().min(1).max(60).optional(),
   fecha:               FechaISO.optional(),
   vence_el:            FechaISO.nullable().optional(),
   neto:                MontoNoNeg.nullable().optional(),

@@ -60,11 +60,15 @@ describe('UpdateFacturaSchema (.strict)', () => {
 })
 
 describe('CreateFacturaSchema', () => {
+  // `numero` entró al mínimo el 2026-09-21: cargar una factura sin número
+  // dejó de estar permitido (decisión del dueño). La pantalla lo pide en dos
+  // campos, punto de venta y comprobante, y manda el compuesto.
   const base = {
-    proveedor_id: 1, tipo_comprobante: 'A', fecha: '2026-09-18', total: 1210, descripcion: 'Hierro 8 mm',
+    proveedor_id: 1, tipo_comprobante: 'A', numero: '0013-00402141',
+    fecha: '2026-09-18', total: 1210, descripcion: 'Hierro 8 mm',
     imputaciones: [{ obra_cod: 'CC 1', monto: 1210 }],
   }
-  it('mínimo: proveedor, tipo, fecha, total, descripción e imputaciones', () => {
+  it('mínimo: proveedor, tipo, NÚMERO, fecha, total, descripción e imputaciones', () => {
     const r = CreateFacturaSchema.safeParse(base)
     expect(r.success).toBe(true)
     if (r.success) {
@@ -75,6 +79,20 @@ describe('CreateFacturaSchema', () => {
   it('descripción obligatoria (min 3) y total > 0', () => {
     expect(CreateFacturaSchema.safeParse({ ...base, descripcion: 'ab' }).success).toBe(false)
     expect(CreateFacturaSchema.safeParse({ ...base, total: 0 }).success).toBe(false)
+  })
+  it('el número es OBLIGATORIO: sin él, vacío o null, no pasa', () => {
+    const { numero: _, ...sinNumero } = base
+    expect(CreateFacturaSchema.safeParse(sinNumero).success).toBe(false)
+    expect(CreateFacturaSchema.safeParse({ ...base, numero: '' }).success).toBe(false)
+    expect(CreateFacturaSchema.safeParse({ ...base, numero: '   ' }).success).toBe(false)
+    expect(CreateFacturaSchema.safeParse({ ...base, numero: null }).success).toBe(false)
+  })
+  it('al EDITAR no se puede borrar el número, pero se puede no mandarlo', () => {
+    // Omitirlo = «no lo toques»: las viejas sin número se siguen editando.
+    expect(UpdateFacturaSchema.safeParse({ descripcion: 'otra cosa' }).success).toBe(true)
+    expect(UpdateFacturaSchema.safeParse({ numero: '0013-00402141' }).success).toBe(true)
+    expect(UpdateFacturaSchema.safeParse({ numero: '' }).success).toBe(false)
+    expect(UpdateFacturaSchema.safeParse({ numero: null }).success).toBe(false)
   })
   it('«Ya está pagada»: la orden lleva fecha y forma real; no admite cta_cte', () => {
     expect(CreateFacturaSchema.safeParse({ ...base, orden: { fecha: '2026-09-18', forma_pago: 'tarjeta' } }).success).toBe(true)
