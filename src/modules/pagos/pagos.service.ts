@@ -34,7 +34,7 @@ import {
   esBoolQ, ESTADOS_FACTURA, CAMPOS_CONGELADOS, CAMPOS_QUE_DESAPRUEBAN,
   FORMAS_PAGADA_AL_CARGAR_COMPRAS, FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
-  type CreateOrdenDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery,
+  type CreateOrdenDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
   type ImputacionDto,
 } from './pagos.schema.js'
 import {
@@ -172,6 +172,37 @@ export function validarImportes(f: ImportesFactura, imputaciones: ImputacionDto[
     const suma = sumaCentavos(imputaciones.map((i) => i.monto))
     const imputable = imputableDe(f)
     if (!cuadra(suma, imputable)) throw errorDeCampo('IMPUTACION_NO_CUADRA', 'imputaciones', { suma, imputable })
+  }
+}
+
+/**
+ * Cheques de una OP (400 `{ error, campo }`). Las mismas reglas están en
+ * `_pagos_emitir_orden`: esto adelanta el error al campo del formulario, la
+ * RPC es la que manda.
+ *   - cheque/echeq exige al menos uno; cualquier otra forma, ninguno.
+ *   - Σ cheques = lo que sale de plata (±0,01). Si no cierra, falta o sobra uno.
+ *   - ninguno se cobra antes de la fecha del pago.
+ *   - endosado de un tercero sin librador no se puede reclamar a nadie.
+ */
+export function validarCheques(forma: string, cheques: ChequeDto[] | undefined, fecha: string, montoPagado: number, prefijo = ''): void {
+  const lista = cheques ?? []
+  const campo = `${prefijo}cheques`
+  if (!(FORMAS_CON_FECHA_COBRO as readonly string[]).includes(forma)) {
+    if (lista.length > 0) throw errorDeCampo('CHEQUES_INESPERADOS', campo, { forma_pago: forma })
+    return
+  }
+  if (lista.length === 0) throw errorDeCampo('CHEQUES_REQUERIDOS', campo, { forma_pago: forma })
+  lista.forEach((c, i) => {
+    if (c.fecha_cobro < fecha) {
+      throw errorDeCampo('FECHA_COBRO_INVALIDA', `${campo}.${i}.fecha_cobro`, { numero: c.numero, fecha })
+    }
+    if (!c.es_propio && !c.librador.trim()) {
+      throw errorDeCampo('CHEQUE_SIN_LIBRADOR', `${campo}.${i}.librador`, { numero: c.numero })
+    }
+  })
+  const suma = sumaCentavos(lista.map((c) => c.monto))
+  if (!cuadra(suma, montoPagado)) {
+    throw errorDeCampo('SUMA_CHEQUES_DISTINTA', campo, { suma, monto_pagado: aCentavos(montoPagado) })
   }
 }
 
@@ -333,9 +364,7 @@ export const pagosService = {
         throw new PagosHttpError(403, 'PAGADA_AL_CARGAR_FORMA', { forma_pago: o.forma_pago, permitidas: FORMAS_PAGADA_AL_CARGAR_COMPRAS })
       }
       if (o.fecha > hoyAR()) throw errorDeCampo('FECHA_FUTURA', 'orden.fecha', { hoy: hoyAR() })
-      if ((FORMAS_CON_FECHA_COBRO as readonly string[]).includes(o.forma_pago) && !o.fecha_cobro) {
-        throw errorDeCampo('FECHA_COBRO_REQUERIDA', 'orden.fecha_cobro', { forma_pago: o.forma_pago })
-      }
+      validarCheques(o.forma_pago, o.cheques, o.fecha, dto.total, 'orden.')
       if (o.fecha_cobro && o.fecha_cobro < o.fecha) throw errorDeCampo('FECHA_COBRO_INVALIDA', 'orden.fecha_cobro')
       if ((FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(o.forma_pago) && !o.comprobante) {
         throw errorDeCampo('COMPROBANTE_REQUERIDO', 'orden.comprobante', { forma_pago: o.forma_pago })
@@ -345,6 +374,7 @@ export const pagosService = {
         fecha: o.fecha, forma_pago: o.forma_pago, fecha_cobro: o.fecha_cobro ?? null,
         referencia: o.referencia ?? '', obs: o.obs ?? '',
         monto_pagado: aCentavos(dto.total), monto_nc: 0,
+        cheques: o.cheques ?? [],
         adjuntos: adjuntosOrden,
       }
     }
@@ -566,14 +596,19 @@ export const pagosService = {
     const { data: o, error } = await sb.from('v_pagos_ordenes').select('*').eq('id', id).maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!o) throw new PagosHttpError(404, 'ORDEN_NO_EXISTE')
-    const [lineas, adjuntos] = await Promise.all([
+    const [lineas, cheques, adjuntos] = await Promise.all([
       sb.from('pagos_orden_lineas')
         .select('id, tipo, factura_id, monto, nc_numero, nc_fecha, created_at, factura:pagos_facturas(id, tipo_comprobante, numero, fecha, vence_el, total, estado, descripcion)')
         .eq('orden_id', id).order('id'),
+      // Por fecha de cobro: el orden en que van a caer es el orden en que se leen.
+      sb.from('pagos_cheques')
+        .select('id, numero, banco, fecha_cobro, monto, es_propio, librador, obs')
+        .eq('orden_id', id).order('fecha_cobro').order('id'),
       pagosAdjuntosService.listar('ordenes', id, true, token),
     ])
-    if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
-    return { ...enmascararFila(o as Record<string, unknown>, verPii), lineas: lineas.data ?? [], adjuntos }
+    if (lineas.error)  throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
+    if (cheques.error) throw new PagosHttpError(500, 'DB_ERROR', cheques.error.message)
+    return { ...enmascararFila(o as Record<string, unknown>, verPii), lineas: lineas.data ?? [], cheques: cheques.data ?? [], adjuntos }
   },
 
   /**
@@ -603,9 +638,7 @@ export const pagosService = {
     const tipos = new Set(dto.adjuntos.map((a) => a.tipo))
     if (montoPagado > 0) {
       if (!formaPago) throw errorDeCampo('FORMA_PAGO_REQUERIDA', 'forma_pago')
-      if ((FORMAS_CON_FECHA_COBRO as readonly string[]).includes(formaPago) && !dto.fecha_cobro) {
-        throw errorDeCampo('FECHA_COBRO_REQUERIDA', 'fecha_cobro', { forma_pago: formaPago })
-      }
+      validarCheques(formaPago, dto.cheques, dto.fecha, montoPagado)
       if ((FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(formaPago) && !tipos.has('comprobante_pago')) {
         throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { forma_pago: formaPago, tipo: 'comprobante_pago' })
       }
@@ -643,9 +676,13 @@ export const pagosService = {
     try {
       res = rpcOk(await supabase.rpc('pagos_registrar_orden', {
         p_orden: {
-          proveedor_id: dto.proveedor_id, fecha: dto.fecha, fecha_cobro: dto.fecha_cobro ?? null,
+          proveedor_id: dto.proveedor_id, fecha: dto.fecha,
+          // Con cheques la fecha de cobro de la OP la deriva la RPC (la primera
+          // que cae); lo que venga acá se ignora.
+          fecha_cobro: dto.fecha_cobro ?? null,
           forma_pago: formaPago, referencia: dto.referencia ?? '', obs: dto.obs ?? '',
           monto_pagado: montoPagado, monto_nc: montoNc,
+          cheques: dto.cheques ?? [],
         },
         p_lineas: dto.lineas.map((l) => ({
           tipo: l.tipo, factura_id: l.factura_id ?? null, monto: aCentavos(l.monto),

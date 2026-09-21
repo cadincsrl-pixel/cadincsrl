@@ -237,7 +237,10 @@ describe('«ya está pagada» al cargar', () => {
 
   it('compras con cheque rebota PAGADA_AL_CARGAR_FORMA; el admin la carga con cualquier forma', async () => {
     state.profile = COMPRAS
-    const orden = { fecha: HOY, forma_pago: 'cheque', fecha_cobro: HOY }
+    const orden = {
+      fecha: HOY, forma_pago: 'cheque', fecha_cobro: HOY,
+      cheques: [{ numero: '00012345', banco: 'Macro', fecha_cobro: HOY, monto: 1_000_000 }],
+    }
     let res = await post('/facturas', { ...FACTURA_BASE, orden })
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: 'PAGADA_AL_CARGAR_FORMA', detail: { forma_pago: 'cheque', permitidas: ['tarjeta', 'efectivo'] } })
@@ -361,18 +364,50 @@ describe('registrar orden', () => {
     expect(args.p_user_id).toBe('u-1')
   })
 
-  it('con plata: forma obligatoria, cheque exige fecha de cobro, transferencia exige comprobante', async () => {
+  it('con plata: forma obligatoria, cheque exige sus cheques, transferencia exige comprobante', async () => {
     state.profile = CONTADOR
     state.facturas = [{ id: 5, created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const base = { proveedor_id: 1, fecha: HOY, lineas: [{ factura_id: 5, monto: 100 }] }
     expect(await (await post('/ordenes', { ...base, forma_pago: null })).json()).toMatchObject({ error: 'FORMA_PAGO_REQUERIDA' })
-    expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque' })).json()).toMatchObject({ error: 'FECHA_COBRO_REQUERIDA' })
+    expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque' })).json()).toMatchObject({ error: 'CHEQUES_REQUERIDOS' })
     expect(await (await post('/ordenes', { ...base, forma_pago: 'transferencia' })).json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', detail: { forma_pago: 'transferencia' } })
     expect(await (await post('/ordenes', { ...base, forma_pago: 'efectivo', fecha: '2999-01-01' })).json()).toMatchObject({ error: 'FECHA_FUTURA' })
-    expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque', fecha_cobro: '2020-01-01' })).json()).toMatchObject({ error: 'FECHA_COBRO_INVALIDA' })
+    const viejo = [{ numero: '1', fecha_cobro: '2020-01-01', monto: 100 }]
+    expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque', cheques: viejo })).json()).toMatchObject({ error: 'FECHA_COBRO_INVALIDA' })
     // Una NC sin fecha no pasa el schema (400 de zod, NC_DATOS_REQUERIDOS).
     const nc = await post('/ordenes', { ...base, forma_pago: 'efectivo', lineas: [{ tipo: 'nota_credito', factura_id: 5, monto: 10, nc_numero: 'NC 1' }] })
     expect(nc.status).toBe(400)
+  })
+
+  it('los cheques van uno por fila: suman el pago, llevan librador si son de tercero y viajan a la RPC', async () => {
+    state.profile = CONTADOR
+    state.facturas = [{ id: 5, created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
+    const base = { proveedor_id: 1, fecha: HOY, forma_pago: 'cheque', lineas: [{ factura_id: 5, monto: 900 }] }
+
+    // Si la suma no cierra, falta o sobra un cheque.
+    const cortos = [{ numero: '1', fecha_cobro: HOY, monto: 300 }, { numero: '2', fecha_cobro: HOY, monto: 300 }]
+    expect(await (await post('/ordenes', { ...base, cheques: cortos })).json()).toMatchObject({ error: 'SUMA_CHEQUES_DISTINTA' })
+
+    // Endosado de un tercero sin librador: no se le puede reclamar a nadie.
+    const ajeno = [{ numero: '9', fecha_cobro: HOY, monto: 900, es_propio: false }]
+    expect((await post('/ordenes', { ...base, cheques: ajeno })).status).toBe(400)
+
+    // Una forma que no es cheque no lleva cheques.
+    expect(await (await post('/ordenes', { ...base, forma_pago: 'efectivo', cheques: [{ numero: '1', fecha_cobro: HOY, monto: 900 }] })).json())
+      .toMatchObject({ error: 'CHEQUES_INESPERADOS' })
+
+    // El caso bueno: tres cheques escalonados llegan enteros a la RPC.
+    const tres = [
+      { numero: '0001', banco: 'Macro', fecha_cobro: HOY, monto: 300 },
+      { numero: '0002', banco: 'Macro', fecha_cobro: HOY, monto: 300 },
+      { numero: '0003', banco: 'Nacion', fecha_cobro: HOY, monto: 300, es_propio: false, librador: 'Cliente SA' },
+    ]
+    const ok = await post('/ordenes', { ...base, cheques: tres })
+    expect(ok.status).toBe(200)
+    const args = llamada('pagos_registrar_orden')!
+    const cheques = (args.p_orden as Fila).cheques as Fila[]
+    expect(cheques).toHaveLength(3)
+    expect(cheques[2]).toMatchObject({ numero: '0003', es_propio: false, librador: 'Cliente SA' })
   })
 
   it('un path fuera de ordenes/pendientes/ es PATH_INVALIDO', async () => {

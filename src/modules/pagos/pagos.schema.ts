@@ -79,6 +79,28 @@ export const AdjuntoPendienteSchema = z.object({
 })
 export type AdjuntoPendienteDto = z.infer<typeof AdjuntoPendienteSchema>
 
+/**
+ * Un cheque o echeq. Va uno por fila: las preguntas que importan (qué cae esta
+ * semana, cuánto hay en cartera, cuál rebotó) son por cheque, no por orden.
+ * El número es obligatorio — decisión del dueño: al cargar el pago siempre se
+ * sabe.
+ */
+export const ChequeSchema = z.object({
+  numero:      z.string().trim().min(1).max(40),
+  banco:       z.string().trim().max(80).optional().default(''),
+  fecha_cobro: FechaISO,
+  monto:       Monto,
+  /** false = endosado de un tercero; ahí `librador` es obligatorio. */
+  es_propio:   z.boolean().optional().default(true),
+  librador:    z.string().trim().max(120).optional().default(''),
+  obs:         z.string().trim().max(200).optional().default(''),
+}).superRefine((c, ctx) => {
+  if (!c.es_propio && !c.librador) {
+    ctx.addIssue({ code: 'custom', path: ['librador'], message: 'CHEQUE_SIN_LIBRADOR' })
+  }
+})
+export type ChequeDto = z.infer<typeof ChequeSchema>
+
 /** La OP que nace con la factura cuando compras tilda «Ya está pagada». */
 export const OrdenAlCargarSchema = z.object({
   fecha:        FechaISO,
@@ -87,6 +109,9 @@ export const OrdenAlCargarSchema = z.object({
   fecha_cobro:  FechaISO.nullable().optional(),
   obs:          z.string().trim().max(1000).optional().default(''),
   comprobante:  AdjuntoPendienteSchema.nullable().optional(),
+  // Un cheque es un cheque venga de donde venga: marcar una factura como ya
+  // pagada con cheque también exige decir cuál.
+  cheques:      z.array(ChequeSchema).max(50).optional().default([]),
 })
 export type OrdenAlCargarDto = z.infer<typeof OrdenAlCargarSchema>
 
@@ -253,6 +278,7 @@ export const CreateOrdenSchema = z.object({
   lineas:       z.array(LineaOrdenSchema).min(1).max(100),
   // Comprobante de pago y/o PDF de la NC, ya subidos a `ordenes/pendientes/`.
   adjuntos:     z.array(AdjuntoPendienteSchema).max(10).optional().default([]),
+  cheques:      z.array(ChequeSchema).max(50).optional().default([]),
 }).superRefine((o, ctx) => {
   const vistas = new Set<string>()
   o.lineas.forEach((l, i) => {
