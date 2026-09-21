@@ -41,6 +41,7 @@ import {
   pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash,
   type AdjuntoProcesado,
 } from './adjuntos.service.js'
+import { ultimoControl } from './control.service.js'
 import type { Aviso } from './proveedores.service.js'
 
 // ── Perfil del usuario (rol + permisos) ─────────────────────────────────────
@@ -305,7 +306,7 @@ export const pagosService = {
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
 
-    const [imp, adjuntos, lineas] = await Promise.all([
+    const [imp, adjuntos, lineas, control] = await Promise.all([
       sb.from('pagos_imputaciones')
         .select('id, obra_cod, monto, obs, created_at, updated_at, obra:obras(cod, nom, cc, es_interna, es_deposito, archivada)')
         .eq('factura_id', id).order('monto', { ascending: false }).order('id'),
@@ -313,6 +314,9 @@ export const pagosService = {
       sb.from('pagos_orden_lineas')
         .select('id, orden_id, tipo, monto, nc_numero, nc_fecha, created_at, orden:pagos_ordenes(id, numero, fecha, fecha_cobro, forma_pago, referencia, estado, motivo_anulacion, anulado_at, cbu_destino, alias_destino, monto_pagado)')
         .eq('factura_id', id).order('id'),
+      // El último control automático del comprobante (20260921j). Va en la
+      // ficha porque es donde se mira la factura antes de aprobarla.
+      ultimoControl(id),
     ])
     if (imp.error) throw new PagosHttpError(500, 'DB_ERROR', imp.error.message)
     if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
@@ -335,6 +339,7 @@ export const pagosService = {
       imputaciones: imp.data ?? [],
       adjuntos,
       pagos,
+      control,
       aprobacion: {
         aprobada_por: fila.aprobada_por ?? null,
         aprobada_por_nombre: fila.aprobada_por_nombre ?? null,

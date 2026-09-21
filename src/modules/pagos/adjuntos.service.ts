@@ -20,6 +20,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import { PagosHttpError } from './pagos.errors.js'
+import { controlarFactura, type ControlFactura } from './control.service.js'
 import {
   MAX_ADJUNTO_BYTES, MIME_PERMITIDOS, PREFIJO_COMPROBANTE_PENDIENTE,
   FORMAS_CON_COMPROBANTE_OBLIGATORIO,
@@ -229,7 +230,22 @@ export const pagosAdjuntosService = {
       if (error.code === '23503') throw new PagosHttpError(404, entidad === 'facturas' ? 'FACTURA_NO_EXISTE' : 'ORDEN_NO_EXISTE')
       throw new PagosHttpError(500, 'DB_ERROR', error.message)
     }
-    return data
+
+    // Control automático del comprobante contra lo tipeado (20260921j). Sólo
+    // sobre el PDF/foto de la FACTURA: un remito o una orden de compra no
+    // tienen el número ni el total que hay que controlar.
+    //
+    // Va acá y no en un endpoint aparte porque el pedido fue «sin que alguien
+    // dé la orden»: subir el comprobante ES la orden. Se espera el resultado
+    // para devolverlo junto con el adjunto y que la pantalla lo muestre de una,
+    // sin pollear. `controlarFactura` no lanza nunca; el `?? null` es por si
+    // alguna vez lo hiciera: el adjunto ya está guardado y no se pierde.
+    let control: ControlFactura | null = null
+    if (entidad === 'facturas' && dto.tipo === 'factura') {
+      const adj = data as { id: number }
+      control = await controlarFactura(id, adj.id, dto.storage_path, dto.mime_type).catch(() => null)
+    }
+    return { ...(data as Record<string, unknown>), control }
   },
 
   async signedUrl(entidad: Entidad, id: number, adjId: number, token: string) {
