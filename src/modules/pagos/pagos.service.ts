@@ -407,6 +407,25 @@ export const pagosService = {
 
     const avisos: Aviso[] = []
     const facturaId = Number((res.factura as { id?: number }).id)
+
+    // Auto-aprobación (20260921f): quien tiene `aprobar_facturas` + `aprobar_propias`
+    // no espera a nadie — su factura nace aprobada y con su firma. Es lo que
+    // pidió el dueño para Diego, único aprobador del sistema: sin esto cada
+    // factura que cargaba él quedaba trabada.
+    //
+    // Es BEST-EFFORT a propósito: la factura ya está creada y es válida. Si no
+    // se puede aprobar (la paga el cliente, el proveedor quedó inactivo, o
+    // nació 'pagada' con su orden), queda como nació y alguien la aprueba
+    // después. Un error acá NO puede tirar abajo una carga que ya se guardó.
+    if (flagPagos(perfil, 'aprobar_facturas') && flagPagos(perfil, 'aprobar_propias')) {
+      try {
+        const aprobada = rpcOk<Record<string, unknown>>(
+          await supabase.rpc('pagos_aprobar_factura', { p_factura_id: facturaId, p_user_id: userId }))
+        if (aprobada) res.factura = aprobada
+      } catch {
+        // Silencio deliberado: ver el comentario de arriba.
+      }
+    }
     const { data: parecidas } = await supabase
       .from('pagos_facturas').select('id, tipo_comprobante, numero')
       .eq('proveedor_id', dto.proveedor_id).eq('total', aCentavos(dto.total)).eq('fecha', dto.fecha)
@@ -480,7 +499,10 @@ export const pagosService = {
     const { data: f, error } = await supabase.from('pagos_facturas').select('id, created_by, estado').eq('id', id).maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
-    if ((f as { created_by: string | null }).created_by === userId && !esAdmin(perfil)) {
+    // La doble firma cede ante `aprobar_propias` (20260921f). Acá se adelanta
+    // el error al formulario; la RPC repite la regla y es la que manda.
+    if ((f as { created_by: string | null }).created_by === userId
+        && !esAdmin(perfil) && !flagPagos(perfil, 'aprobar_propias')) {
       throw new PagosHttpError(403, 'NO_PUEDE_APROBAR_PROPIA', { factura_id: id })
     }
     return enmascararRespuesta(
