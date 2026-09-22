@@ -53,12 +53,20 @@ vi.mock('../../../src/lib/supabase.js', () => {
 })
 
 import pagos from '../../../src/modules/pagos/pagos.routes.js'
+import { hoyAR } from '../../../src/modules/pagos/pagos.util.js'
 
 const json = (body: unknown) => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 const post = (path: string, body: unknown = {}) => pagos.request(path, { method: 'POST', ...json(body) })
 const patch = (path: string, body: unknown = {}) => pagos.request(path, { method: 'PATCH', ...json(body) })
 
-const HOY = new Date().toISOString().slice(0, 10)
+// El MISMO «hoy» que usa el código, que es el de Argentina y no el de UTC.
+//
+// Con `new Date().toISOString()` estos 17 tests se ponían en rojo todas las
+// noches entre las 21:00 y las 00:00 hora argentina, y volvían solos a verde:
+// a esa hora en UTC ya es mañana, así que `fecha: HOY` le llegaba al service
+// como una fecha futura y `registrarOrden` la rechazaba con FECHA_FUTURA (400)
+// antes de tocar la RPC. Verde 21 horas por día, rojo 3, y el código sano.
+const HOY = hoyAR()
 
 const perfil = (permisosPagos: Fila | null, rol = 'operador'): Fila => ({ rol, activo: true, rol_base: null, permisos: permisosPagos ? { pagos: permisosPagos } : {} })
 const ADMIN     = perfil(null, 'admin')

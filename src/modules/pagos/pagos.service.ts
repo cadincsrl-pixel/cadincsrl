@@ -635,7 +635,41 @@ export const pagosService = {
     ])
     if (lineas.error)  throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
     if (cheques.error) throw new PagosHttpError(500, 'DB_ERROR', cheques.error.message)
-    return { ...enmascararFila(o as Record<string, unknown>, verPii), lineas: lineas.data ?? [], cheques: cheques.data ?? [], adjuntos }
+
+    // Los papeles de la FACTURA, colgados de cada línea (2026-09-21).
+    //
+    // Pedido del dueño: «cuando abro orden de pago puedo descargar comprobante
+    // pero no factura». Los adjuntos de la OP (`pagos_ordenes_adjuntos`) son el
+    // comprobante del pago y las notas de crédito; la factura escaneada vive en
+    // `pagos_facturas_adjuntos`, colgada de la factura. Desde la OP no se veía.
+    //
+    // Es justo el par que hay que mirar junto —lo que se pagó y con qué se
+    // pagó—, y es lo que el contador necesita de a dos.
+    //
+    // Una sola query para todas las líneas, no una por línea.
+    const facturaIds = [...new Set(((lineas.data ?? []) as any[])
+      .map((l) => l.factura_id).filter((x): x is number => typeof x === 'number'))]
+    let adjPorFactura = new Map<number, unknown[]>()
+    if (facturaIds.length > 0) {
+      const { data: adjF, error: adjErr } = await sb
+        .from('pagos_facturas_adjuntos')
+        .select('id, factura_id, tipo, nombre_archivo, mime_type, size_bytes, created_at')
+        .in('factura_id', facturaIds).is('deleted_at', null)
+        .order('tipo').order('created_at', { ascending: false })
+      if (adjErr) throw new PagosHttpError(500, 'DB_ERROR', adjErr.message)
+      adjPorFactura = ((adjF ?? []) as any[]).reduce((m, a) => {
+        const arr = m.get(a.factura_id) ?? []
+        arr.push(a)
+        m.set(a.factura_id, arr)
+        return m
+      }, new Map<number, unknown[]>())
+    }
+    const lineasConPapeles = ((lineas.data ?? []) as any[]).map((l) => ({
+      ...l,
+      factura: l.factura ? { ...l.factura, adjuntos: adjPorFactura.get(l.factura_id) ?? [] } : l.factura,
+    }))
+
+    return { ...enmascararFila(o as Record<string, unknown>, verPii), lineas: lineasConPapeles, cheques: cheques.data ?? [], adjuntos }
   },
 
   /**
