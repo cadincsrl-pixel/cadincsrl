@@ -38,7 +38,7 @@ import {
   type ImputacionDto,
 } from './pagos.schema.js'
 import {
-  pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash,
+  pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, BUCKET,
   type AdjuntoProcesado,
 } from './adjuntos.service.js'
 import { ultimoControl } from './control.service.js'
@@ -208,6 +208,25 @@ export function validarCheques(forma: string, cheques: ChequeDto[] | undefined, 
 }
 
 // ── Listado de facturas ─────────────────────────────────────────────────────
+
+/**
+ * Los filtros de la bandeja de órdenes, en un solo lugar: los usan la lista
+ * paginada, el export a Excel y el paquete para el contador. Si se separan,
+ * exportar deja de exportar lo que la pantalla está mostrando.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function aplicarFiltrosOrdenes(q: any, f: Omit<ListOrdenesQuery, 'limit' | 'offset'>) {
+  if (f.proveedor_id) q = q.eq('proveedor_id', f.proveedor_id)
+  if (f.forma_pago) q = q.eq('forma_pago', f.forma_pago)
+  if (f.estado) q = q.eq('estado', f.estado)
+  if (f.desde) q = q.gte('fecha', f.desde)
+  if (f.hasta) q = q.lte('fecha', f.hasta)
+  if (esBoolQ(f.sin_comprobante)) q = q.eq('tiene_comprobante', false)
+  if (esBoolQ(f.en_cartera)) q = q.eq('en_cartera', true)
+  if (esBoolQ(f.con_nota_credito)) q = q.gt('monto_nc', 0)
+  for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
+  return q
+}
 
 function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'limit' | 'offset'>) {
   const estados = estadosDe(f.estado)
@@ -573,18 +592,11 @@ export const pagosService = {
 
   // ═══════════════════════════════════ Órdenes ════════════════════════════════
 
+  // ── Órdenes de pago ──────────────────────────────────────────────────
+
   async listarOrdenes(f: ListOrdenesQuery, verPii: boolean, token: string) {
     const sb = createSupabaseClient(token)
-    let q = sb.from('v_pagos_ordenes').select('*', { count: 'exact' })
-    if (f.proveedor_id) q = q.eq('proveedor_id', f.proveedor_id)
-    if (f.forma_pago) q = q.eq('forma_pago', f.forma_pago)
-    if (f.estado) q = q.eq('estado', f.estado)
-    if (f.desde) q = q.gte('fecha', f.desde)
-    if (f.hasta) q = q.lte('fecha', f.hasta)
-    if (esBoolQ(f.sin_comprobante)) q = q.eq('tiene_comprobante', false)
-    if (esBoolQ(f.en_cartera)) q = q.eq('en_cartera', true)
-    if (esBoolQ(f.con_nota_credito)) q = q.gt('monto_nc', 0)
-    for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
+    const q = aplicarFiltrosOrdenes(sb.from('v_pagos_ordenes').select('*', { count: 'exact' }), f)
     const [lista, tot] = await Promise.all([
       q.order('fecha', { ascending: false }).order('numero', { ascending: false }).range(f.offset, f.offset + f.limit - 1),
       supabase.rpc('pagos_ordenes_resumen', {
@@ -603,6 +615,131 @@ export const pagosService = {
       monto_nc: sumaCentavos(grupos.map((g) => Number(g.monto_nc ?? 0))),
     }
     return { items, total, limit: f.limit, offset: f.offset, hasMore: f.offset + items.length < total, totales }
+  },
+
+  /** Todas las órdenes que matchean el filtro, para el Excel. Pagina en el server. */
+  async exportarOrdenes(f: Omit<ListOrdenesQuery, 'limit' | 'offset'>, verPii: boolean, token: string) {
+    const sb = createSupabaseClient(token)
+    const filas = await todasLasFilas<Record<string, unknown>>((d, h) =>
+      aplicarFiltrosOrdenes(sb.from('v_pagos_ordenes').select('*'), f)
+        .order('fecha', { ascending: false }).order('id', { ascending: false }).range(d, h))
+
+    // Los cheques de todas las órdenes de una, no una query por orden: sin
+    // esto el Excel no puede decir qué cheque cae cuándo, que es la mitad de
+    // para qué se exporta.
+    const ids = filas.map((r) => Number(r.id))
+    const cheques = ids.length === 0 ? [] : await todasLasFilas<Record<string, unknown>>((d, h) =>
+      sb.from('pagos_cheques')
+        .select('orden_id, numero, banco, fecha_cobro, monto, es_propio, librador')
+        .in('orden_id', ids).order('orden_id').order('fecha_cobro').range(d, h))
+    const porOrden = new Map<number, Record<string, unknown>[]>()
+    for (const c of cheques) {
+      const k = Number(c.orden_id)
+      porOrden.set(k, [...(porOrden.get(k) ?? []), c])
+    }
+    return filas.map((r) => ({ ...enmascararFila(r, verPii), cheques: porOrden.get(Number(r.id)) ?? [] }))
+  },
+
+  /**
+   * El paquete para el contador (2026-09-21).
+   *
+   * Pedido del dueño: «exportar paquete de facturas y comprobantes para que el
+   * contador pueda cargar en el otro sistema contable». El contador carga a
+   * mano mirando los papeles, así que lo que necesita son LOS ARCHIVOS, no un
+   * layout de importación.
+   *
+   * Devuelve el MANIFIESTO, no el ZIP: cada archivo con su URL firmada a 15
+   * minutos y el nombre que le toca adentro. El ZIP lo arma el navegador. Así
+   * el backend no se come en memoria un mes entero de PDFs ni hay que
+   * streamear nada, que con este volumen sería complicar al pedo.
+   *
+   * Van los dos lados del par: la factura escaneada (`pagos_facturas_adjuntos`)
+   * y el comprobante del pago con el que se saldó (`pagos_ordenes_adjuntos`,
+   * vía las líneas de sus OP). Sin el comprobante el contador ve la deuda pero
+   * no puede cerrar el asiento.
+   */
+  async paqueteContador(f: Omit<ListFacturasQuery, 'orden' | 'limit' | 'offset'>, verPii: boolean, token: string) {
+    const sb = createSupabaseClient(token)
+    const facturas = await todasLasFilas<Record<string, unknown>>((d, h) =>
+      aplicarFiltrosFacturas(sb.from('v_pagos_facturas').select('*'), f)
+        .order('fecha', { ascending: true }).order('id', { ascending: true }).range(d, h))
+    if (facturas.length === 0) return { generado_en: new Date().toISOString(), facturas: [] }
+
+    const facturaIds = facturas.map((r) => Number(r.id))
+    const [adjF, lineas] = await Promise.all([
+      sb.from('pagos_facturas_adjuntos')
+        .select('id, factura_id, tipo, storage_path, nombre_archivo, mime_type, size_bytes')
+        .in('factura_id', facturaIds).is('deleted_at', null),
+      sb.from('pagos_orden_lineas').select('factura_id, orden_id').in('factura_id', facturaIds),
+    ])
+    if (adjF.error)   throw new PagosHttpError(500, 'DB_ERROR', adjF.error.message)
+    if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
+
+    // Las OP que saldaron estas facturas, y sus comprobantes.
+    const ordenIds = [...new Set(((lineas.data ?? []) as any[]).map((l) => Number(l.orden_id)))]
+    const adjO = ordenIds.length === 0 ? { data: [], error: null } : await sb
+      .from('pagos_ordenes_adjuntos')
+      .select('id, orden_id, tipo, storage_path, nombre_archivo, mime_type, size_bytes')
+      .in('orden_id', ordenIds).is('deleted_at', null)
+    if (adjO.error) throw new PagosHttpError(500, 'DB_ERROR', adjO.error.message)
+    const ordenes = ordenIds.length === 0 ? { data: [], error: null } : await sb
+      .from('pagos_ordenes').select('id, numero').in('id', ordenIds)
+    if (ordenes.error) throw new PagosHttpError(500, 'DB_ERROR', ordenes.error.message)
+    const numeroDeOrden = new Map(((ordenes.data ?? []) as any[]).map((o) => [Number(o.id), Number(o.numero)]))
+
+    // Una sola llamada a storage para TODAS las rutas: firmar de a una son
+    // cientos de round-trips para un mes cualquiera.
+    const todos = [
+      ...((adjF.data ?? []) as any[]).map((a) => ({ ...a, entidad: 'facturas' as const })),
+      ...((adjO.data ?? []) as any[]).map((a) => ({ ...a, entidad: 'ordenes' as const })),
+    ]
+    const firmadas = new Map<string, string>()
+    if (todos.length > 0) {
+      const { data: urls, error: sErr } = await supabase.storage
+        .from(BUCKET).createSignedUrls(todos.map((a) => a.storage_path), 900)
+      if (sErr) throw new PagosHttpError(500, 'SIGNED_URL_ERROR', sErr.message)
+      for (const u of urls ?? []) if (u.signedUrl && !u.error) firmadas.set(u.path ?? '', u.signedUrl)
+    }
+
+    const porFactura = new Map<number, any[]>()
+    for (const a of todos.filter((x) => x.entidad === 'facturas')) {
+      porFactura.set(Number(a.factura_id), [...(porFactura.get(Number(a.factura_id)) ?? []), a])
+    }
+    const ordenesDeFactura = new Map<number, number[]>()
+    for (const l of (lineas.data ?? []) as any[]) {
+      const k = Number(l.factura_id)
+      const arr = ordenesDeFactura.get(k) ?? []
+      if (!arr.includes(Number(l.orden_id))) arr.push(Number(l.orden_id))
+      ordenesDeFactura.set(k, arr)
+    }
+    const adjDeOrden = new Map<number, any[]>()
+    for (const a of todos.filter((x) => x.entidad === 'ordenes')) {
+      adjDeOrden.set(Number(a.orden_id), [...(adjDeOrden.get(Number(a.orden_id)) ?? []), a])
+    }
+
+    const archivo = (a: any, origen: 'factura' | 'pago', op: number | null) => ({
+      entidad: a.entidad, entidad_id: a.entidad === 'facturas' ? a.factura_id : a.orden_id,
+      adjunto_id: a.id, tipo: a.tipo, origen,
+      op_numero: op, nombre_archivo: a.nombre_archivo, mime_type: a.mime_type,
+      size_bytes: a.size_bytes, url: firmadas.get(a.storage_path) ?? null,
+    })
+
+    return {
+      generado_en: new Date().toISOString(),
+      facturas: facturas.map((r) => {
+        const id = Number(r.id)
+        const fila = enmascararFila(r, verPii)
+        const delPago = (ordenesDeFactura.get(id) ?? []).flatMap((oid) =>
+          (adjDeOrden.get(oid) ?? []).map((a) => archivo(a, 'pago', numeroDeOrden.get(oid) ?? null)))
+        return {
+          id,
+          tipo_comprobante: fila.tipo_comprobante, numero: fila.numero, fecha: fila.fecha,
+          proveedor_nom: fila.proveedor_nom, proveedor_cuit: fila.proveedor_cuit,
+          total: fila.total, estado: fila.estado,
+          archivos: [...(porFactura.get(id) ?? []).map((a) => archivo(a, 'factura', null)), ...delPago],
+        }
+      }),
+    }
   },
 
   /** Agregados por grupo con eje FECHA DE PAGO («Pagado este mes» no sale de facturas por emisión). */
