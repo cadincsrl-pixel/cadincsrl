@@ -644,55 +644,60 @@ export const pagosService = {
    * El paquete para el contador (2026-09-21).
    *
    * Pedido del dueño: «exportar paquete de facturas y comprobantes para que el
-   * contador pueda cargar en el otro sistema contable». El contador carga a
-   * mano mirando los papeles, así que lo que necesita son LOS ARCHIVOS, no un
-   * layout de importación.
+   * contador pueda cargar en el otro sistema contable», y después la
+   * corrección que cambia todo: **«que sea sobre lo PAGADO»**.
    *
-   * Devuelve el MANIFIESTO, no el ZIP: cada archivo con su URL firmada a 15
-   * minutos y el nombre que le toca adentro. El ZIP lo arma el navegador. Así
-   * el backend no se come en memoria un mes entero de PDFs ni hay que
-   * streamear nada, que con este volumen sería complicar al pedo.
+   * Por eso el eje es la ORDEN DE PAGO y no la factura. El contador no trabaja
+   * por mes de emisión: trabaja por lo que salió del banco en el período, que
+   * es lo que tiene que conciliar. Una factura de agosto pagada en septiembre
+   * entra en septiembre, y filtrando por emisión no aparecía.
    *
-   * Van los dos lados del par: la factura escaneada (`pagos_facturas_adjuntos`)
-   * y el comprobante del pago con el que se saldó (`pagos_ordenes_adjuntos`,
-   * vía las líneas de sus OP). Sin el comprobante el contador ve la deuda pero
-   * no puede cerrar el asiento.
+   * El ZIP se arma UNA CARPETA POR OP porque así es como se carga a mano: cada
+   * OP es un movimiento del banco, y adentro está el comprobante con el que
+   * salió y las facturas que cubrió. Abrir la carpeta es tener el asiento
+   * entero.
+   *
+   * Devuelve el MANIFIESTO con URLs firmadas a 15 minutos, no el ZIP: lo arma
+   * el navegador y el server no se come un período entero de PDFs en memoria.
    */
-  async paqueteContador(f: Omit<ListFacturasQuery, 'orden' | 'limit' | 'offset'>, verPii: boolean, token: string) {
+  async paqueteContador(f: Omit<ListOrdenesQuery, 'limit' | 'offset'>, verPii: boolean, token: string) {
     const sb = createSupabaseClient(token)
-    const facturas = await todasLasFilas<Record<string, unknown>>((d, h) =>
-      aplicarFiltrosFacturas(sb.from('v_pagos_facturas').select('*'), f)
-        .order('fecha', { ascending: true }).order('id', { ascending: true }).range(d, h))
-    if (facturas.length === 0) return { generado_en: new Date().toISOString(), facturas: [] }
+    const ordenes = await todasLasFilas<Record<string, unknown>>((d, h) =>
+      aplicarFiltrosOrdenes(sb.from('v_pagos_ordenes').select('*'), f)
+        .order('fecha', { ascending: true }).order('numero', { ascending: true }).range(d, h))
+    const vacio = { generado_en: new Date().toISOString(), ordenes: [] }
+    if (ordenes.length === 0) return vacio
 
-    const facturaIds = facturas.map((r) => Number(r.id))
-    const [adjF, lineas] = await Promise.all([
-      sb.from('pagos_facturas_adjuntos')
+    const ordenIds = ordenes.map((o) => Number(o.id))
+    const [lineas, adjO] = await Promise.all([
+      sb.from('pagos_orden_lineas')
+        .select('orden_id, factura_id, tipo, monto, nc_numero')
+        .in('orden_id', ordenIds).order('id'),
+      sb.from('pagos_ordenes_adjuntos')
+        .select('id, orden_id, tipo, storage_path, nombre_archivo, mime_type, size_bytes')
+        .in('orden_id', ordenIds).is('deleted_at', null),
+    ])
+    if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
+    if (adjO.error)   throw new PagosHttpError(500, 'DB_ERROR', adjO.error.message)
+
+    const facturaIds = [...new Set(((lineas.data ?? []) as any[])
+      .map((l) => l.factura_id).filter((x): x is number => typeof x === 'number'))]
+    const [facturas, adjF] = await Promise.all([
+      facturaIds.length === 0 ? Promise.resolve({ data: [], error: null }) : sb
+        .from('v_pagos_facturas')
+        .select('id, tipo_comprobante, numero, fecha, vence_el, total, estado, descripcion, proveedor_nom')
+        .in('id', facturaIds),
+      facturaIds.length === 0 ? Promise.resolve({ data: [], error: null }) : sb
+        .from('pagos_facturas_adjuntos')
         .select('id, factura_id, tipo, storage_path, nombre_archivo, mime_type, size_bytes')
         .in('factura_id', facturaIds).is('deleted_at', null),
-      sb.from('pagos_orden_lineas').select('factura_id, orden_id').in('factura_id', facturaIds),
     ])
-    if (adjF.error)   throw new PagosHttpError(500, 'DB_ERROR', adjF.error.message)
-    if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
-
-    // Las OP que saldaron estas facturas, y sus comprobantes.
-    const ordenIds = [...new Set(((lineas.data ?? []) as any[]).map((l) => Number(l.orden_id)))]
-    const adjO = ordenIds.length === 0 ? { data: [], error: null } : await sb
-      .from('pagos_ordenes_adjuntos')
-      .select('id, orden_id, tipo, storage_path, nombre_archivo, mime_type, size_bytes')
-      .in('orden_id', ordenIds).is('deleted_at', null)
-    if (adjO.error) throw new PagosHttpError(500, 'DB_ERROR', adjO.error.message)
-    const ordenes = ordenIds.length === 0 ? { data: [], error: null } : await sb
-      .from('pagos_ordenes').select('id, numero').in('id', ordenIds)
-    if (ordenes.error) throw new PagosHttpError(500, 'DB_ERROR', ordenes.error.message)
-    const numeroDeOrden = new Map(((ordenes.data ?? []) as any[]).map((o) => [Number(o.id), Number(o.numero)]))
+    if (facturas.error) throw new PagosHttpError(500, 'DB_ERROR', facturas.error.message)
+    if (adjF.error)     throw new PagosHttpError(500, 'DB_ERROR', adjF.error.message)
 
     // Una sola llamada a storage para TODAS las rutas: firmar de a una son
-    // cientos de round-trips para un mes cualquiera.
-    const todos = [
-      ...((adjF.data ?? []) as any[]).map((a) => ({ ...a, entidad: 'facturas' as const })),
-      ...((adjO.data ?? []) as any[]).map((a) => ({ ...a, entidad: 'ordenes' as const })),
-    ]
+    // cientos de round-trips para un período cualquiera.
+    const todos = [...((adjO.data ?? []) as any[]), ...((adjF.data ?? []) as any[])]
     const firmadas = new Map<string, string>()
     if (todos.length > 0) {
       const { data: urls, error: sErr } = await supabase.storage
@@ -701,42 +706,58 @@ export const pagosService = {
       for (const u of urls ?? []) if (u.signedUrl && !u.error) firmadas.set(u.path ?? '', u.signedUrl)
     }
 
-    const porFactura = new Map<number, any[]>()
-    for (const a of todos.filter((x) => x.entidad === 'facturas')) {
-      porFactura.set(Number(a.factura_id), [...(porFactura.get(Number(a.factura_id)) ?? []), a])
-    }
-    const ordenesDeFactura = new Map<number, number[]>()
-    for (const l of (lineas.data ?? []) as any[]) {
-      const k = Number(l.factura_id)
-      const arr = ordenesDeFactura.get(k) ?? []
-      if (!arr.includes(Number(l.orden_id))) arr.push(Number(l.orden_id))
-      ordenesDeFactura.set(k, arr)
-    }
+    const archivo = (a: any, origen: 'factura' | 'pago') => ({
+      adjunto_id: a.id, tipo: a.tipo, origen,
+      nombre_archivo: a.nombre_archivo, mime_type: a.mime_type, size_bytes: a.size_bytes,
+      url: firmadas.get(a.storage_path) ?? null,
+    })
+
     const adjDeOrden = new Map<number, any[]>()
-    for (const a of todos.filter((x) => x.entidad === 'ordenes')) {
+    for (const a of (adjO.data ?? []) as any[]) {
       adjDeOrden.set(Number(a.orden_id), [...(adjDeOrden.get(Number(a.orden_id)) ?? []), a])
     }
-
-    const archivo = (a: any, origen: 'factura' | 'pago', op: number | null) => ({
-      entidad: a.entidad, entidad_id: a.entidad === 'facturas' ? a.factura_id : a.orden_id,
-      adjunto_id: a.id, tipo: a.tipo, origen,
-      op_numero: op, nombre_archivo: a.nombre_archivo, mime_type: a.mime_type,
-      size_bytes: a.size_bytes, url: firmadas.get(a.storage_path) ?? null,
-    })
+    const adjDeFactura = new Map<number, any[]>()
+    for (const a of (adjF.data ?? []) as any[]) {
+      adjDeFactura.set(Number(a.factura_id), [...(adjDeFactura.get(Number(a.factura_id)) ?? []), a])
+    }
+    const facturaPorId = new Map<number, any>(((facturas.data ?? []) as any[]).map((x) => [Number(x.id), x]))
+    const lineasDeOrden = new Map<number, any[]>()
+    for (const l of (lineas.data ?? []) as any[]) {
+      lineasDeOrden.set(Number(l.orden_id), [...(lineasDeOrden.get(Number(l.orden_id)) ?? []), l])
+    }
 
     return {
       generado_en: new Date().toISOString(),
-      facturas: facturas.map((r) => {
-        const id = Number(r.id)
-        const fila = enmascararFila(r, verPii)
-        const delPago = (ordenesDeFactura.get(id) ?? []).flatMap((oid) =>
-          (adjDeOrden.get(oid) ?? []).map((a) => archivo(a, 'pago', numeroDeOrden.get(oid) ?? null)))
+      ordenes: ordenes.map((o) => {
+        const id = Number(o.id)
+        const fila = enmascararFila(o, verPii)
+        // Una línea por factura, con lo que ESTA OP le aplicó (puede ser un
+        // pago parcial: la misma factura aparece en varias OP con montos
+        // distintos, y el contador necesita ver cuánto entró en cada una).
+        const porFactura = new Map<number, number>()
+        for (const l of lineasDeOrden.get(id) ?? []) {
+          if (l.factura_id == null || l.tipo === 'nota_credito') continue
+          porFactura.set(Number(l.factura_id), (porFactura.get(Number(l.factura_id)) ?? 0) + Number(l.monto))
+        }
         return {
           id,
-          tipo_comprobante: fila.tipo_comprobante, numero: fila.numero, fecha: fila.fecha,
+          numero: Number(o.numero),
+          numero_fmt: `OP-${String(o.numero).padStart(4, '0')}`,
+          fecha: fila.fecha, forma_pago: fila.forma_pago, estado: fila.estado,
+          monto_pagado: fila.monto_pagado, monto_nc: fila.monto_nc,
           proveedor_nom: fila.proveedor_nom, proveedor_cuit: fila.proveedor_cuit,
-          total: fila.total, estado: fila.estado,
-          archivos: [...(porFactura.get(id) ?? []).map((a) => archivo(a, 'factura', null)), ...delPago],
+          archivos: (adjDeOrden.get(id) ?? []).map((a) => archivo(a, 'pago')),
+          facturas: [...porFactura.entries()].map(([fid, aplicado]) => {
+            const fx = facturaPorId.get(fid) ?? {}
+            return {
+              id: fid,
+              tipo_comprobante: fx.tipo_comprobante ?? null, numero: fx.numero ?? null,
+              fecha: fx.fecha ?? null, total: fx.total ?? null, estado: fx.estado ?? null,
+              descripcion: fx.descripcion ?? '',
+              aplicado,
+              archivos: (adjDeFactura.get(fid) ?? []).map((a) => archivo(a, 'factura')),
+            }
+          }),
         }
       }),
     }

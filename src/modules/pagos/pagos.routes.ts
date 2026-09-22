@@ -92,11 +92,6 @@ pagos.get('/facturas/resumen', lectura, tabPago, zValidator('query', FacturasRes
 pagos.get('/facturas/export', lectura, tabFactura, zValidator('query', ListFacturasQuerySchema), handler(async (c) =>
   pagosService.exportarFacturas(c.req.valid('query'), await verPii(c), c.get('accessToken'))))
 
-// El manifiesto del paquete para el contador: los archivos que matchean el
-// filtro, con URL firmada a 15 min. El ZIP lo arma el navegador.
-pagos.get('/facturas/paquete', lectura, tabFactura, zValidator('query', ListFacturasQuerySchema), handler(async (c) =>
-  pagosService.paqueteContador(c.req.valid('query'), await verPii(c), c.get('accessToken'))))
-
 pagos.get('/facturas/:id', lectura, tabPago, handler(async (c) =>
   pagosService.detalleFactura(idParam(c), await verPii(c), esBoolQ(c.req.query('borrados')), c.get('accessToken'))))
 
@@ -173,6 +168,12 @@ pagos.get('/ordenes/resumen', lectura, tabPago, zValidator('query', OrdenesResum
 // Literal antes de `/ordenes/:id`, como el resto.
 pagos.get('/ordenes/export', lectura, tabPago, zValidator('query', ListOrdenesQuerySchema), handler(async (c) =>
   pagosService.exportarOrdenes(c.req.valid('query'), await verPii(c), c.get('accessToken'))))
+
+// El paquete para el contador: cuelga de ÓRDENES, no de facturas, porque va
+// sobre lo PAGADO en el período (decisión del dueño 21/09). Devuelve el
+// manifiesto con URLs firmadas a 15 min; el ZIP lo arma el navegador.
+pagos.get('/ordenes/paquete', lectura, tabPago, zValidator('query', ListOrdenesQuerySchema), handler(async (c) =>
+  pagosService.paqueteContador(c.req.valid('query'), await verPii(c), c.get('accessToken'))))
 
 // Comprobante ANTES de la fila: `ordenes/pendientes/<uuid>.<ext>`.
 pagos.post('/ordenes/upload-comprobante', lectura, registrarPagos, tabPago, zValidator('json', UploadComprobantePendienteSchema), handler(async (c) =>
