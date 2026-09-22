@@ -306,6 +306,27 @@ export const CreateOrdenSchema = z.object({
 })
 export type CreateOrdenDto = z.infer<typeof CreateOrdenSchema>
 
+/**
+ * A quién avisarle del pago. No es automático al emitir la OP por decisión del
+ * dueño: de 9 proveedores, 1 tiene mail cargado, así que automático no saldría
+ * casi nunca y el que emitió creería que el proveedor se enteró.
+ *
+ * `email_proveedor` es para el caso normal de hoy: el padrón no lo tiene y se
+ * tipea al mandar. Con `guardar_email` queda en el padrón y no se vuelve a
+ * pedir.
+ */
+export const AvisarPagoSchema = z.object({
+  a_proveedor:     z.boolean().optional().default(false),
+  a_contador:      z.boolean().optional().default(false),
+  email_proveedor: z.string().trim().email().max(254).optional(),
+  guardar_email:   z.boolean().optional().default(true),
+}).superRefine((o, ctx) => {
+  if (!o.a_proveedor && !o.a_contador) {
+    ctx.addIssue({ code: 'custom', path: ['a_contador'], message: 'SIN_DESTINATARIOS' })
+  }
+})
+export type AvisarPagoDto = z.infer<typeof AvisarPagoSchema>
+
 export const UpdateOrdenSchema = z.object({
   referencia: z.string().trim().max(120).optional(),
   obs:        z.string().trim().max(1000).optional(),

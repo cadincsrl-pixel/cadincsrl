@@ -26,6 +26,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag, requireTab, tieneFlag } from '../../middleware/permission.js'
 import { PagosHttpError } from './pagos.errors.js'
 import { pagosService, perfilDe, esAdmin, flagPagos, verPiiDe } from './pagos.service.js'
+import { avisoPagoService } from './aviso-pago.service.js'
 import { proveedoresService, enmascararProveedor } from './proveedores.service.js'
 import { pagosAdjuntosService } from './adjuntos.service.js'
 import {
@@ -34,7 +35,7 @@ import {
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
   UploadComprobantePendienteSchema, BorrarPendienteSchema,
-  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema,
+  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
 } from './pagos.schema.js'
 
@@ -204,6 +205,20 @@ pagos.post('/ordenes/:id/anular', lectura, tabPago, zValidator('json', MotivoSch
 }))
 
 // Adjuntos de OP (comprobantes posteriores, PDF de NC, otro).
+// ── Aviso de pago por mail (20260921m) ─────────────────────────────────────
+// Con UN CLIC, no automático al emitir: de 9 proveedores 1 tiene mail cargado,
+// así que automático no saldría casi nunca y quien emitió creería que el
+// proveedor se enteró. Cada intento queda registrado en pagos_ordenes_avisos.
+
+// Diagnóstico: ¿este servidor puede mandar mail? Literal antes de `/ordenes/:id`.
+pagos.get('/mail/estado', lectura, tabPago, handler(async () => avisoPagoService.estado()))
+
+pagos.post('/ordenes/:id/avisar', lectura, registrarPagos, tabPago, zValidator('json', AvisarPagoSchema), handler(async (c) =>
+  avisoPagoService.avisar(idParam(c), c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
+
+pagos.get('/ordenes/:id/avisos', lectura, tabPago, handler(async (c) =>
+  avisoPagoService.historial(idParam(c), c.get('accessToken'))))
+
 pagos.get('/ordenes/:id/adjuntos', lectura, tabPago, handler(async (c) =>
   pagosAdjuntosService.listar('ordenes', idParam(c), esBoolQ(c.req.query('borrados')), c.get('accessToken'))))
 

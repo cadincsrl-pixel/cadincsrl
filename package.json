@@ -22,10 +22,12 @@
     "dotenv": "^17.3.1",
     "hono": "^4.12.9",
     "jose": "^6.2.2",
+    "nodemailer": "^7.0.13",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
+    "@types/nodemailer": "^8.0.2",
     "@vitest/coverage-v8": "^4.1.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
