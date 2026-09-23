@@ -14,7 +14,7 @@ vi.mock('../../../src/lib/supabase.js', () => ({
   createSupabaseClient: () => ({}),
 }))
 
-import { aNumero, compararLectura } from '../../../src/modules/pagos/control.service.js'
+import { aNumero, aFecha, compararLectura } from '../../../src/modules/pagos/control.service.js'
 
 describe('aNumero: el total puede venir de varias formas', () => {
   it('número, y string con punto o con coma', () => {
@@ -93,5 +93,71 @@ describe('compararLectura', () => {
   it('el total leído como texto con formato argentino también compara', () => {
     const r = compararLectura({ legible: true, numero: '0012-00402141', total: '138.382,40' }, '0012-00402141', 138382.40)
     expect(r.estado).toBe('coincide')
+  })
+})
+
+describe('aFecha: el papel argentino es día/mes/año', () => {
+  it('ISO y dd/mm/aaaa dan lo mismo', () => {
+    expect(aFecha('2026-09-18')).toBe('2026-09-18')
+    expect(aFecha('18/09/2026')).toBe('2026-09-18')
+    expect(aFecha('18-09-2026')).toBe('2026-09-18')
+    expect(aFecha('18.09.26')).toBe('2026-09-18')
+  })
+  it('el día va primero: 03/10 es 3 de octubre, no 10 de marzo', () => {
+    expect(aFecha('03/10/2026')).toBe('2026-10-03')
+  })
+  it('una fecha que no existe no pasa', () => {
+    expect(aFecha('31/02/2026')).toBeNull()
+    expect(aFecha('2026-13-01')).toBeNull()
+    expect(aFecha('no se lee')).toBeNull()
+    expect(aFecha(null)).toBeNull()
+  })
+})
+
+describe('compararLectura: la fecha de emisión (20260923a)', () => {
+  const papel = { legible: true, numero: '08837-00004557', total: 152609.59 }
+
+  it('el caso real de Cencosud: el papel dice 18/09 y se cargó el día de carga', () => {
+    const r = compararLectura({ ...papel, fecha: '18/09/2026' }, '08837-00004557', 152609.59, '2026-09-21')
+    expect(r.estado).toBe('difiere')
+    expect(r.fecha_ok).toBe(false)
+    expect(r.fecha_leida).toBe('2026-09-18')
+    expect(r.numero_ok).toBe(true)
+    expect(r.total_ok).toBe(true)
+    expect(r.nota).toContain('emitida el 18/09/2026 y está cargada el 21/09/2026')
+  })
+
+  it('misma fecha: coincide', () => {
+    const r = compararLectura({ ...papel, fecha: '2026-09-18' }, '08837-00004557', 152609.59, '2026-09-18')
+    expect(r.estado).toBe('coincide')
+    expect(r.fecha_ok).toBe(true)
+    expect(r.nota).toBe('')
+  })
+
+  it('la fecha que no se leyó se dice, pero no convierte en difiere', () => {
+    const r = compararLectura({ ...papel, fecha: null }, '08837-00004557', 152609.59, '2026-09-18')
+    expect(r.estado).toBe('coincide')
+    expect(r.fecha_ok).toBeNull()
+    expect(r.nota).toContain('no se pudo leer la fecha')
+  })
+
+  it('sin facturaFecha no se compara la fecha (los controles viejos)', () => {
+    const r = compararLectura({ ...papel, fecha: '2026-01-01' }, '08837-00004557', 152609.59)
+    expect(r.estado).toBe('coincide')
+    expect(r.fecha_ok).toBeNull()
+    expect(r.nota).toBe('')
+  })
+
+  it('número y fecha mal a la vez: los dos en la nota', () => {
+    const r = compararLectura({ ...papel, fecha: '18/09/2026' }, '08837-00004558', 152609.59, '2026-09-21')
+    expect(r.estado).toBe('difiere')
+    expect(r.nota).toContain('N° 08837-00004557')
+    expect(r.nota).toContain('emitida el 18/09/2026')
+  })
+
+  it('si sólo se leyó la fecha, no es ilegible', () => {
+    const r = compararLectura({ legible: true, numero: null, total: null, fecha: '18/09/2026' }, null, 1, '2026-09-18')
+    expect(r.estado).toBe('coincide')
+    expect(r.nota).toContain('no se pudo leer el número ni el total')
   })
 })

@@ -41,7 +41,7 @@ import {
   pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, BUCKET,
   type AdjuntoProcesado,
 } from './adjuntos.service.js'
-import { ultimoControl } from './control.service.js'
+import { ultimoControl, recompararControl } from './control.service.js'
 import type { Aviso } from './proveedores.service.js'
 
 // ── Perfil del usuario (rol + permisos) ─────────────────────────────────────
@@ -510,6 +510,12 @@ export const pagosService = {
         p_motivo:       motivo ?? null,
         p_user_id:      userId,
       }))
+    // Si se corrigió algo de lo que controla el comprobante, el chip tiene que
+    // decir cómo quedó ahora, no cómo estaba cuando se subió el papel.
+    if (tocados.some((k) => k === 'numero' || k === 'total' || k === 'fecha')) {
+      await recompararControl(id)
+    }
+
     const avisos: Aviso[] = []
     const desaprueba = tocados.some((k) => (CAMPOS_QUE_DESAPRUEBAN as readonly string[]).includes(k)) || !!imputaciones
     if (res.aprobacion_retirada || (a.estado === 'aprobada' && desaprueba && res.factura?.estado === 'pendiente')) {
