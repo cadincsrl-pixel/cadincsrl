@@ -44,8 +44,14 @@ export type Regimen = 'administracion' | 'presupuesto_cerrado'
 export interface ObraResumenInput {
   cod: string
   nom: string
-  /** `obras.cc`, el centro de costo: el CLIENTE, que puede pagar varias obras juntas. */
-  cc: string | null
+  /**
+   * El cliente de la obra (`obras.cliente_id` → `ventas_clientes`). Desde el
+   * 2026-09-23 agrupa en lugar de `obras.cc`: ese campo era el nombre del
+   * cliente escrito a mano y tenía errores (CC PODA, interna, figuraba como
+   * «IGLESIAS»). Sin cliente, la obra es su propio grupo.
+   */
+  cliente_id:  number | null
+  cliente_nom: string | null
   archivada: boolean
   por_administracion: boolean
 }
@@ -90,10 +96,13 @@ export interface ResumenObraFila {
   obra_cod:     string
   obra_nom:     string
   /**
-   * El centro de costo, para agrupar: ANIMAR paga sus cuatro clínicas con un
-   * solo saldo, BRADEL sus farmacias. Sin `cc` cargado, la obra es su propio
-   * centro — nunca queda fuera de la agrupación.
+   * Para agrupar: el cliente. ANIMAR paga sus cuatro clínicas con un solo
+   * saldo, BRADEL sus farmacias. Sin cliente, la obra es su propio grupo —
+   * nunca queda fuera de la agrupación.
    */
+  cliente:      string
+  cliente_id:   number | null
+  /** @deprecated El mismo valor que `cliente`; queda mientras se deploya el front. */
   centro_costo: string
   archivada:    boolean
   regimen:      Regimen
@@ -217,7 +226,9 @@ export function armarResumenObras(d: DatosResumenObras, hoyISO: string, conTarja
 
     filas.push({
       obra_cod: cod, obra_nom: obra.nom,
-      centro_costo: (obra.cc ?? '').trim() || obra.nom,
+      cliente: (obra.cliente_nom ?? '').trim() || obra.nom,
+      cliente_id: obra.cliente_id,
+      centro_costo: (obra.cliente_nom ?? '').trim() || obra.nom,
       archivada: obra.archivada, regimen,
       jornales, contratistas, materiales,
       total, pagado, notas, saldo: r2(total - pagado - notas),

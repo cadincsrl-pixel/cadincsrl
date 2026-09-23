@@ -29,12 +29,19 @@ function ok<T>(r: { data: T[] | null; error: { message: string } | null }): T[] 
 export async function cargarResumenObras(allowed: string[] | null, conTarja: boolean): Promise<ResumenObras> {
   let q = supabaseAdmin
     .from('obras')
-    .select('cod, nom, cc, archivada, por_administracion')
+    .select('cod, nom, archivada, por_administracion, cliente_id, cliente:ventas_clientes(razon_social)')
     .eq('materiales_a_cargo_de', 'cliente')
     .eq('es_deposito', false)
     .eq('es_interna', false)
   if (allowed != null) q = q.in('cod', allowed)
-  const obras = ok<{ cod: string; nom: string; cc: string | null; archivada: boolean; por_administracion: boolean }>(await q)
+  // El embed es muchos-a-uno (una obra, un cliente): llega como objeto, pero
+  // el tipo que infiere supabase-js es una lista. Se aceptan las dos formas.
+  type ClienteEmbed = { razon_social: string }
+  const obras = ok<{ cod: string; nom: string; archivada: boolean; por_administracion: boolean; cliente_id: number | null; cliente: ClienteEmbed | ClienteEmbed[] | null }>(await q)
+    .map(o => {
+      const c = Array.isArray(o.cliente) ? o.cliente[0] : o.cliente
+      return { ...o, cliente_nom: c?.razon_social ?? null }
+    })
   const codes = obras.map(o => o.cod)
   const hoyISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10)
 
