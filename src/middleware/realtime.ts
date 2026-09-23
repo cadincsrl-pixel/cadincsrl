@@ -57,6 +57,8 @@ const RUTAS_QUE_AVISAN = [
   // traduce en invalidar ['solicitudes'] en cada pestaña de Certificaciones
   // abierta (~400 KB por aviso). Si en fase 2 se quiere aviso en vivo para la
   // bandeja de facturas, va un tópico propio `cadinc-pagos` con su suscriptor.
+  // Facturación (/api/facturacion, 2026-09-24) tampoco, por el mismo motivo:
+  // volumen bajo y el ancho de banda de Render es el cuello de botella.
 ]
 
 export const TOPICO_CAMBIOS = 'cadinc-solicitudes'

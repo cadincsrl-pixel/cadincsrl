@@ -23,6 +23,8 @@ export interface TicketAcceso {
   token: string
   sign: string
   expiraAt: Date
+  /** Cuándo lo generó WSAA (generationTime). Opcional: el store de archivo no lo guarda. */
+  generadoAt?: Date
 }
 
 /**
@@ -36,6 +38,11 @@ export interface TaStore {
   reclamarRenovacion(ambiente: ArcaAmbiente, servicio: string): Promise<boolean>
   /** Guarda el TA nuevo y libera el reclamo. */
   guardar(ambiente: ArcaAmbiente, servicio: string, ta: TicketAcceso): Promise<void>
+  /**
+   * Suelta el reclamo sin TA nuevo (la renovación falló). Opcional: sin esto
+   * el reclamo vence solo (lease de `arca_reclamar_renovacion`, 120 s).
+   */
+  liberar?(ambiente: ArcaAmbiente, servicio: string): Promise<void>
 }
 
 /** Un TA que vence en menos de esto ya se considera vencido. */
@@ -138,13 +145,14 @@ export function parsearLoginCms(xml: string, httpStatus?: number): TicketAcceso 
   const token = texto(nodo(ticket?.credentials)?.token)
   const sign = texto(nodo(ticket?.credentials)?.sign)
   const expira = new Date(texto(nodo(ticket?.header)?.expirationTime))
+  const generado = new Date(texto(nodo(ticket?.header)?.generationTime))
   if (!token || !sign || Number.isNaN(expira.getTime())) {
     throw new ArcaError({
       tipo: 'transporte', codigo: 'ARCA_RESPUESTA_ILEGIBLE', quizasLlego: true, httpStatus,
       mensaje: 'WSAA loginCms: la respuesta no trae token, sign o vencimiento',
     })
   }
-  return { token, sign, expiraAt: expira }
+  return { token, sign, expiraAt: expira, ...(Number.isNaN(generado.getTime()) ? {} : { generadoAt: generado }) }
 }
 
 /** Pide un TA nuevo a WSAA. No mira ni escribe el store: eso es `obtenerTA`. */
@@ -163,12 +171,16 @@ export async function loginCms(servicio: string, cfg: ArcaConfig = arcaConfig())
 // ─── Stores ──────────────────────────────────────────────────────────────────
 
 /**
- * TA en `arca_tokens (ambiente, servicio, token, sign, expira_at,
- * renovando_hasta)` + RPC `arca_reclamar_renovacion(p_ambiente, p_servicio)`.
+ * TA en `arca_tokens (ambiente, servicio, token, sign, generado_at, expira_at,
+ * renovando_hasta)` con las RPC de la migración 20260924c:
+ *   - `arca_reclamar_renovacion(p_ambiente, p_servicio, p_segundos)` devuelve
+ *     jsonb `{ reclamado, renovando_hasta, expira_at, vigente }` (NO un boolean);
+ *   - `arca_guardar_token(...)` guarda y suelta el reclamo;
+ *   - `arca_liberar_renovacion(...)` suelta el reclamo sin TA nuevo.
  * La tabla no tiene grants para anon/authenticated: va con el cliente
  * service_role.
  */
-export function crearTaStoreSupabase(db: SupabaseClient): TaStore {
+export function crearTaStoreSupabase(db: SupabaseClient, opts: { segundosReclamo?: number } = {}): TaStore {
   const falla = (que: string, e: unknown) => new ArcaError({
     tipo: 'transporte', codigo: 'ARCA_TA_STORE', quizasLlego: false, cause: e,
     mensaje: `No se pudo ${que} el ticket de ARCA en la base: ${e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : 'error desconocido'}`,
@@ -177,29 +189,40 @@ export function crearTaStoreSupabase(db: SupabaseClient): TaStore {
     async leer(ambiente, servicio) {
       const { data, error } = await db
         .from('arca_tokens')
-        .select('token, sign, expira_at')
+        .select('token, sign, expira_at, generado_at')
         .eq('ambiente', ambiente)
         .eq('servicio', servicio)
         .maybeSingle()
       if (error) throw falla('leer', error)
       if (!data?.token || !data.sign || !data.expira_at) return null
-      return { token: data.token as string, sign: data.sign as string, expiraAt: new Date(data.expira_at as string) }
+      return {
+        token: data.token as string,
+        sign: data.sign as string,
+        expiraAt: new Date(data.expira_at as string),
+        ...(data.generado_at ? { generadoAt: new Date(data.generado_at as string) } : {}),
+      }
     },
     async reclamarRenovacion(ambiente, servicio) {
-      const { data, error } = await db.rpc('arca_reclamar_renovacion', { p_ambiente: ambiente, p_servicio: servicio })
+      const { data, error } = await db.rpc('arca_reclamar_renovacion', {
+        p_ambiente: ambiente, p_servicio: servicio, p_segundos: opts.segundosReclamo ?? 120,
+      })
       if (error) throw falla('reclamar la renovación de', error)
-      return data === true
+      return !!data && typeof data === 'object' && (data as { reclamado?: unknown }).reclamado === true
     },
     async guardar(ambiente, servicio, ta) {
-      const { error } = await db.from('arca_tokens').upsert(
-        {
-          ambiente, servicio,
-          token: ta.token, sign: ta.sign, expira_at: ta.expiraAt.toISOString(),
-          renovando_hasta: null,
-        },
-        { onConflict: 'ambiente,servicio' },
-      )
+      const { error } = await db.rpc('arca_guardar_token', {
+        p_ambiente: ambiente,
+        p_servicio: servicio,
+        p_token: ta.token,
+        p_sign: ta.sign,
+        p_generado_at: ta.generadoAt ? ta.generadoAt.toISOString() : null,
+        p_expira_at: ta.expiraAt.toISOString(),
+      })
       if (error) throw falla('guardar', error)
+    },
+    async liberar(ambiente, servicio) {
+      const { error } = await db.rpc('arca_liberar_renovacion', { p_ambiente: ambiente, p_servicio: servicio })
+      if (error) throw falla('liberar la renovación de', error)
     },
   }
 }
@@ -277,9 +300,12 @@ async function resolverTA(
     } catch (e) {
       if (e instanceof ArcaError && e.faultcode === 'coe.alreadyAuthenticated') {
         // ARCA dice que ya hay un TA vigente. Si otro lo guardó mientras
-        // tanto, se usa; si no, se perdió y hay que esperar a que venza.
-        const otro = await store.leer(cfg.ambiente, servicio)
-        if (taVigente(otro)) return otro
+        // tanto, se usa; si el guardado todavía no venció (está dentro del
+        // margen de 5 min), también: para ARCA sigue siendo válido. Si no,
+        // se perdió y hay que esperar a que venza. El reclamo NO se suelta:
+        // su lease frena que cada request vuelva a golpear WSAA.
+        const otro: TicketAcceso | null = await store.leer(cfg.ambiente, servicio)
+        if (otro && otro.token && otro.sign && otro.expiraAt.getTime() > Date.now() + 15_000) return otro
         throw new ArcaError({
           tipo: 'soap_fault', codigo: 'ARCA_TA_PERDIDO', quizasLlego: false, faultcode: e.faultcode, cause: e,
           mensaje:
@@ -287,6 +313,9 @@ async function resolverTA(
             'No da otro hasta que venza (hasta 12 h): cargalo a mano en arca_tokens o esperá.',
         })
       }
+      // Cualquier otra falla: soltar el reclamo para que el próximo intento
+      // no espere 2 minutos a que venza solo. Best-effort.
+      if (store.liberar) await store.liberar(cfg.ambiente, servicio).catch(() => {})
       throw e
     }
     await store.guardar(cfg.ambiente, servicio, nuevo)

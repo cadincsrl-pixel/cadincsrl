@@ -21,8 +21,11 @@ export const MODULOS = [
   'alquiler',
   'aridos',
   'pagos',
+  'facturacion',
   'admin',
 ] as const
+// 2026-09-24: `facturacion` (facturas de venta contra ARCA: Factura A y NC A).
+// Independiente como Pagos: padrón de clientes propio, solo comparte obras.
 // 2026-09-18: `pagos` (facturas de proveedor, aprobación y órdenes de pago).
 // Módulo independiente: no es tab de certificaciones ni reutiliza `caja`.
 // 2026-09-06: `ropa`, `prestamos` y `configuracion` salieron del catálogo.

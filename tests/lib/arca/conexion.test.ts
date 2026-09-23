@@ -37,6 +37,7 @@ function storeFalso(inicial: TicketAcceso | null, gana = true) {
     leer: vi.fn(async () => guardado),
     reclamarRenovacion: vi.fn(async () => gana),
     guardar: vi.fn(async (_a: string, _s: string, ta: TicketAcceso) => { guardado = ta }),
+    liberar: vi.fn(async () => {}),
     poner: (ta: TicketAcceso | null) => { guardado = ta },
   }
   return store as typeof store & TaStore
@@ -127,6 +128,30 @@ describe('obtenerTA', () => {
     })
     const ta = await obtenerTA(servicioNuevo(), { store, config: cfg, espera })
     expect(ta.token).toBe('tok')
+  })
+})
+
+describe('obtenerTA: reclamo y TA dentro del margen', () => {
+  it('WSAA falla (no alreadyAuthenticated) → suelta el reclamo', async () => {
+    const store = storeFalso(null)
+    fetchMock.mockRejectedValueOnce(errorDeRed('ECONNREFUSED'))
+    await expect(obtenerTA(servicioNuevo(), { store, config: cfg, espera })).rejects.toMatchObject({ codigo: 'ARCA_SIN_CONEXION' })
+    expect(store.liberar).toHaveBeenCalledTimes(1)
+  })
+
+  it('alreadyAuthenticated NO suelta el reclamo (el lease frena el martilleo a WSAA)', async () => {
+    const store = storeFalso(null)
+    fetchMock.mockResolvedValueOnce(respuesta(fx('loginCms-alreadyAuthenticated.xml'), 500))
+    await expect(obtenerTA(servicioNuevo(), { store, config: cfg, espera })).rejects.toMatchObject({ codigo: 'ARCA_TA_PERDIDO' })
+    expect(store.liberar).not.toHaveBeenCalled()
+  })
+
+  it('alreadyAuthenticated con el TA guardado todavía válido (dentro del margen de 5 min) → usa ese', async () => {
+    const casi = { token: 'casi', sign: 's', expiraAt: new Date(Date.now() + 3 * 60_000) }
+    const store = storeFalso(casi)
+    fetchMock.mockResolvedValueOnce(respuesta(fx('loginCms-alreadyAuthenticated.xml'), 500))
+    const ta = await obtenerTA(servicioNuevo(), { store, config: cfg, espera })
+    expect(ta.token).toBe('casi')
   })
 })
 

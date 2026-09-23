@@ -28,8 +28,10 @@ services:
     schedule: "*/15 * * * *"
     # `--fail-with-body` (-f) hace exit code != 0 si el server devuelve >=400,
     # así Render marca el run como failed y queda en el log.
-    # Dispara dos endpoints en serie: primero camiones (logística), luego
-    # flota interna. Si el primero falla, el segundo igual corre — el `; :`
+    # Dispara tres endpoints en serie: camiones (logística), la reconciliación
+    # de facturas de venta con ARCA (las que quedaron `error_reconciliar` o
+    # trabadas en `emitiendo`; sin ARCA configurado no hace nada) y flota
+    # interna. Si el primero falla, el segundo igual corre — el `; :`
     # neutraliza el exit code del primero para que curl del segundo defina
     # el estado final del run (lo que más nos importa ver en Render logs).
     startCommand: |
@@ -37,6 +39,9 @@ services:
         curl --fail-with-body --retry 2 --max-time 120 -X POST \
           -H "Authorization: Bearer $CRON_SECRET" \
           "$BACKEND_URL/api/internal/sync-gps" || true
+        curl --fail-with-body --retry 2 --max-time 120 -X POST \
+          -H "Authorization: Bearer $CRON_SECRET" \
+          "$BACKEND_URL/api/internal/arca-reconciliar" || true
         curl --fail-with-body --retry 2 --max-time 120 -X POST \
           -H "Authorization: Bearer $CRON_SECRET" \
           "$BACKEND_URL/api/internal/sync-gps-flota"

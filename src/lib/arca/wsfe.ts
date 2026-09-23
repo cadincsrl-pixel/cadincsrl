@@ -157,7 +157,16 @@ export interface OpcionesWsfe {
  * Recibe cada intercambio con WSFE. El pedido llega con Token y Sign
  * reemplazados por `***`. Un error adentro del callback no afecta la llamada.
  */
-export type TrazaXml = (t: { metodo: string; pedido: string; respuesta: string | null; httpStatus: number | null }) => void
+export type TrazaXml = (t: {
+  metodo: string
+  pedido: string
+  respuesta: string | null
+  httpStatus: number | null
+  /** Milisegundos desde que salió el pedido hasta la respuesta o la falla. */
+  duracionMs?: number
+  /** Código y mensaje del ArcaError si la llamada falló en el transporte. */
+  error?: string | null
+}) => void
 
 let traza: TrazaXml | null = null
 export function configurarTrazaXml(fn: TrazaXml | null): void {
@@ -424,13 +433,21 @@ export function parsearFEDummy(xml: string, httpStatus?: number): EstadoServidor
 async function llamar(metodo: string, sobreXml: string, cfg: ArcaConfig): Promise<{ status: number; xml: string }> {
   const contexto = `WSFE ${metodo}`
   let resp: { status: number; xml: string } | null = null
+  let falla: string | null = null
+  const t0 = Date.now()
   try {
     resp = await postSoap({ url: cfg.urls.wsfe, soapAction: `${NS}${metodo}`, sobre: sobreXml, contexto })
     return resp
+  } catch (e) {
+    falla = e instanceof ArcaError ? `${e.codigo}: ${e.message}` : e instanceof Error ? e.message : String(e)
+    throw e
   } finally {
     if (traza) {
       try {
-        traza({ metodo, pedido: redactarAuth(sobreXml), respuesta: resp?.xml ?? null, httpStatus: resp?.status ?? null })
+        traza({
+          metodo, pedido: redactarAuth(sobreXml), respuesta: resp?.xml ?? null, httpStatus: resp?.status ?? null,
+          duracionMs: Date.now() - t0, error: falla,
+        })
       } catch {
         // la traza nunca tira abajo la llamada
       }
