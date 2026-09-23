@@ -35,7 +35,7 @@ import {
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
   UploadComprobantePendienteSchema, BorrarPendienteSchema,
-  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema,
+  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, DevolucionProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
 } from './pagos.schema.js'
 
@@ -202,6 +202,13 @@ pagos.patch('/ordenes/:id', lectura, registrarPagos, tabPago, zValidator('json',
 pagos.post('/ordenes/:id/anular', lectura, tabPago, zValidator('json', MotivoSchema), handler(async (c) => {
   const userId = c.get('user').id
   return pagosService.anularOrden(idParam(c), c.req.valid('json').motivo, userId, await perfilDe(userId))
+}))
+
+// Devolución del proveedor (20260923g): anula la OP y la rehace con la NC.
+// El permiso (anular_pagos o admin) lo mira el service, como en /anular.
+pagos.post('/ordenes/:id/devolucion', lectura, tabPago, zValidator('json', DevolucionProveedorSchema), handler(async (c) => {
+  const userId = c.get('user').id
+  return pagosService.devolucionProveedor(idParam(c), c.req.valid('json'), userId, await perfilDe(userId))
 }))
 
 // Registro contable (20260923c): el contador marca la OP como pasada a

@@ -70,7 +70,7 @@ export const VERBOS: Record<string, string> = {
   observar: 'observar', corregida: 'marcar corregida', anular: 'anular', reactivar: 'reactivar',
   'datos-pago': 'cargar datos de pago', 'comprobante-pendiente': 'descartar comprobante',
   reimputar: 'reimputar', 'aplicar-anticipo': 'aplicar anticipo',
-  'registrar-finnegans': 'registrar en Finnegans', 'deshacer-registro': 'deshacer registro en Finnegans',
+  devolucion: 'devolución del proveedor', 'registrar-finnegans': 'registrar en Finnegans', 'deshacer-registro': 'deshacer registro en Finnegans',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */

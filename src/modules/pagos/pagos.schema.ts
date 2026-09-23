@@ -331,6 +331,20 @@ export const UpdateOrdenSchema = z.object({
 }).strict()
 export type UpdateOrdenDto = z.infer<typeof UpdateOrdenSchema>
 
+/**
+ * Devolución del proveedor (20260923g): anula la OP y la rehace con la NC
+ * (y la plata que quedó, si es parcial). `devoluciones` = lo que devuelven
+ * por factura; el PDF de la NC viene en `adjuntos` (ya subido a pendientes).
+ */
+export const DevolucionProveedorSchema = z.object({
+  devoluciones: z.array(z.object({ factura_id: Id, monto: Monto })).min(1).max(100),
+  nc_numero:    z.string().trim().min(1).max(40),
+  nc_fecha:     FechaISO,
+  motivo:       z.string().trim().max(500).optional().default(''),
+  adjuntos:     z.array(AdjuntoPendienteSchema).min(1).max(5),
+}).strict()
+export type DevolucionProveedorDto = z.infer<typeof DevolucionProveedorSchema>
+
 /** El contador marca la OP como registrada en Finnegans con su número (20260923c). */
 export const RegistrarFinnegansSchema = z.object({
   numero_finnegans: z.string().trim().min(1).max(40),

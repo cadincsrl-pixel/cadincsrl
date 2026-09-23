@@ -480,6 +480,60 @@ describe('anular orden', () => {
 
 // ── Anular factura ──────────────────────────────────────────────────────────
 
+// ── Devolución del proveedor (20260923g) ────────────────────────────────────
+
+describe('devolución del proveedor', () => {
+  const NC_PDF = { tipo: 'nota_credito', storage_path: 'ordenes/pendientes/nc.pdf', nombre_archivo: 'nc.pdf', mime_type: 'application/pdf' }
+  const BODY = { devoluciones: [{ factura_id: 5, monto: 30 }], nc_numero: '0022-00000999', nc_fecha: HOY, motivo: 'soga de más', adjuntos: [NC_PDF] }
+
+  function conBucket() {
+    return import('../../../src/lib/supabase.js').then(({ supabase }) => {
+      ;(supabase as any).storage.from = () => ({
+        download: async () => ({ data: new Blob(['pdf']), error: null }),
+        remove: async () => ({}), move: async () => ({ error: null }),
+      })
+    })
+  }
+
+  it('pide anular_pagos: con sólo registrar_pagos rebota, aunque la OP sea suya y del día', async () => {
+    state.profile = CONTADOR_SIN_ANULAR
+    const res = await post('/ordenes/20/devolucion', BODY)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'SIN_PERMISO', detail: { flag: 'anular_pagos' } })
+    expect(llamada('pagos_devolucion_proveedor')).toBeUndefined()
+  })
+
+  it('sin el PDF de la NC no llega a la RPC', async () => {
+    state.profile = CONTADOR
+    const res = await post('/ordenes/20/devolucion', { ...BODY, adjuntos: [{ ...NC_PDF, tipo: 'otro' }] })
+    expect(await res.json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', campo: 'adjuntos' })
+    expect(llamada('pagos_devolucion_proveedor')).toBeUndefined()
+  })
+
+  it('con anular_pagos: la RPC recibe lo devuelto en centavos, la NC y el PDF hasheado', async () => {
+    state.profile = CONTADOR
+    await conBucket()
+    rpcMock.mockImplementation(async (name: string) => name === 'pagos_devolucion_proveedor'
+      ? { data: { anulada: { id: 20, estado: 'anulada' }, orden: { id: 21 }, facturas: [] }, error: null }
+      : { data: null, error: null })
+    const res = await post('/ordenes/20/devolucion', BODY)
+    expect(res.status).toBe(200)
+    const args = llamada('pagos_devolucion_proveedor')!
+    expect(args).toMatchObject({
+      p_orden_id: 20, p_devuelto: [{ factura_id: 5, monto: 30 }],
+      p_nc: { numero: '0022-00000999', fecha: HOY }, p_motivo: 'soga de más', p_user_id: 'u-1',
+    })
+    expect((args.p_adjuntos as Fila[])[0]).toMatchObject({ tipo: 'nota_credito', storage_path: 'ordenes/pendientes/nc.pdf' })
+    expect(typeof (args.p_adjuntos as Fila[])[0]!.hash_sha256).toBe('string')
+  })
+
+  it('una NC con fecha futura rebota antes de subir nada', async () => {
+    state.profile = ADMIN
+    const res = await post('/ordenes/20/devolucion', { ...BODY, nc_fecha: '2999-01-01' })
+    expect(await res.json()).toMatchObject({ error: 'FECHA_FUTURA', campo: 'nc_fecha' })
+  })
+})
+
 describe('anular factura', () => {
   it('una «pagada al cargar» sin revisar: quien la cargó el mismo día sí; otro de compras no; el aprobador sí', async () => {
     const f = { id: 5, estado: 'pagada', pagada_al_cargar: true, aprobada_at: null, created_by: 'u-1', created_at: new Date().toISOString() }

@@ -35,7 +35,7 @@ import {
   FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
   type CreateOrdenDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
-  type ImputacionDto, type RegistrarFinnegansDto,
+  type ImputacionDto, type RegistrarFinnegansDto, type DevolucionProveedorDto,
 } from './pagos.schema.js'
 import {
   pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, BUCKET,
@@ -1013,6 +1013,41 @@ export const pagosService = {
     }
     if (!upd) throw new PagosHttpError(409, 'ORDEN_YA_REGISTRADA')
     return upd
+  },
+
+  /**
+   * Devolución del proveedor (20260923g). Anula la OP y la rehace con la NC en
+   * UNA transacción (`pagos_devolucion_proveedor`). Pide lo mismo que anular
+   * cualquier OP: `anular_pagos` o admin — el atajo de «la propia del día» no
+   * aplica, porque esto corrige un pago ya hecho. El PDF de la NC es
+   * obligatorio; el comprobante de la plata que volvió va como `otro`.
+   */
+  async devolucionProveedor(id: number, dto: DevolucionProveedorDto, userId: string, perfil: Perfil | null) {
+    if (!esAdmin(perfil) && !flagPagos(perfil, 'anular_pagos')) {
+      throw new PagosHttpError(403, 'SIN_PERMISO', { flag: 'anular_pagos' })
+    }
+    if (dto.nc_fecha > hoyAR()) throw errorDeCampo('FECHA_FUTURA', 'nc_fecha', { hoy: hoyAR() })
+    if (!dto.adjuntos.some((a) => a.tipo === 'nota_credito')) {
+      throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { tipo: 'nota_credito' })
+    }
+    const adjuntos = await procesarPendientes(dto.adjuntos)
+    let res: { anulada: Record<string, unknown>; orden: Record<string, unknown>; facturas: unknown[] }
+    try {
+      res = rpcOk(await supabase.rpc('pagos_devolucion_proveedor', {
+        p_orden_id: id,
+        p_devuelto: dto.devoluciones.map((d) => ({ factura_id: d.factura_id, monto: aCentavos(d.monto) })),
+        p_nc:       { numero: dto.nc_numero, fecha: dto.nc_fecha },
+        p_motivo:   dto.motivo ?? '',
+        p_adjuntos: adjuntos,
+        p_user_id:  userId,
+      }))
+    } catch (err) {
+      await borrarDelBucket(adjuntos.map((a) => a.storage_path))
+      throw err
+    }
+    const ordenId = Number((res.orden as { id?: number }).id)
+    if (ordenId && adjuntos.length) await moverPendientesAOrden(ordenId, adjuntos)
+    return enmascararRespuesta(res, verPiiDe(perfil))
   },
 
   /** Deshacer el registro (número mal tipeado). No toca plata. */
