@@ -1,28 +1,29 @@
 // Ticket de acceso (cache, reclamo, espera, TA perdido) y clasificación de las
-// fallas de red en "no llegó" / "quizás llegó". El fetch de undici está
-// mockeado: nada de esto sale a la red.
+// fallas de red en "no llegó" / "quizás llegó". El transporte HTTP está
+// reemplazado por un fetch falso: nada de esto sale a la red.
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import forge from 'node-forge'
 
-vi.mock('undici', () => ({
-  Agent: class {
-    constructor(_opts: unknown) {}
-  },
-  fetch: vi.fn(),
-}))
-
-import { fetch as undiciFetch } from 'undici'
 import { obtenerTA, type TaStore, type TicketAcceso } from '../../../src/lib/arca/wsaa.js'
 import { solicitarCAE, ultimoAutorizado } from '../../../src/lib/arca/wsfe.js'
-import { postSoap } from '../../../src/lib/arca/soap.js'
+import { postSoap, configurarTransporteHttp, FallaHttp } from '../../../src/lib/arca/soap.js'
 import { arcaConfig, type ArcaConfig } from '../../../src/lib/arca/config.js'
 import { ArcaError } from '../../../src/lib/arca/errores.js'
 
-const fetchMock = vi.mocked(undiciFetch)
+const fetchMock = vi.fn<(url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<Response>>()
+configurarTransporteHttp(async (url, headers, body, signal) => {
+  let r: Response
+  try {
+    r = await fetchMock(url, { method: 'POST', headers, body, signal })
+  } catch (e) {
+    throw new FallaHttp('conexion', e)
+  }
+  return { status: r.status, ok: r.ok, text: await r.text() }
+})
 const fx = (n: string) => readFileSync(path.join(__dirname, 'fixtures', n), 'utf8')
-const respuesta = (xml: string, status = 200) => new Response(xml, { status }) as unknown as Awaited<ReturnType<typeof undiciFetch>>
+const respuesta = (xml: string, status = 200) => new Response(xml, { status })
 const errorDeRed = (code: string) => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) })
 
 let cfg: ArcaConfig

@@ -5,21 +5,53 @@
  * TLS: WSFE de producción (servicios1.afip.gov.ar) negocia un Diffie-Hellman
  * de 1024 bits y el OpenSSL de Node moderno lo rechaza con
  * `ERR_SSL_DH_KEY_TOO_SMALL` (verificado 2026-09-23 con Node 26; homologación
- * y WSAA prod andan sin ajuste). Por eso todo lo de ARCA sale por un Agent de
- * undici con `DEFAULT@SECLEVEL=1`, que acepta esa clave y sigue verificando
- * el certificado del servidor. Se usa el `fetch` del paquete undici y no el
- * global para que Agent y fetch sean de la misma versión.
+ * y WSAA prod andan sin ajuste). Por eso todo lo de ARCA sale por un
+ * `https.Agent` propio con `DEFAULT@SECLEVEL=1`, que acepta esa clave y sigue
+ * verificando el certificado del servidor.
+ *
+ * NO usar el paquete `undici` acá (2026-09-23): con solo importarlo instala su
+ * Agent como despachador GLOBAL del proceso, y el `fetch` nativo de Node lo
+ * empieza a usar para todo. En Render (otra versión de Node que la de la Mac)
+ * las dos versiones de undici no son compatibles: `jose` bajaba el JWKS de
+ * Supabase, llegaba 200 y fallaba "Failed to parse the JSON Web Key Set HTTP
+ * response as JSON" → 401 en /api/me/profile → NADIE podía entrar al ERP.
+ * `node:https` no toca nada global.
  */
-import { Agent, fetch as undiciFetch } from 'undici'
+import https from 'node:https'
 import { XMLParser } from 'fast-xml-parser'
 import { ArcaError, codigoDeRed, fallaAntesDeEnviar } from './errores.js'
 
 export const ARCA_TIMEOUT_MS = 40_000
 
-const agent = new Agent({
-  connect: { ciphers: 'DEFAULT@SECLEVEL=1', timeout: 15_000 },
-  keepAliveTimeout: 10_000,
-})
+const agent = new https.Agent({ ciphers: 'DEFAULT@SECLEVEL=1', keepAlive: true, keepAliveMsecs: 10_000 })
+
+/** Error de red con la fase en que ocurrió: antes de la respuesta o leyéndola. */
+export class FallaHttp extends Error {
+  constructor(readonly fase: 'conexion' | 'lectura', readonly causa: unknown, readonly status?: number) {
+    super(causa instanceof Error ? causa.message : String(causa))
+  }
+}
+
+/** POST con node:https. Resuelve con status y cuerpo; rechaza con FallaHttp. */
+function postHttps(url: string, headers: Record<string, string>, body: string, signal: AbortSignal):
+  Promise<{ status: number; ok: boolean; text: string }> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method: 'POST', agent, signal,
+      headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      const status = res.statusCode ?? 0
+      const partes: Buffer[] = []
+      res.on('data', (c: Buffer) => partes.push(c))
+      res.on('end', () => resolve({ status, ok: status >= 200 && status < 300, text: Buffer.concat(partes).toString('utf8') }))
+      res.on('error', (e) => reject(new FallaHttp('lectura', e, status)))
+      res.on('aborted', () => reject(new FallaHttp('lectura', new Error('respuesta abortada'), status)))
+    })
+    req.on('error', (e) => reject(new FallaHttp('conexion', e)))
+    req.setTimeout(15_000, () => req.destroy(Object.assign(new Error('timeout de conexión'), { code: 'ETIMEDOUT' })))
+    req.end(body)
+  })
+}
 
 /** Tags que ARCA puede devolver una o N veces: siempre como array. */
 const TAGS_ARRAY = new Set([
@@ -92,6 +124,13 @@ export function cuerpoSoap(xml: string, contexto: string, httpStatus?: number): 
   return body
 }
 
+export type TransporteHttp = typeof postHttps
+let transporte: TransporteHttp = postHttps
+/** Para tests: reemplaza el POST de red. `null` vuelve a node:https. */
+export function configurarTransporteHttp(t: TransporteHttp | null): void {
+  transporte = t ?? postHttps
+}
+
 /**
  * POST SOAP. Devuelve el texto de la respuesta si hubo respuesta HTTP (aunque
  * sea 500: los SOAP Fault vienen con 500 y los interpreta quien llama).
@@ -107,36 +146,29 @@ export async function postSoap(opts: {
   const timeoutMs = opts.timeoutMs ?? ARCA_TIMEOUT_MS
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    let res: Awaited<ReturnType<typeof undiciFetch>>
+    let res: { status: number; ok: boolean; text: string }
     try {
-      res = await undiciFetch(opts.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          SOAPAction: `"${opts.soapAction}"`,
-        },
-        body: opts.sobre,
-        signal: ctrl.signal,
-        dispatcher: agent,
-      })
-    } catch (e) {
+      res = await transporte(opts.url, {
+        'Content-Type': 'text/xml; charset=utf-8',
+        SOAPAction: `"${opts.soapAction}"`,
+      }, opts.sobre, ctrl.signal)
+    } catch (f) {
+      const e = f instanceof FallaHttp ? f.causa : f
+      if (f instanceof FallaHttp && f.fase === 'lectura') {
+        // Ya hubo status: ARCA recibió el pedido y la respuesta se cortó.
+        throw ctrl.signal.aborted
+          ? new ArcaError({
+              tipo: 'timeout', codigo: 'ARCA_TIMEOUT', quizasLlego: true, httpStatus: f.status, cause: e,
+              mensaje: `${opts.contexto}: ARCA no terminó de responder a tiempo`,
+            })
+          : new ArcaError({
+              tipo: 'transporte', codigo: 'ARCA_RESPUESTA_CORTADA', quizasLlego: true, httpStatus: f.status, cause: e,
+              mensaje: `${opts.contexto}: se cortó la respuesta de ARCA`,
+            })
+      }
       throw errorDeRed(e, ctrl.signal.aborted, opts.contexto, timeoutMs)
     }
-    let xml: string
-    try {
-      xml = await res.text()
-    } catch (e) {
-      // Ya hubo status: ARCA recibió el pedido y la respuesta se cortó.
-      throw ctrl.signal.aborted
-        ? new ArcaError({
-            tipo: 'timeout', codigo: 'ARCA_TIMEOUT', quizasLlego: true, httpStatus: res.status, cause: e,
-            mensaje: `${opts.contexto}: ARCA no terminó de responder a tiempo`,
-          })
-        : new ArcaError({
-            tipo: 'transporte', codigo: 'ARCA_RESPUESTA_CORTADA', quizasLlego: true, httpStatus: res.status, cause: e,
-            mensaje: `${opts.contexto}: se cortó la respuesta de ARCA`,
-          })
-    }
+    const xml = res.text
     const esSoap = /<(\w+:)?Envelope[\s>]/.test(xml)
     if (!res.ok && !esSoap) {
       // 502/503 de un balanceador: no se sabe si el servicio de atrás lo procesó.
