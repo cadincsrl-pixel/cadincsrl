@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest'
 import {
   calcularTotales, importeNetoRenglon, redondear, aYyyymmdd, deYyyymmdd, conceptoDe, esNC, admiteLetraA,
   armarComprobante, pResDeCAE, pResDeConsultado, coincideConsultado, resumir, normDoc, CONDICIONES_IVA,
+  letraDe, letraDeTipo, tipoPara, requiereIdentificacion, TOPE_CF_IDENTIFICACION, TIPOS_HABILITADOS,
   type FJ,
 } from '../../../src/modules/facturacion/reglas.js'
 import { sobreFECAESolicitar, type ComprobanteConsultado } from '../../../src/lib/arca/index.js'
@@ -150,6 +151,77 @@ describe('armarComprobante', () => {
     const c = armarComprobante(fj, 1)
     expect(c.impTotal).toBe(1210)
     expect(c.ptoVta).toBe(3)
+  })
+})
+
+describe('Factura B (fase 5)', () => {
+  it('la letra sale del cliente: A = CUIT + 1/6/13/16; B = 4/5/7/8/9/10/15; el resto, ninguna', () => {
+    expect(letraDe(80, 1)).toBe('A')
+    expect(letraDe(80, 6)).toBe('A')
+    expect(letraDe(80, 13)).toBe('A')
+    expect(letraDe(80, 16)).toBe('A')
+    for (const c of [4, 5, 7, 8, 9, 10, 15]) {
+      expect(letraDe(80, c)).toBe('B')
+      expect(letraDe(96, c)).toBe('B')
+      expect(letraDe(99, c)).toBe('B')
+    }
+    // RI o monotributo sin CUIT: ARCA no los acepta en la B → corregir el cliente.
+    expect(letraDe(96, 1)).toBeNull()
+    expect(letraDe(99, 6)).toBeNull()
+    expect(letraDe(86, 1)).toBeNull()
+  })
+
+  it('cada condición admite exactamente una clase (FEParamGetCondicionIvaReceptor A/B, homologación 23/09)', () => {
+    for (const c of CONDICIONES_IVA) expect(c.admite_a !== c.admite_b).toBe(true)
+    expect(CONDICIONES_IVA.filter((c) => c.admite_b).map((c) => c.id)).toEqual([4, 5, 7, 8, 9, 10, 15])
+  })
+
+  it('tipo por letra y NC; letra por tipo', () => {
+    expect(tipoPara('A', false)).toBe(1)
+    expect(tipoPara('A', true)).toBe(3)
+    expect(tipoPara('B', false)).toBe(6)
+    expect(tipoPara('B', true)).toBe(8)
+    expect(letraDeTipo(1)).toBe('A')
+    expect(letraDeTipo(3)).toBe('A')
+    expect(letraDeTipo(201)).toBe('A')
+    expect(letraDeTipo(6)).toBe('B')
+    expect(letraDeTipo(8)).toBe('B')
+    expect(letraDeTipo(11)).toBeNull()
+    expect([...TIPOS_HABILITADOS]).toEqual([1, 3, 6, 8])
+  })
+
+  it('consumidor final sin identificar: desde $ 10.000.000 inclusive (RG 5700/2025)', () => {
+    expect(TOPE_CF_IDENTIFICACION).toBe(10_000_000)
+    expect(requiereIdentificacion(6, 99, 9_999_999.99)).toBe(false)
+    expect(requiereIdentificacion(6, 99, 10_000_000)).toBe(true)
+    expect(requiereIdentificacion(8, 99, 12_000_000)).toBe(true)
+    expect(requiereIdentificacion(6, 96, 50_000_000)).toBe(false)   // con DNI, sin tope
+    expect(requiereIdentificacion(1, 99, 50_000_000)).toBe(false)   // la A ya exige CUIT
+  })
+
+  it('FB a consumidor final sin identificar: DocTipo 99, DocNro 0, IVA discriminado y condición 5', () => {
+    const fj = fjBase({ cbte_tipo: 6, rec_doc_tipo: 99, rec_doc_nro: '0', rec_condicion_iva_id: 5 })
+    const c = armarComprobante(fj, 1)
+    expect(c).toMatchObject({
+      cbteTipo: 6, docTipo: 99, docNro: '0', impNeto: 1000, impIva: 210, impTotal: 1210,
+      condicionIvaReceptorId: 5, iva: [{ id: 5, baseImp: 1000, importe: 210 }],
+    })
+    const xml = sobreFECAESolicitar({ token: 't', sign: 's', expiraAt: new Date() }, '33717191949', c)
+    expect(xml).toMatch(/<ar:DocTipo>99<\/ar:DocTipo><ar:DocNro>0<\/ar:DocNro>/)
+    expect(xml).toMatch(/<ar:Iva><ar:AlicIva><ar:Id>5<\/ar:Id>/)
+  })
+
+  it('NC B: CbtesAsoc apunta a la FB (tipo 6)', () => {
+    const fj = fjBase({ cbte_tipo: 8, rec_doc_tipo: 96, rec_doc_nro: '30111222', rec_condicion_iva_id: 5 })
+    fj.asociados = [{ asociada_id: 9, cbte_tipo: 6, pto_vta: 3, numero: 4, cuit: '33717191949', fecha_cbte: '2026-09-23' }]
+    const c = armarComprobante(fj, 1)
+    expect(c.cbtesAsoc).toEqual([{ tipo: 6, ptoVta: 3, nro: 4, cuit: '33717191949', cbteFch: '20260923' }])
+  })
+
+  it('reconciliación con consumidor final: DocNro 0 contra 0', () => {
+    const f = { rec_doc_nro: '0', imp_total: 1210, cbte_tipo: 6, pto_vta: 3 }
+    const c = { resultado: 'A', codAutorizacion: '12345678901234', cbteTipo: 6, ptoVta: 3, docNro: '0', impTotal: 1210 } as unknown as ComprobanteConsultado
+    expect(coincideConsultado(f, c)).toBe(true)
   })
 })
 

@@ -1,5 +1,5 @@
 /**
- * Facturas de venta (fase 1: Factura A y NC A). Lecturas sobre
+ * Facturas de venta: Factura A/B y NC A/B (fases 1 y 5). Lecturas sobre
  * `v_ventas_facturas` y escrituras SOLO por las RPC `ventas_*` (20260924c):
  * un UPDATE suelto rebota con VENTAS_SOLO_RPC. La emisión contra ARCA vive en
  * `emision.service.ts`.
@@ -14,7 +14,10 @@ import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { FacturacionHttpError, mapRpcError, type PgError } from './facturacion.errors.js'
 import { ambienteProceso, leerFJ, rpc, talonarioProceso } from './comun.js'
-import { TIPOS_HABILITADOS, resumir, type FJ, type FacturaVista } from './reglas.js'
+import {
+  TIPOS_HABILITADOS, TOPE_CF_IDENTIFICACION, calcularTotales, esNC, letraDe, letraDeTipo, requiereIdentificacion,
+  resumir, tipoPara, type FJ, type FacturaVista,
+} from './reglas.js'
 import type { GuardarFacturaDto, ListFacturasQuery, ResumenQuery } from './facturacion.schema.js'
 
 export interface Evento {
@@ -33,6 +36,52 @@ function ambienteFiltro(q?: string): string | null {
   if (q === 'todos') return null
   if (q === 'homo' || q === 'prod') return q
   return ambienteProceso()
+}
+
+/**
+ * El tipo de comprobante lo decide el sistema, no el usuario: la letra sale
+ * del cliente (`letraDe`) y, en una NC, de la factura que corrige. Si el
+ * pedido trae `cbte_tipo`, tiene que ser de esa misma letra. Rechaza ANTES
+ * de la RPC (que vuelve a validar todo, igual que al emitir):
+ *   - LETRA_INCOMPATIBLE: el cliente no admite ninguna letra (RI o
+ *     monotributo sin CUIT) o el tipo pedido es de la otra;
+ *   - CF_REQUIERE_IDENTIFICACION: B sin documento (99) con total ≥ tope.
+ */
+export async function resolverTipo(
+  f: GuardarFacturaDto['factura'], renglones: GuardarFacturaDto['renglones'], db: SupabaseClient,
+): Promise<number> {
+  const { data: cli, error } = await db.from('ventas_clientes')
+    .select('id, doc_tipo, condicion_iva_id').eq('id', f.cliente_id).maybeSingle()
+  if (error) throw mapRpcError(error as PgError)
+  if (!cli) throw new FacturacionHttpError(404, 'CLIENTE_NO_EXISTE', { campo: 'cliente_id', cliente_id: f.cliente_id })
+  const c = cli as { doc_tipo: number; condicion_iva_id: number }
+  const letraCliente = letraDe(Number(c.doc_tipo), Number(c.condicion_iva_id))
+  const nc = f.asociada_id != null || (f.cbte_tipo != null && esNC(Number(f.cbte_tipo)))
+
+  let letra = letraCliente
+  if (nc && f.asociada_id != null) {
+    const { data: a } = await db.from('ventas_facturas').select('cbte_tipo').eq('id', f.asociada_id).maybeSingle()
+    // Si la asociada no existe, la RPC contesta NC_FACTURA_NO_EXISTE.
+    if (a) letra = letraDeTipo(Number((a as { cbte_tipo: number }).cbte_tipo)) ?? letra
+  }
+  const pedida = f.cbte_tipo != null ? letraDeTipo(Number(f.cbte_tipo)) : null
+  if (!letraCliente || letra !== letraCliente || (f.cbte_tipo != null && pedida !== letra)) {
+    throw new FacturacionHttpError(400, 'LETRA_INCOMPATIBLE', {
+      campo: 'cliente_id', letra: pedida ?? letra, letra_cliente: letraCliente,
+      doc_tipo: Number(c.doc_tipo), condicion_iva_id: Number(c.condicion_iva_id),
+    })
+  }
+  const tipo = tipoPara(letra, nc)
+  if (!(TIPOS_HABILITADOS as readonly number[]).includes(tipo)) {
+    throw new FacturacionHttpError(400, 'TIPO_NO_HABILITADO', { campo: 'cbte_tipo', cbte_tipo: tipo, habilitados: [...TIPOS_HABILITADOS] })
+  }
+  const total = calcularTotales(renglones).total
+  if (requiereIdentificacion(tipo, Number(c.doc_tipo), total)) {
+    throw new FacturacionHttpError(400, 'CF_REQUIERE_IDENTIFICACION', {
+      campo: 'cliente_id', tope: TOPE_CF_IDENTIFICACION, total, cliente_id: f.cliente_id,
+    })
+  }
+  return tipo
 }
 
 const lista = (csv?: string) => (csv ?? '').split(',').map((s) => s.trim()).filter(Boolean)
@@ -62,7 +111,18 @@ export const facturasService = {
       .order('created_at', { ascending: false }).order('id', { ascending: false })
       .range(desde, desde + pageSize - 1)
     if (error) throw mapRpcError(error as PgError)
-    return { rows: (data ?? []) as FacturaVista[], total: count ?? 0 }
+    const rows = (data ?? []) as FacturaVista[]
+    // Las descripciones de los renglones, en orden: la bandeja de Finnegans
+    // las muestra y las copia sin bajar la ficha de cada factura.
+    const ids = rows.map((r) => r.id)
+    const desc = new Map<number, string[]>()
+    if (ids.length) {
+      const rens = await todasLasFilas<{ factura_id: number; orden: number; descripcion: string }>((d, h) =>
+        db.from('ventas_factura_renglones').select('factura_id, orden, descripcion')
+          .in('factura_id', ids).order('factura_id').order('orden').range(d, h))
+      for (const r of rens) desc.set(r.factura_id, [...(desc.get(r.factura_id) ?? []), r.descripcion])
+    }
+    return { rows: rows.map((r) => ({ ...r, descripciones: desc.get(r.id) ?? [] })), total: count ?? 0 }
   },
 
   async resumen(q: ResumenQuery, db: SupabaseClient = supabase) {
@@ -101,9 +161,9 @@ export const facturasService = {
    * letra, centro de costo, fecha y saldo de la NC.
    */
   async guardar(dto: GuardarFacturaDto, id: number | null, userId: string, esAdmin: boolean, db: SupabaseClient = supabase): Promise<FJ> {
-    const tipo = Number(dto.factura.cbte_tipo)
-    if (!(TIPOS_HABILITADOS as readonly number[]).includes(tipo)) {
-      throw new FacturacionHttpError(400, 'TIPO_NO_HABILITADO', { campo: 'cbte_tipo', cbte_tipo: tipo, habilitados: [...TIPOS_HABILITADOS] })
+    const pedido = dto.factura.cbte_tipo
+    if (pedido != null && !(TIPOS_HABILITADOS as readonly number[]).includes(Number(pedido))) {
+      throw new FacturacionHttpError(400, 'TIPO_NO_HABILITADO', { campo: 'cbte_tipo', cbte_tipo: pedido, habilitados: [...TIPOS_HABILITADOS] })
     }
     if (dto.forzar && !esAdmin) throw new FacturacionHttpError(403, 'FORZAR_SOLO_ADMIN')
     const { ambiente, ptoVta } = talonarioProceso()
@@ -118,6 +178,7 @@ export const facturasService = {
     }
 
     const f = dto.factura
+    const tipo = await resolverTipo(f, dto.renglones, db)
     const pFactura: Record<string, unknown> = {
       ...(id != null ? { id } : {}),
       ambiente, pto_vta: ptoVta, cbte_tipo: tipo,

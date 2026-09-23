@@ -15,7 +15,7 @@ import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { cuitValido } from '../pagos/pagos.util.js'
 import { FacturacionHttpError, errorDeCampo, mapRpcError, type PgError } from './facturacion.errors.js'
-import { CONDICIONES_IVA_IDS, normDoc } from './reglas.js'
+import { CONDICIONES_IVA_IDS, letraDe, normDoc } from './reglas.js'
 import type { CreateClienteDto, UpdateClienteDto } from './facturacion.schema.js'
 
 export interface ObraCliente { cod: string; nom: string; cc: string | null }
@@ -37,6 +37,17 @@ export function validarDocumento(docTipo: number, docNro: string | null | undefi
 
 function validarCondicion(id: number): void {
   if (!CONDICIONES_IVA_IDS.has(id)) throw errorDeCampo('CONDICION_IVA_INVALIDA', 'condicion_iva_id')
+}
+
+/**
+ * Un cliente al que no se le puede hacer ni A ni B no sirve para facturar:
+ * RI o monotributo sin CUIT (ARCA no acepta esas condiciones en la B). Se
+ * frena al cargarlo, no al emitir.
+ */
+function validarLetra(docTipo: number, condicionIvaId: number): void {
+  if (!letraDe(docTipo, condicionIvaId)) {
+    throw errorDeCampo('CLIENTE_SIN_LETRA', 'condicion_iva_id', { doc_tipo: docTipo, condicion_iva_id: condicionIvaId })
+  }
 }
 
 const limpio = (v: string | null | undefined) => (v ?? '').trim()
@@ -105,6 +116,7 @@ export const clientesService = {
     const docTipo = dto.doc_tipo ?? 80
     const doc = validarDocumento(docTipo, dto.doc_nro)
     validarCondicion(dto.condicion_iva_id)
+    validarLetra(docTipo, dto.condicion_iva_id)
     if (await duplicado(db, docTipo, doc)) throw await errorDuplicado(db, docTipo, doc)
 
     const { data, error } = await db.from('ventas_clientes').insert({
@@ -141,6 +153,9 @@ export const clientesService = {
     if (dto.condicion_iva_id !== undefined) {
       validarCondicion(dto.condicion_iva_id)
       upd.condicion_iva_id = dto.condicion_iva_id
+    }
+    if (dto.doc_tipo !== undefined || dto.condicion_iva_id !== undefined) {
+      validarLetra(docTipo, dto.condicion_iva_id ?? Number(actual.condicion_iva_id))
     }
     for (const k of ['domicilio', 'provincia', 'email', 'obs'] as const) {
       if (dto[k] !== undefined) upd[k] = limpio(dto[k])

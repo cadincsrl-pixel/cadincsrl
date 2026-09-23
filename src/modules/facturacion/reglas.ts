@@ -15,8 +15,8 @@ import type { ComprobanteSolicitud, ComprobanteConsultado, ResultadoCAE, ErrArca
 
 // ── Catálogos fijos ─────────────────────────────────────────────────────────
 
-/** Tipos habilitados en la fase 1: Factura A y Nota de Crédito A. */
-export const TIPOS_HABILITADOS = [1, 3] as const
+/** Tipos habilitados: Factura A/B y Nota de Crédito A/B (fase 5). FCE (201/203) todavía no. */
+export const TIPOS_HABILITADOS = [1, 3, 6, 8] as const
 export const TIPOS_NC = new Set([3, 8, 203])
 
 /** Tasa por Id de alícuota de ARCA (FEParamGetTiposIva). Espejo de `ventas_tasa_iva`. */
@@ -25,21 +25,37 @@ export const TASA_IVA: Readonly<Record<number, number>> = {
 }
 
 /** Condición frente al IVA del receptor (FEParamGetCondicionIvaReceptor). */
-export const CONDICIONES_IVA: ReadonlyArray<{ id: number; descripcion: string; admite_a: boolean }> = [
-  { id: 1, descripcion: 'IVA Responsable Inscripto', admite_a: true },
-  { id: 4, descripcion: 'IVA Sujeto Exento', admite_a: false },
-  { id: 5, descripcion: 'Consumidor Final', admite_a: false },
-  { id: 6, descripcion: 'Responsable Monotributo', admite_a: true },
-  { id: 7, descripcion: 'Sujeto No Categorizado', admite_a: false },
-  { id: 8, descripcion: 'Proveedor del Exterior', admite_a: false },
-  { id: 9, descripcion: 'Cliente del Exterior', admite_a: false },
-  { id: 10, descripcion: 'IVA Liberado – Ley N° 19.640', admite_a: false },
-  { id: 13, descripcion: 'Monotributista Social', admite_a: true },
-  { id: 15, descripcion: 'IVA No Alcanzado', admite_a: false },
-  { id: 16, descripcion: 'Monotributo Trabajador Independiente Promovido', admite_a: true },
+/**
+ * Clase de cada condición según FEParamGetCondicionIvaReceptor('A' | 'B'),
+ * verificado en homologación el 23/09/2026: A acepta 1, 6, 13 y 16; B acepta
+ * 4, 5, 7, 8, 9, 10 y 15. Ninguna condición está en las dos.
+ */
+export const CONDICIONES_IVA: ReadonlyArray<{ id: number; descripcion: string; admite_a: boolean; admite_b: boolean }> = [
+  { id: 1, descripcion: 'IVA Responsable Inscripto', admite_a: true, admite_b: false },
+  { id: 4, descripcion: 'IVA Sujeto Exento', admite_a: false, admite_b: true },
+  { id: 5, descripcion: 'Consumidor Final', admite_a: false, admite_b: true },
+  { id: 6, descripcion: 'Responsable Monotributo', admite_a: true, admite_b: false },
+  { id: 7, descripcion: 'Sujeto No Categorizado', admite_a: false, admite_b: true },
+  { id: 8, descripcion: 'Proveedor del Exterior', admite_a: false, admite_b: true },
+  { id: 9, descripcion: 'Cliente del Exterior', admite_a: false, admite_b: true },
+  { id: 10, descripcion: 'IVA Liberado – Ley N° 19.640', admite_a: false, admite_b: true },
+  { id: 13, descripcion: 'Monotributista Social', admite_a: true, admite_b: false },
+  { id: 15, descripcion: 'IVA No Alcanzado', admite_a: false, admite_b: true },
+  { id: 16, descripcion: 'Monotributo Trabajador Independiente Promovido', admite_a: true, admite_b: false },
 ]
 export const CONDICIONES_IVA_IDS = new Set(CONDICIONES_IVA.map((c) => c.id))
 const CONDICIONES_A = new Set(CONDICIONES_IVA.filter((c) => c.admite_a).map((c) => c.id))
+const CONDICIONES_B = new Set(CONDICIONES_IVA.filter((c) => c.admite_b).map((c) => c.id))
+
+/**
+ * Desde este total el consumidor final se identifica (RG ARCA 5700/2025,
+ * vigente desde el 29/05/2025: "igual o superior a $ 10.000.000"). Un
+ * comprobante B con documento 99 y total ≥ tope → CF_REQUIERE_IDENTIFICACION.
+ * Espejo de `_ventas_tope_cf()` (20260924d) y del frontend. Si ARCA lo
+ * cambia, rebota con su propio error (10015/10013 según la versión del
+ * manual) y hay que tocar los tres lugares.
+ */
+export const TOPE_CF_IDENTIFICACION = 10_000_000
 
 /** CUIT de CADINC: el emisor. Va en el Auth de WSFE y en cada CbteAsoc. */
 export const CUIT_EMISOR = '33717191949'
@@ -148,6 +164,40 @@ export function esNC(cbteTipo: number): boolean {
 /** Factura A: receptor con CUIT (80) y condición 1, 6, 13 o 16. Espejo de `_ventas_validar_receptor`. */
 export function admiteLetraA(docTipo: number, condicionIvaId: number): boolean {
   return docTipo === 80 && CONDICIONES_A.has(condicionIvaId)
+}
+
+export type Letra = 'A' | 'B'
+
+/**
+ * La letra la decide el cliente, no el usuario (espejo de
+ * `_ventas_validar_receptor`, 20260924d):
+ *   A → CUIT y condición 1, 6, 13 o 16;
+ *   B → condición 4, 5, 7, 8, 9, 10 o 15, con cualquier documento;
+ *   null → ninguna: un RI o monotributista SIN CUIT (ARCA no acepta esas
+ *          condiciones en la B). Hay que corregir el cliente.
+ */
+export function letraDe(docTipo: number, condicionIvaId: number): Letra | null {
+  if (admiteLetraA(docTipo, condicionIvaId)) return 'A'
+  if (CONDICIONES_B.has(condicionIvaId)) return 'B'
+  return null
+}
+
+/** Letra de un tipo de comprobante (null si no es A ni B). */
+export function letraDeTipo(cbteTipo: number): Letra | null {
+  if ([1, 3, 201, 203].includes(cbteTipo)) return 'A'
+  if ([6, 8].includes(cbteTipo)) return 'B'
+  return null
+}
+
+/** El tipo que corresponde: factura o NC de esa letra. */
+export function tipoPara(letra: Letra, nc: boolean): 1 | 3 | 6 | 8 {
+  if (letra === 'A') return nc ? 3 : 1
+  return nc ? 8 : 6
+}
+
+/** ¿Hay que identificar al receptor? Comprobante B, sin documento (99) y total ≥ tope. */
+export function requiereIdentificacion(cbteTipo: number, docTipo: number, total: number): boolean {
+  return letraDeTipo(cbteTipo) === 'B' && docTipo === 99 && Math.round(total * 100) >= TOPE_CF_IDENTIFICACION * 100
 }
 
 // ── Del FJ de la base al pedido a ARCA ──────────────────────────────────────

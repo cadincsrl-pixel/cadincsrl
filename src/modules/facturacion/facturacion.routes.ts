@@ -1,6 +1,6 @@
 /**
- * Rutas del módulo Facturación (montado en `/api/facturacion`). Fase 1:
- * Factura A y NC A contra ARCA. Contrato de la API: scratchpad
+ * Rutas del módulo Facturación (montado en `/api/facturacion`). Fases 1 y 5:
+ * Factura A/B y NC A/B contra ARCA (la letra la decide el cliente). Contrato de la API: scratchpad
  * `facturacion-api-contrato.md` (2026-09-24), espejado en el frontend.
  *
  * Permisos: `permisos.facturacion = { lectura, creacion, actualizacion,

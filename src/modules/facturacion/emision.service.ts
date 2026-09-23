@@ -344,7 +344,7 @@ export const emisionService = {
     if (falta.length) return { ...base, dummy: null, ultimo: null, error: null }
     const cfg = arcaConfig()
     let dummy: { appServer: string; dbServer: string; authServer: string } | null = null
-    let ultimo: { '1': number; '3': number } | null = null
+    let ultimo: { '1': number; '3': number; '6': number; '8': number } | null = null
     const errores: string[] = []
     try {
       dummy = await feDummy({ config: cfg })
@@ -352,11 +352,8 @@ export const emisionService = {
       errores.push(`FEDummy: ${mensajeDe(e)}`)
     }
     try {
-      const [a, nc] = await Promise.all([
-        ultimoAutorizado(cfg.ptoVta, 1, { config: cfg }),
-        ultimoAutorizado(cfg.ptoVta, 3, { config: cfg }),
-      ])
-      ultimo = { '1': a.numero, '3': nc.numero }
+      const [a, nca, b, ncb] = await Promise.all([1, 3, 6, 8].map((t) => ultimoAutorizado(cfg.ptoVta, t, { config: cfg })))
+      ultimo = { '1': a!.numero, '3': nca!.numero, '6': b!.numero, '8': ncb!.numero }
     } catch (e) {
       errores.push(`Último autorizado: ${mensajeDe(e)}`)
     }

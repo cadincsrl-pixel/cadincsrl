@@ -60,7 +60,9 @@ export const RenglonSchema = z.object({
 })
 
 export const FacturaCabeceraSchema = z.object({
-  cbte_tipo: z.coerce.number().int(),
+  // Opcional: si no viene, el backend lo deriva del cliente (y de la factura
+  // asociada en una NC). Si viene, tiene que ser de esa letra.
+  cbte_tipo: z.coerce.number().int().optional().nullable(),
   cliente_id: z.coerce.number().int().positive(),
   producto: z.enum(['AVANCE DE OBRA', 'TRANSPORTE']).optional().default('AVANCE DE OBRA'),
   centro_costo: z.string().max(200).optional().nullable(),
