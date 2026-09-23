@@ -333,6 +333,12 @@ export const UpdateOrdenSchema = z.object({
 }).strict()
 export type UpdateOrdenDto = z.infer<typeof UpdateOrdenSchema>
 
+/** El contador marca la OP como registrada en Finnegans con su número (20260923c). */
+export const RegistrarFinnegansSchema = z.object({
+  numero_finnegans: z.string().trim().min(1).max(40),
+}).strict()
+export type RegistrarFinnegansDto = z.infer<typeof RegistrarFinnegansSchema>
+
 export const ListOrdenesQuerySchema = z.object({
   q:                 z.string().max(200).optional(),
   proveedor_id:      z.coerce.number().int().positive().optional(),
@@ -343,6 +349,8 @@ export const ListOrdenesQuerySchema = z.object({
   sin_comprobante:   BOOL_Q,
   en_cartera:        BOOL_Q,
   con_nota_credito:  BOOL_Q,
+  /** Emitidas que el contador todavía no pasó a Finnegans (20260923c). */
+  sin_registrar:     BOOL_Q,
   limit:             z.coerce.number().int().min(1).max(500).default(50),
   offset:            z.coerce.number().int().min(0).default(0),
 })

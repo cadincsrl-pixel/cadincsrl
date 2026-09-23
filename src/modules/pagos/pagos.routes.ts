@@ -35,7 +35,7 @@ import {
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
   UploadComprobantePendienteSchema, BorrarPendienteSchema,
-  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema,
+  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
 } from './pagos.schema.js'
 
@@ -203,6 +203,15 @@ pagos.post('/ordenes/:id/anular', lectura, tabPago, zValidator('json', MotivoSch
   const userId = c.get('user').id
   return pagosService.anularOrden(idParam(c), c.req.valid('json').motivo, userId, await perfilDe(userId))
 }))
+
+// Registro contable (20260923c): el contador marca la OP como pasada a
+// Finnegans con el número de allá. Mismo flag que emitir: lo tiene el
+// contador y quien paga; Compras no.
+pagos.post('/ordenes/:id/registrar-finnegans', lectura, registrarPagos, tabPago, zValidator('json', RegistrarFinnegansSchema), handler(async (c) =>
+  pagosService.registrarFinnegans(idParam(c), c.req.valid('json'), c.get('user').id)))
+
+pagos.post('/ordenes/:id/deshacer-registro', lectura, registrarPagos, tabPago, handler(async (c) =>
+  pagosService.deshacerRegistroFinnegans(idParam(c), c.get('user').id)))
 
 // Adjuntos de OP (comprobantes posteriores, PDF de NC, otro).
 // ── Aviso de pago por mail (20260921m) ─────────────────────────────────────

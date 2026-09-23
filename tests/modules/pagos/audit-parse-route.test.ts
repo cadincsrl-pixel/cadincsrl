@@ -31,6 +31,8 @@ describe('parseRoute — módulo pagos', () => {
     ['DELETE', '/api/pagos/ordenes/comprobante-pendiente',   { modulo: 'pagos', entidad: 'orden de pago', accion: 'descartar comprobante' }],
     ['POST',   '/api/pagos/ordenes/3/anular',                { modulo: 'pagos', entidad: 'orden de pago', accion: 'anular', entidadId: '3' }],
     ['PATCH',  '/api/pagos/ordenes/3',                       { modulo: 'pagos', entidad: 'orden de pago', accion: 'actualizar', entidadId: '3' }],
+    ['POST',   '/api/pagos/ordenes/3/registrar-finnegans',   { modulo: 'pagos', entidad: 'orden de pago', accion: 'registrar en Finnegans', entidadId: '3' }],
+    ['POST',   '/api/pagos/ordenes/3/deshacer-registro',     { modulo: 'pagos', entidad: 'orden de pago', accion: 'deshacer registro en Finnegans', entidadId: '3' }],
     ['DELETE', '/api/pagos/ordenes/3/adjuntos/9',            { modulo: 'pagos', entidad: 'adjunto de orden de pago', accion: 'eliminar', entidadId: '9' }],
     ['POST',   '/api/pagos/proveedores',                     { modulo: 'pagos', entidad: 'proveedor (pagos)', accion: 'crear' }],
     ['PATCH',  '/api/pagos/proveedores/7',                   { modulo: 'pagos', entidad: 'proveedor (pagos)', accion: 'actualizar', entidadId: '7' }],

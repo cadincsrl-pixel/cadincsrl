@@ -35,7 +35,7 @@ import {
   FORMAS_PAGADA_AL_CARGAR_COMPRAS, FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
   type CreateOrdenDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
-  type ImputacionDto,
+  type ImputacionDto, type RegistrarFinnegansDto,
 } from './pagos.schema.js'
 import {
   pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, BUCKET,
@@ -79,6 +79,16 @@ export function permisoPagos(p: Perfil | null, accion: 'lectura' | 'creacion' | 
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** La OP que ya tiene ese número de Finnegans (misma normalización que el índice único). */
+async function ordenConNumeroFinnegans(numero: string): Promise<{ orden_id: number; numero: number } | null> {
+  // Se guarda recortado, así que alcanza con ilike (mayúsculas) sin comodines.
+  const literal = numero.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`)
+  const { data } = await supabase.from('pagos_ordenes')
+    .select('id, numero').ilike('numero_finnegans', literal).limit(1).maybeSingle()
+  const o = data as { id: number; numero: number } | null
+  return o ? { orden_id: o.id, numero: o.numero } : null
+}
 
 function palabras(q?: string): string[] {
   return normTxt(q ?? '').split(' ').filter(Boolean).slice(0, 6)
@@ -224,6 +234,7 @@ function aplicarFiltrosOrdenes(q: any, f: Omit<ListOrdenesQuery, 'limit' | 'offs
   if (esBoolQ(f.sin_comprobante)) q = q.eq('tiene_comprobante', false)
   if (esBoolQ(f.en_cartera)) q = q.eq('en_cartera', true)
   if (esBoolQ(f.con_nota_credito)) q = q.gt('monto_nc', 0)
+  if (esBoolQ(f.sin_registrar)) q = q.eq('estado', 'emitida').is('numero_finnegans', null)
   for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
   return q
 }
@@ -603,13 +614,17 @@ export const pagosService = {
   async listarOrdenes(f: ListOrdenesQuery, verPii: boolean, token: string) {
     const sb = createSupabaseClient(token)
     const q = aplicarFiltrosOrdenes(sb.from('v_pagos_ordenes').select('*', { count: 'exact' }), f)
-    const [lista, tot] = await Promise.all([
+    const [lista, tot, pendReg] = await Promise.all([
       q.order('fecha', { ascending: false }).order('numero', { ascending: false }).range(f.offset, f.offset + f.limit - 1),
       supabase.rpc('pagos_ordenes_resumen', {
         p_grupo: 'forma_pago', p_eje: 'op',
         p_desde: f.desde ?? null, p_hasta: f.hasta ?? null,
         p_proveedor_id: f.proveedor_id ?? null, p_forma_pago: f.forma_pago ?? null,
       }),
+      // Lo que el contador tiene pendiente de pasar a Finnegans, sin filtros:
+      // es un número de «cuánto me falta», no de lo que muestra la pantalla.
+      supabase.from('pagos_ordenes').select('id', { count: 'exact', head: true })
+        .eq('estado', 'emitida').is('numero_finnegans', null),
     ])
     if (lista.error) throw new PagosHttpError(500, 'DB_ERROR', lista.error.message)
     const items = ((lista.data ?? []) as Record<string, unknown>[]).map((r) => enmascararFila(r, verPii))
@@ -620,7 +635,8 @@ export const pagosService = {
       monto_pagado: sumaCentavos(grupos.map((g) => Number(g.monto_pagado ?? 0))),
       monto_nc: sumaCentavos(grupos.map((g) => Number(g.monto_nc ?? 0))),
     }
-    return { items, total, limit: f.limit, offset: f.offset, hasMore: f.offset + items.length < total, totales }
+    const sin_registrar = pendReg.error ? null : (pendReg.count ?? 0)
+    return { items, total, limit: f.limit, offset: f.offset, hasMore: f.offset + items.length < total, totales, sin_registrar }
   },
 
   /** Todas las órdenes que matchean el filtro, para el Excel. Pagina en el server. */
@@ -958,6 +974,54 @@ export const pagosService = {
     }
     return enmascararRespuesta(
       rpcOk<Record<string, unknown>>(await supabase.rpc('pagos_anular_orden', { p_orden_id: id, p_motivo: motivo, p_user_id: userId })), verPiiDe(perfil))
+  },
+
+  /**
+   * El contador marca la OP como registrada en Finnegans (20260923c). Sólo
+   * emitidas; un número de Finnegans, una OP. El `is(null)` del update hace
+   * que dos clics simultáneos no se pisen: el segundo ve ORDEN_YA_REGISTRADA.
+   */
+  async registrarFinnegans(id: number, dto: RegistrarFinnegansDto, userId: string) {
+    const numero = dto.numero_finnegans.trim()
+    if (!numero) throw errorDeCampo('NUMERO_FINNEGANS_REQUERIDO', 'numero_finnegans')
+
+    const { data, error } = await supabase.from('pagos_ordenes')
+      .select('id, estado, numero_finnegans').eq('id', id).maybeSingle()
+    if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
+    if (!data) throw new PagosHttpError(404, 'ORDEN_NO_EXISTE')
+    const o = data as { estado: string; numero_finnegans: string | null }
+    if (o.estado !== 'emitida') throw new PagosHttpError(409, 'ORDEN_ANULADA')
+    if (o.numero_finnegans) throw new PagosHttpError(409, 'ORDEN_YA_REGISTRADA', { numero_finnegans: o.numero_finnegans })
+
+    const otra = await ordenConNumeroFinnegans(numero)
+    if (otra) throw new PagosHttpError(409, 'FINNEGANS_DUPLICADO', { campo: 'numero_finnegans', ...otra })
+
+    const { data: upd, error: e2 } = await supabase.from('pagos_ordenes')
+      .update({ numero_finnegans: numero, registrada_at: new Date().toISOString(), registrada_por: userId, updated_by: userId })
+      .eq('id', id).is('numero_finnegans', null)
+      .select('id, numero, numero_finnegans, registrada_at').maybeSingle()
+    if (e2) {
+      if (e2.code === '23505') {
+        throw new PagosHttpError(409, 'FINNEGANS_DUPLICADO', { campo: 'numero_finnegans', ...(await ordenConNumeroFinnegans(numero)) })
+      }
+      throw mapRpcError(e2)
+    }
+    if (!upd) throw new PagosHttpError(409, 'ORDEN_YA_REGISTRADA')
+    return upd
+  },
+
+  /** Deshacer el registro (número mal tipeado). No toca plata. */
+  async deshacerRegistroFinnegans(id: number, userId: string) {
+    const { data, error } = await supabase.from('pagos_ordenes')
+      .update({ numero_finnegans: null, registrada_at: null, registrada_por: null, updated_by: userId })
+      .eq('id', id).not('numero_finnegans', 'is', null)
+      .select('id, numero').maybeSingle()
+    if (error) throw mapRpcError(error)
+    if (!data) {
+      const { data: existe } = await supabase.from('pagos_ordenes').select('id').eq('id', id).maybeSingle()
+      throw existe ? new PagosHttpError(409, 'ORDEN_NO_REGISTRADA') : new PagosHttpError(404, 'ORDEN_NO_EXISTE')
+    }
+    return data
   },
 
   // ═══════════════════════════════════ Catálogos ══════════════════════════════
