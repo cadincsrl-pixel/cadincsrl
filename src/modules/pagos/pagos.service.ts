@@ -32,7 +32,7 @@ import {
 } from './pagos.util.js'
 import {
   esBoolQ, ESTADOS_FACTURA, CAMPOS_CONGELADOS, CAMPOS_QUE_DESAPRUEBAN,
-  FORMAS_PAGADA_AL_CARGAR_COMPRAS, FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
+  FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
   type CreateOrdenDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
   type ImputacionDto, type RegistrarFinnegansDto,
@@ -381,9 +381,14 @@ export const pagosService = {
   },
 
   /**
-   * POST /facturas. Valida, y si viene `orden` («Ya está pagada»), valida la
-   * forma según quién carga (decisión 3: compras solo tarjeta/efectivo, admin
-   * cualquiera; SIN tope de monto) y hashea el comprobante ANTES de la RPC.
+   * POST /facturas. Valida, y si viene `orden` («Ya está pagada»), exige
+   * `registrar_pagos` (o admin) y hashea el comprobante ANTES de la RPC.
+   *
+   * Hasta el 2026-09-23 Compras podía marcarla con tarjeta o efectivo
+   * (decisión 3). El dueño lo cerró: «que Nicolás lo pueda cargar no me
+   * parece, porque no está autorizada». Marcar «ya está pagada» es registrar
+   * un pago, y registrar pagos es de quien tiene el flag, igual que emitir
+   * una OP. Con el flag, cualquier forma.
    * `pagos_crear_factura` inserta factura + imputaciones (+ OP de una línea
    * `factura` por el total, que deja la factura `pagada` sin revisar).
    */
@@ -394,10 +399,10 @@ export const pagosService = {
     let pOrden: Record<string, unknown> | null = null
     if (dto.orden) {
       const o = dto.orden
-      if (dto.paga_cliente) throw new PagosHttpError(409, 'FACTURA_PAGA_CLIENTE', { campo: 'orden' })
-      if (!esAdmin(perfil) && !(FORMAS_PAGADA_AL_CARGAR_COMPRAS as readonly string[]).includes(o.forma_pago)) {
-        throw new PagosHttpError(403, 'PAGADA_AL_CARGAR_FORMA', { forma_pago: o.forma_pago, permitidas: FORMAS_PAGADA_AL_CARGAR_COMPRAS })
+      if (!esAdmin(perfil) && !flagPagos(perfil, 'registrar_pagos')) {
+        throw new PagosHttpError(403, 'PAGADA_AL_CARGAR_SIN_PERMISO', { flag: 'registrar_pagos' })
       }
+      if (dto.paga_cliente) throw new PagosHttpError(409, 'FACTURA_PAGA_CLIENTE', { campo: 'orden' })
       if (o.fecha > hoyAR()) throw errorDeCampo('FECHA_FUTURA', 'orden.fecha', { hoy: hoyAR() })
       validarCheques(o.forma_pago, o.cheques, o.fecha, dto.total, 'orden.')
       if (o.fecha_cobro && o.fecha_cobro < o.fecha) throw errorDeCampo('FECHA_COBRO_INVALIDA', 'orden.fecha_cobro')

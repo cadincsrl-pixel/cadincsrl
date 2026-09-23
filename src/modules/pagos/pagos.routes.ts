@@ -99,8 +99,8 @@ pagos.get('/facturas/:id', lectura, tabPago, handler(async (c) =>
 // Las respuestas de las mutaciones traen la fila de la vista (CBU/alias del
 // proveedor): el service las enmascara sin `ver_pii`, igual que los GET.
 
-// Cargar factura. Con `orden` («Ya está pagada»): compras solo tarjeta/efectivo,
-// admin cualquier forma; sin tope de monto (decisión 3).
+// Cargar factura. Con `orden` («Ya está pagada») hace falta registrar_pagos o
+// admin (2026-09-23; antes Compras podía con tarjeta/efectivo, decisión 3).
 pagos.post('/facturas', creacion, tabFactura, zValidator('json', CreateFacturaSchema), handler(async (c) => {
   const userId = c.get('user').id
   return pagosService.crearFactura(c.req.valid('json'), userId, await perfilDe(userId))

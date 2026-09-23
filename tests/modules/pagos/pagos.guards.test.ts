@@ -73,6 +73,8 @@ const ADMIN     = perfil(null, 'admin')
 const COMPRAS   = perfil({ lectura: true, creacion: true, actualizacion: true, ver_pii: true, tabs: ['facturas', 'proveedores'] })
 const APROBADOR = perfil({ lectura: true, aprobar_facturas: true, tabs: ['facturas'] })
 const DIEGO     = perfil({ lectura: true, creacion: true, actualizacion: true, aprobar_facturas: true, ver_pii: true })
+/** Carga Y registra pagos: el único (con el admin) que puede marcar «ya está pagada» desde 2026-09-23. */
+const CARGA_Y_PAGA = perfil({ lectura: true, creacion: true, registrar_pagos: true, ver_pii: true, tabs: ['facturas', 'pagos', 'proveedores'] })
 const CONTADOR  = perfil({ lectura: true, registrar_pagos: true, anular_pagos: true, ver_pii: true, tabs: ['facturas', 'pagos', 'proveedores'] })
 const CONTADOR_SIN_ANULAR = perfil({ lectura: true, registrar_pagos: true, ver_pii: true, tabs: ['facturas', 'pagos', 'proveedores'] })
 
@@ -228,11 +230,24 @@ describe('separación de funciones', () => {
   })
 })
 
-// ── «Ya está pagada» al cargar (decisión 3: sin tope, restricción por forma) ─
+// ── «Ya está pagada» al cargar: sólo con registrar_pagos (2026-09-23) ───────
 
 describe('«ya está pagada» al cargar', () => {
-  it('compras con tarjeta por $1.000.000 pasa (sin tope) y la factura nace sin vencimiento', async () => {
+  it('compras sin registrar_pagos rebota PAGADA_AL_CARGAR_SIN_PERMISO, aunque sea efectivo', async () => {
     state.profile = COMPRAS
+    const res = await post('/facturas', { ...FACTURA_BASE, orden: { fecha: HOY, forma_pago: 'efectivo' } })
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'PAGADA_AL_CARGAR_SIN_PERMISO', detail: { flag: 'registrar_pagos' } })
+    expect(llamada('pagos_crear_factura')).toBeUndefined()
+  })
+
+  it('compras SIN «ya está pagada» sigue cargando facturas', async () => {
+    state.profile = COMPRAS
+    expect((await post('/facturas', FACTURA_BASE)).status).toBe(200)
+  })
+
+  it('con registrar_pagos: tarjeta por $1.000.000 pasa (sin tope) y la factura nace sin vencimiento', async () => {
+    state.profile = CARGA_Y_PAGA
     const res = await post('/facturas', { ...FACTURA_BASE, vence_el: HOY, orden: { fecha: HOY, forma_pago: 'tarjeta', referencia: 'visa' } })
     expect(res.status).toBe(200)
     const args = llamada('pagos_crear_factura')!
@@ -243,20 +258,15 @@ describe('«ya está pagada» al cargar', () => {
     expect(args.p_user_id).toBe('u-1')
   })
 
-  it('compras con cheque rebota PAGADA_AL_CARGAR_FORMA; el admin la carga con cualquier forma', async () => {
-    state.profile = COMPRAS
+  it('con registrar_pagos o admin, cualquier forma (ya no hay lista de formas)', async () => {
     const orden = {
       fecha: HOY, forma_pago: 'cheque', fecha_cobro: HOY,
       cheques: [{ numero: '00012345', banco: 'Macro', fecha_cobro: HOY, monto: 1_000_000 }],
     }
-    let res = await post('/facturas', { ...FACTURA_BASE, orden })
-    expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'PAGADA_AL_CARGAR_FORMA', detail: { forma_pago: 'cheque', permitidas: ['tarjeta', 'efectivo'] } })
-    expect(llamada('pagos_crear_factura')).toBeUndefined()
-
+    state.profile = CARGA_Y_PAGA
+    expect((await post('/facturas', { ...FACTURA_BASE, orden })).status).toBe(200)
     state.profile = ADMIN
-    res = await post('/facturas', { ...FACTURA_BASE, orden })
-    expect(res.status).toBe(200)
+    expect((await post('/facturas', { ...FACTURA_BASE, orden })).status).toBe(200)
   })
 
   it('transferencia sin comprobante rebota COMPROBANTE_REQUERIDO (admin incluido)', async () => {
@@ -267,7 +277,7 @@ describe('«ya está pagada» al cargar', () => {
   })
 
   it('«la paga el cliente» no se combina con «ya está pagada»', async () => {
-    state.profile = COMPRAS
+    state.profile = CARGA_Y_PAGA
     const res = await post('/facturas', { ...FACTURA_BASE, paga_cliente: true, orden: { fecha: HOY, forma_pago: 'efectivo' } })
     expect(res.status).toBe(409)
     expect(await res.json()).toMatchObject({ error: 'FACTURA_PAGA_CLIENTE', campo: 'orden' })

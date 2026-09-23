@@ -32,8 +32,6 @@ export const FORMAS_PREVISTAS = ['efectivo', 'transferencia', 'tarjeta', 'cheque
 export const FORMAS_PAGO_OP = ['efectivo', 'transferencia', 'cheque', 'echeq', 'tarjeta', 'debito_automatico', 'otro'] as const
 /** Lo que puede tener guardado una OP (el CHECK de la tabla): las de entrada + `nota_credito`, que solo pone el backend. */
 export const FORMAS_PAGO_OP_GUARDADAS = [...FORMAS_PAGO_OP, 'nota_credito'] as const
-/** «Ya está pagada» al cargar: compras (`creacion`) solo con estas dos; admin con cualquiera (decisión 3: sin tope). */
-export const FORMAS_PAGADA_AL_CARGAR_COMPRAS = ['tarjeta', 'efectivo'] as const
 /** Comprobante de pago obligatorio por forma, solo si `monto_pagado > 0`. */
 export const FORMAS_CON_COMPROBANTE_OBLIGATORIO = ['transferencia', 'echeq'] as const
 export const FORMAS_CON_FECHA_COBRO = ['cheque', 'echeq'] as const
