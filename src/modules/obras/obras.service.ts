@@ -67,13 +67,28 @@ async function syncUsuarioObrasResponsable(
   }
 }
 
+/**
+ * El cliente de la obra, plano (2026-09-23). Cada obra es su centro de costo y
+ * el cliente (`ventas_clientes`, por `cliente_id`) junta las de un mismo dueño:
+ * reemplaza a `obras.cc`, que era su nombre tipeado a mano. Se aplana a
+ * `cliente_nom` en vez de devolver el objeto embebido: hay formularios que
+ * reenvían la obra entera y un objeto anidado les rompería el PATCH.
+ */
+const SELECT_OBRA = '*, cliente:ventas_clientes(razon_social)'
+type ConCliente = { cliente?: { razon_social: string } | { razon_social: string }[] | null } & Record<string, unknown>
+function aplanarCliente<T extends ConCliente>(o: T) {
+  const { cliente, ...resto } = o
+  const c = Array.isArray(cliente) ? cliente[0] : cliente
+  return { ...resto, cliente_nom: c?.razon_social ?? null }
+}
+
 export const obrasService = {
 
   async getAll(token: string, userId: string, modulo?: string) {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('obras')
-      .select('*')
+      .select(SELECT_OBRA)
       .eq('archivada', false)
       .order('created_at')
 
@@ -91,14 +106,14 @@ export const obrasService = {
 
     const { data, error } = await q
     if (error) throw new Error(error.message)
-    return data
+    return ((data ?? []) as ConCliente[]).map(aplanarCliente)
   },
 
   async getArchivadas(token: string, userId: string, modulo?: string) {
     const supabase = createSupabaseClient(token)
     let q = supabase
       .from('obras')
-      .select('*')
+      .select(SELECT_OBRA)
       .eq('archivada', true)
       .order('fecha_archivo', { ascending: false })
 
@@ -110,7 +125,7 @@ export const obrasService = {
 
     const { data, error } = await q
     if (error) throw new Error(error.message)
-    return data
+    return ((data ?? []) as ConCliente[]).map(aplanarCliente)
   },
 
   async getByCod(cod: string, token: string, userId: string, modulo?: string) {
@@ -124,12 +139,12 @@ export const obrasService = {
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('obras')
-      .select('*')
+      .select(SELECT_OBRA)
       .eq('cod', cod)
       .single()
 
     if (error) throw new Error(error.message)
-    return data
+    return aplanarCliente(data as ConCliente)
   },
 
   async proximoCodigoPreview(): Promise<string> {
