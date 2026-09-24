@@ -141,6 +141,9 @@ export const UpdateMovimientoSchema = z.object({
   flete_obs:   z.string().nullable().optional(),
   remito:      z.string().nullable().optional(),
   obs:         z.string().nullable().optional(),
+  // Solo para SACAR el viaje de su cobro (null). Imputar va por
+  // POST /cobros/:id/imputar, que valida cliente y saldo.
+  cobro_id:    z.null().optional(),
 }).superRefine((v, ctx) => {
   // El create valida con superRefine; el update no validaba nada. Replicamos
   // lo que es chequeable sin el `tipo` (el update no permite cambiar el tipo,
@@ -287,6 +290,12 @@ export const UpdateCobroSchema = z.object({
   obs:   z.string().nullable().optional(),
 })
 
+// Aplica la plata a favor de un cobro ya registrado a viajes pendientes del
+// mismo cliente (RPC imputar_cobro_arido, 20260926h).
+export const ImputarCobroSchema = z.object({
+  venta_ids: z.array(z.number().int().positive()).min(1, 'Elegí al menos un viaje'),
+})
+
 export const CobrosQuerySchema = z.object({
   cliente_id: z.coerce.number().optional(),
 })
@@ -303,6 +312,7 @@ export type ListMovimientosQuery = z.infer<typeof ListMovimientosQuerySchema>
 export type CreateCobroDto       = z.infer<typeof CreateCobroSchema>
 export type UpdateCobroDto       = z.infer<typeof UpdateCobroSchema>
 export type CobrosQuery          = z.infer<typeof CobrosQuerySchema>
+export type ImputarCobroDto      = z.infer<typeof ImputarCobroSchema>
 export type CreateMunicipioDto    = z.infer<typeof CreateMunicipioSchema>
 export type UpdateMunicipioDto    = z.infer<typeof UpdateMunicipioSchema>
 export type CreateCostoCanteraDto = z.infer<typeof CreateCostoCanteraSchema>

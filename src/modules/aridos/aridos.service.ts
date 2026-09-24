@@ -1,3 +1,4 @@
+import { HTTPException } from 'hono/http-exception'
 import { supabase as supabaseAdmin, createSupabaseClient } from '../../lib/supabase.js'
 import { mobileQuestClient } from '../logistica/gps-sync/mobile-quest.client.js'
 import { geocode, distancia } from '../logistica/maps/google-maps.client.js'
@@ -6,7 +7,7 @@ import type {
   CreateClienteDto, UpdateClienteDto,
   CreatePrecioDto, UpdatePrecioDto,
   CreateMovimientoDto, UpdateMovimientoDto, ListMovimientosQuery,
-  CreateCobroDto, UpdateCobroDto, CobrosQuery,
+  CreateCobroDto, UpdateCobroDto, CobrosQuery, ImputarCobroDto,
   CreateMunicipioDto, UpdateMunicipioDto,
   CreateCostoCanteraDto, UpdateCostoCanteraDto,
   CreateCanteraDto, UpdateCanteraDto,
@@ -21,6 +22,24 @@ const MOV_SELECT = `*,
   aridos_municipios(nombre, recargo_pct),
   aridos_canteras(nombre),
   aridos_unidades(nombre, patente, chofer)`
+
+// Las reglas entre cobros y viajes viven en la base (triggers de 20260926h):
+// un viaje cobrado no cambia de cliente ni de importe ni se borra, un cobro no
+// paga viajes de otro cliente ni más de lo que vale. Acá solo se traducen a un
+// 409 con un texto que la pantalla muestra tal cual.
+const ERRORES_COBRO: Record<string, string> = {
+  VENTA_COBRADA:          'Este viaje ya está en un cobro. Sacalo del cobro antes de cambiarle el cliente o el importe, o de borrarlo.',
+  COBRO_DE_OTRO_CLIENTE:  'Ese viaje es de otro cliente: no se puede pagar con este cobro.',
+  COBRO_SIN_SALDO:        'Al cobro no le alcanza la plata para esos viajes.',
+  COBRO_MENOR_A_IMPUTADO: 'El monto no puede quedar por debajo de lo que ya se aplicó a viajes.',
+  COBRO_CON_VIAJES:       'El cobro tiene viajes aplicados: no puede cambiar de cliente.',
+  VIAJE_NO_IMPUTABLE:     'Alguno de los viajes ya está en otro cobro. Refrescá la pantalla.',
+  COBRO_NO_EXISTE:        'El cobro no existe.',
+}
+function errorDeCobro(message: string): Error {
+  const code = Object.keys(ERRORES_COBRO).find(k => message.includes(k))
+  return code ? new HTTPException(409, { message: ERRORES_COBRO[code] }) : new Error(message)
+}
 
 // Normaliza patente para matchear contra Mobile Quest (mismo criterio
 // que el gps-sync de logística): uppercase, solo alfanuméricos.
@@ -333,14 +352,14 @@ export const aridosService = {
       .eq('id', id)
       .select(MOV_SELECT)
       .single()
-    if (error) throw new Error(error.message)
+    if (error) throw errorDeCobro(error.message)
     return data
   },
 
   async deleteMovimiento(id: number, token: string) {
     const supabase = createSupabaseClient(token)
     const { error } = await supabase.from('aridos_movimientos').delete().eq('id', id)
-    if (error) throw new Error(error.message)
+    if (error) throw errorDeCobro(error.message)
     return { success: true }
   },
 
@@ -677,16 +696,23 @@ export const aridosService = {
   // ── Cobros ──────────────────────────────────────────────────
   async getCobros(query: CobrosQuery, token: string) {
     const supabase = createSupabaseClient(token)
-    return fetchAll((from, to) => {
+    const cobros = await fetchAll<{ monto: number; aridos_movimientos: { id: number; importe: number | null }[] | null }>((from, to) => {
       let q = supabase
         .from('aridos_cobros')
-        .select('*, aridos_clientes(nombre)')
+        .select('*, aridos_clientes(nombre), aridos_movimientos(id, importe)')
         .order('fecha', { ascending: false })
         .order('id', { ascending: false })
         .range(from, to)
       if (query.cliente_id) q = q.eq('cliente_id', query.cliente_id)
       return q
     })
+    // `imputado` = lo aplicado a viajes; monto − imputado es la plata a favor
+    // que todavía se puede aplicar (POST /cobros/:id/imputar).
+    return cobros.map(({ aridos_movimientos: viajes, ...c }) => ({
+      ...c,
+      viajes_ids: (viajes ?? []).map(v => v.id),
+      imputado:   (viajes ?? []).reduce((s, v) => s + Number(v.importe ?? 0), 0),
+    }))
   },
 
   async createCobro(dto: CreateCobroDto, token: string, userId: string) {
@@ -711,7 +737,7 @@ export const aridosService = {
       if (error.message.includes('MONTO_INSUFICIENTE')) {
         throw new Error('El monto del cobro no cubre los remitos seleccionados. Ajustá el monto o destildá remitos.')
       }
-      throw new Error(error.message)
+      throw errorDeCobro(error.message)
     }
 
     // La RPC devuelve la fila del cobro; re-fetch con el join del cliente
@@ -734,8 +760,21 @@ export const aridosService = {
       .eq('id', id)
       .select('*, aridos_clientes(nombre)')
       .single()
-    if (error) throw new Error(error.message)
+    if (error) throw errorDeCobro(error.message)
     return data
+  },
+
+  async imputarCobro(id: number, dto: ImputarCobroDto, userId: string) {
+    // SECURITY DEFINER → cliente admin (CLAUDE.md §9). La RPC valida que los
+    // viajes sean del cliente del cobro, que estén pendientes y que el cobro
+    // alcance; si uno falla no se imputa ninguno.
+    const { data, error } = await supabaseAdmin.rpc('imputar_cobro_arido', {
+      p_cobro_id:  id,
+      p_venta_ids: dto.venta_ids,
+      p_user_id:   userId,
+    })
+    if (error) throw errorDeCobro(error.message)
+    return { imputados: data as number }
   },
 
   async deleteCobro(id: number, token: string) {

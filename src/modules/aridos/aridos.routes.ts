@@ -13,7 +13,7 @@ import {
   CreateClienteSchema, UpdateClienteSchema,
   CreatePrecioSchema, UpdatePrecioSchema,
   CreateMovimientoSchema, UpdateMovimientoSchema, ListMovimientosQuerySchema,
-  CreateCobroSchema, UpdateCobroSchema, CobrosQuerySchema,
+  CreateCobroSchema, UpdateCobroSchema, CobrosQuerySchema, ImputarCobroSchema,
   CreateMunicipioSchema, UpdateMunicipioSchema,
   CreateCostoCanteraSchema, UpdateCostoCanteraSchema,
   CreateCanteraSchema, UpdateCanteraSchema,
@@ -385,6 +385,10 @@ aridos.post('/cobros', zValidator('json', CreateCobroSchema), async (c) => {
 
 aridos.patch('/cobros/:id', zValidator('json', UpdateCobroSchema), async (c) => {
   return c.json(await aridosService.updateCobro(Number(c.req.param('id')), c.req.valid('json'), c.get('accessToken'), c.get('user').id))
+})
+
+aridos.post('/cobros/:id/imputar', zValidator('json', ImputarCobroSchema), async (c) => {
+  return c.json(await aridosService.imputarCobro(Number(c.req.param('id')), c.req.valid('json'), c.get('user').id))
 })
 
 aridos.delete('/cobros/:id', async (c) => {
