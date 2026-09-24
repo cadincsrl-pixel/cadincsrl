@@ -250,10 +250,16 @@ export function validarCompra(c: CompraLid): Validacion[] {
     const suma = ce(c.neto) + ce(c.no_gravado) + ce(c.exento) + ce(c.iva) + ce(c.perc_iva) + ce(c.perc_nacionales)
       + ce(c.perc_iibb) + ce(c.perc_municipales) + ce(c.impuestos_internos) + ce(c.otros_tributos)
     const dif = suma - ce(c.total)
-    if (dif !== 0) {
+    if (Math.abs(dif) === 1) {
+      // Decisión del dueño (24/09, la #19 Zeramiko): el centavo de redondeo del
+      // proveedor se acepta tal como está en el papel, no se inventa un no gravado.
+      v.push({ comprobante: id, severidad: 'advertencia', mensaje:
+        `Diferencia de redondeo del proveedor: las partes suman ${pesos(suma)} y el total impreso es ${pesos(ce(c.total))}. ` +
+        'Se informa como está en el papel; si el importador del LID la rechaza, ajustá el centavo a mano al importar.' })
+    } else if (dif !== 0) {
       v.push({ comprobante: id, severidad: 'error', mensaje:
         `No cierra: neto + no gravado + exento + IVA + percepciones + tributos = ${pesos(suma)} y el total es ${pesos(ce(c.total))} (diferencia ${pesos(dif)}). ` +
-        'El LID exige que el total sea la suma de sus partes' + (Math.abs(dif) <= 5 ? ': si es el redondeo del proveedor, cargá la diferencia como no gravado.' : '.') })
+        'El LID exige que el total sea la suma de sus partes.' })
     }
     const netoAl = c.alicuotas.reduce((s, a) => s + ce(a.neto), 0)
     const ivaAl = c.alicuotas.reduce((s, a) => s + ce(a.iva), 0)

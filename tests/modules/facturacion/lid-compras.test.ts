@@ -96,11 +96,13 @@ describe('armarLibroCompras', () => {
     expect(libro.validaciones[0]!.mensaje).toMatch(/desglose/)
   })
 
-  it('no cierra por un centavo: error, pero se informa', () => {
-    const f = { ...CENCOSUD, total: '152609.60' }
-    const libro = armarLibroCompras('2026-09', [conFila(f)])
-    expect(libro.resumen.comprobantes).toBe(1)
-    expect(libro.validaciones.some(v => v.severidad === 'error' && /No cierra/.test(v.mensaje))).toBe(true)
+  it('un centavo de redondeo del proveedor: advertencia y se informa; dos centavos: error', () => {
+    const uno = armarLibroCompras('2026-09', [conFila({ ...CENCOSUD, total: '152609.60' })])
+    expect(uno.resumen.comprobantes).toBe(1)
+    expect(uno.validaciones.filter(v => v.severidad === 'error')).toEqual([])
+    expect(uno.validaciones.some(v => v.severidad === 'advertencia' && /redondeo/.test(v.mensaje))).toBe(true)
+    const dos = armarLibroCompras('2026-09', [conFila({ ...CENCOSUD, total: '152609.61' })])
+    expect(dos.validaciones.some(v => v.severidad === 'error' && /No cierra/.test(v.mensaje))).toBe(true)
   })
 
   it('número sin guion y CUIT inválida quedan fuera con error; el ticket no va y NO deja la posición incompleta', () => {
