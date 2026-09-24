@@ -674,10 +674,10 @@ export const pagosService = {
     // nació 'pagada' con su orden), queda como nació y alguien la aprueba
     // después. Un error acá NO puede tirar abajo una carga que ya se guardó.
     //
-    // Una NOTA DE CRÉDITO no nace aprobada (24/09): aprobarla BAJA deuda, y
-    // eso no se hace con la misma firma de quien la cargó sin que pase por
-    // «para aprobar». Con `aprobar_propias` la puede aprobar él mismo con un clic.
-    if (dto.clase !== 'nota_credito' && flagPagos(perfil, 'aprobar_facturas') && flagPagos(perfil, 'aprobar_propias')) {
+    // Vale igual para una NOTA DE CRÉDITO (decisión del dueño, 24/09): nace
+    // aprobada y baja la deuda en el acto. Las firmas que controlan la plata
+    // (no pagar lo propio ni lo aprobado) no ceden.
+    if (flagPagos(perfil, 'aprobar_facturas') && flagPagos(perfil, 'aprobar_propias')) {
       try {
         const aprobada = rpcOk<Record<string, unknown>>(
           await supabase.rpc('pagos_aprobar_factura', { p_factura_id: facturaId, p_user_id: userId }))
