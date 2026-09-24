@@ -2,7 +2,10 @@
  * Libro IVA Digital de Compras del período (RG 4597) y posición de IVA del mes.
  *
  * Lee las facturas de proveedor del módulo Compras (`pagos_facturas`, no
- * anuladas, por fecha del comprobante) con su desglose (`pagos_factura_iva`,
+ * anuladas) POR PERÍODO IVA, NO POR FECHA (20260927a, pedido del contador
+ * 24/09): `periodo_iva` es el mes en que el comprobante se informa; por
+ * default el de la fecha, corrido si ese mes ya estaba cerrado o si llegó
+ * tarde. Con su desglose (`pagos_factura_iva`,
  * `pagos_factura_tributos`) y arma los archivos con las funciones puras de
  * `lid-compras.ts`. Es el ÚNICO lugar donde Ventas lee datos de Compras
  * (decisión del dueño del 24/09: los impuestos se llevan en el ERP, en la tab
@@ -39,9 +42,11 @@ export const lidComprasService = {
     // 2026-09-25 (clase = 'nota_credito', con su código 003/008/013/…): entran
     // solas por esta misma query y `armarLibroCompras` las resta por el tipo.
     const facturas = await todasLasFilas<FilaFacturaCompra>((d, h) => db.from('pagos_facturas')
-      .select('id, tipo_comprobante, cbte_tipo_arca, numero, fecha, neto, iva, no_gravado, exento, total, estado, paga_cliente, desglose_a_revisar, proveedor:pagos_proveedores(razon_social, cuit), iva_detalle:pagos_factura_iva(alicuota_id, base_imp, importe), tributos:pagos_factura_tributos(tipo, importe)')
+      .select('id, tipo_comprobante, cbte_tipo_arca, numero, fecha, neto, iva, no_gravado, exento, total, estado, paga_cliente, desglose_a_revisar, periodo_iva, tributos_a_revisar, proveedor:pagos_proveedores(razon_social, cuit), iva_detalle:pagos_factura_iva(alicuota_id, base_imp, importe), tributos:pagos_factura_tributos(tipo, importe)')
       .neq('estado', 'anulada')
-      .gte('fecha', r.desde).lte('fecha', r.hasta)
+      // Por período IVA (día 1 del mes), no por fecha: una factura de agosto
+      // informada en septiembre entra en el libro de septiembre.
+      .eq('periodo_iva', r.desde)
       .order('id').range(d, h) as unknown as Resp<FilaFacturaCompra>)
     return armarLibroCompras(periodo, facturas.map(f => ({ ...desdeFacturaCompra(f), fila: f })))
   },

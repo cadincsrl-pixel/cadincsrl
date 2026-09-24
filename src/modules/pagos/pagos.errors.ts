@@ -94,8 +94,18 @@ const STATUS_POR_CODIGO: Record<string, number> = {
   PROVEEDOR_SIN_CUIT: 400, CONDICION_IVA_INVALIDA: 400, PROVEEDOR_INVALIDO: 400,
   // Foto del cheque (20260925p)
   CHEQUE_ILEGIBLE: 422,
+  // Período IVA (20260927a)
+  PERIODO_IVA_INVALIDO: 400, PERIODO_IVA_ANTERIOR_A_FECHA: 400, PERIODO_IVA_CERRADO: 409,
+  // Importador de ARCA recibidos e imputación (20260927b/c). Los errores POR
+  // FILA (TIPO_NO_SOPORTADO, RANGO_DE_NUMEROS, EMISOR_SIN_CUIT…) viajan dentro
+  // de la respuesta, no como HTTP; IMPORTACION_CON_ERRORES los lleva en detail.
+  SIN_FILAS: 400, DEMASIADAS_FILAS: 400, ARCHIVO_ILEGIBLE: 400,
+  FACTURA_SIN_IMPUTAR: 409, FACTURA_YA_IMPUTADA: 409, TRIBUTOS_A_REVISAR: 409,
+  IMPORTACION_CON_ERRORES: 422,
+  // Pagadas en lote con tarjeta / billetera (20260927h)
+  FORMA_NO_COINCIDE_CUENTA: 400, FECHA_ANTERIOR_A_FACTURA: 400, FACTURA_SIN_SALDO: 409, FACTURA_YA_APROBADA: 409,
   // 500: nunca deberían llegar al front (guards de la base contra escrituras a mano)
-  APROBACION_SOLO_RPC: 500,
+  APROBACION_SOLO_RPC: 500, SIN_IMPUTAR_SOLO_IMPORTADOR: 500, IMPUTAR_SOLO_RPC: 500,
 }
 
 function parseDetail(details: unknown): unknown {

@@ -83,7 +83,8 @@ describe('GET /lid-compras', () => {
     expect(b.resumen).toMatchObject({ comprobantes: 1, credito_fiscal: 24464.13, perc_iva: 3494.88 })
     expect(b.archivos.cbte.split('\r\n')[0]).toHaveLength(325)
     expect(filtros).toEqual(expect.arrayContaining([
-      ['pagos_facturas', 'gte:fecha', '2026-09-01'], ['pagos_facturas', 'lte:fecha', '2026-09-30'],
+      // Por período IVA, no por fecha (20260927a).
+      ['pagos_facturas', 'eq:periodo_iva', '2026-09-01'],
     ]))
     // Las NC son comprobantes de pagos_facturas: ya no se leen las líneas de OP.
     expect(filtros.some(f => f[0] === 'pagos_orden_lineas')).toBe(false)

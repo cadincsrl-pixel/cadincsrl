@@ -48,7 +48,7 @@ import {
   RegistrarCobroSchema, ImputarSchema, CompensarSchema, AnularCobroSchema, AnularImputacionSchema,
   ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema, AdjuntoCobroSchema,
   PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
-  CreateExternoSchema, UpdateExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
+  CreateExternoSchema, UpdateExternoSchema, LiquidoExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
@@ -369,6 +369,11 @@ fact.post('/externos', creacion, tabSaldos, valida('json', CreateExternoSchema),
 
 fact.patch('/externos/:id', actualizacion, tabSaldos, valida('json', UpdateExternoSchema), handler(async (c) =>
   externosService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+// Líquido de una CVLP (20260927d): lo usa el motor de asientos. Se carga desde
+// Saldos iniciales o desde Impuestos.
+fact.patch('/externos/:id/liquido', actualizacion, requireTab(MOD, ['saldos_iniciales', 'impuestos']), valida('json', LiquidoExternoSchema), handler(async (c) =>
+  externosService.liquido(idParam(c), c.req.valid('json').liquido, uid(c), db(c))))
 
 fact.delete('/externos/:id', eliminacion, tabSaldos, handler(async (c) => {
   await externosService.borrar(idParam(c), db(c))

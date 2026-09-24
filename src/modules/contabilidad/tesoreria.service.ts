@@ -22,7 +22,7 @@ const COLS = 'id, tipo, nombre, banco, cbu, alias, moneda, cuenta_id, ventas_cue
 type FilaDb = Record<string, unknown> & { cuenta?: { codigo: string; nombre: string } | { codigo: string; nombre: string }[] | null }
 
 export interface TesoreriaCuenta {
-  id: number; tipo: 'banco' | 'caja' | 'valores'; nombre: string; banco: string; cbu: string | null; alias: string | null
+  id: number; tipo: 'banco' | 'caja' | 'valores' | 'tarjeta' | 'billetera'; nombre: string; banco: string; cbu: string | null; alias: string | null
   moneda: 'ARS' | 'USD'; cuenta_id: number | null; cuenta_codigo: string | null; cuenta_nombre: string | null
   ventas_cuenta_id: number | null; activo: boolean; obs: string; created_at: string; updated_at: string
 }
@@ -33,14 +33,20 @@ function aplanar(f: FilaDb): TesoreriaCuenta {
   return { ...(resto as unknown as TesoreriaCuenta), cuenta_codigo: c?.codigo ?? null, cuenta_nombre: c?.nombre ?? null }
 }
 
+/** Tipos que llevan CBU (o CVU, en la billetera) y alias (20260927h). */
+export const TIPOS_CON_CBU = ['banco', 'billetera'] as const
+export const llevaCbu = (tipo: string) => (TIPOS_CON_CBU as readonly string[]).includes(tipo)
+
 /**
- * CBU y alias solo en bancos (CHECK de la tabla). CBU con verificadores
+ * CBU y alias solo en bancos y billeteras (CHECK de la tabla; la billetera
+ * lleva el CVU, que se valida igual que un CBU). CBU con verificadores
  * (`cbu_valido()` de la base); alias 6 a 20 letras, números, punto o guion.
+ * La tarjeta de crédito no lleva ninguno: `banco` es el emisor.
  */
 export function validarDatosBanco(tipo: string, cbu: string | null | undefined, alias: string | null | undefined): { cbu: string | null; alias: string | null } {
   const c = cbu ? normCbu(cbu) : null
   const a = alias?.trim() ? alias.trim() : null
-  if (tipo !== 'banco') {
+  if (!llevaCbu(tipo)) {
     if (c) throw errorDeCampo('CBU_INVALIDO', 'cbu', { motivo: 'solo_bancos' })
     if (a) throw errorDeCampo('ALIAS_INVALIDO', 'alias', { motivo: 'solo_bancos' })
     return { cbu: null, alias: null }
@@ -101,8 +107,8 @@ export const tesoreriaService = {
     const tipo = dto.tipo ?? a.tipo
     if (dto.tipo !== undefined || dto.cbu !== undefined || dto.alias !== undefined) {
       // Pasar de banco a caja limpia CBU y alias si no se mandan.
-      const cbuIn = dto.cbu !== undefined ? dto.cbu : (tipo === 'banco' ? a.cbu : null)
-      const aliasIn = dto.alias !== undefined ? dto.alias : (tipo === 'banco' ? a.alias : null)
+      const cbuIn = dto.cbu !== undefined ? dto.cbu : (llevaCbu(tipo) ? a.cbu : null)
+      const aliasIn = dto.alias !== undefined ? dto.alias : (llevaCbu(tipo) ? a.alias : null)
       const v = validarDatosBanco(tipo, cbuIn, aliasIn)
       upd.tipo = tipo
       upd.cbu = v.cbu

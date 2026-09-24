@@ -102,6 +102,22 @@ async function ordenConNumeroFinnegans(numero: string): Promise<{ orden_id: numb
   return o ? { orden_id: o.id, numero: o.numero } : null
 }
 
+/** 'YYYY-MM-DD' → 'YYYY-MM-01'. */
+export function mesDe(fecha: string): string {
+  return `${fecha.slice(0, 7)}-01`
+}
+
+/**
+ * Período IVA contra la fecha del comprobante (20260927a): nunca anterior al
+ * mes de la fecha. La base lo repite (CHECK + trigger); acá sale con el campo.
+ */
+export function validarPeriodoIva(periodoIva: string | null | undefined, fecha: string): void {
+  if (periodoIva == null) return
+  if (periodoIva < mesDe(fecha)) {
+    throw errorDeCampo('PERIODO_IVA_ANTERIOR_A_FECHA', 'periodo_iva', { periodo_iva: periodoIva, fecha })
+  }
+}
+
 function palabras(q?: string): string[] {
   return normTxt(q ?? '').split(' ').filter(Boolean).slice(0, 6)
 }
@@ -316,6 +332,13 @@ function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'li
   if (f.clase) q = q.eq('clase', f.clase)
   if (esBoolQ(f.con_credito)) q = q.gt('nc_disponible', 0)
   if (f.concepto_id) q = q.eq('concepto_id', f.concepto_id)
+  // Período IVA (20260927a) y lo importado de ARCA (20260927b).
+  if (f.periodo_iva) q = q.eq('periodo_iva', `${f.periodo_iva}-01`)
+  if (f.periodo_iva_distinto !== undefined) q = q.eq('periodo_iva_distinto', esBoolQ(f.periodo_iva_distinto))
+  if (f.sin_imputar !== undefined) q = q.eq('sin_imputar', esBoolQ(f.sin_imputar))
+  if (f.tributos_a_revisar !== undefined) q = q.eq('tributos_a_revisar', esBoolQ(f.tributos_a_revisar))
+  if (f.origen_carga) q = q.eq('origen_carga', f.origen_carga)
+  if (f.importacion_id) q = q.eq('importacion_id', f.importacion_id)
   // Facturas cuyas obras están TODAS archivadas: solo con el tilde.
   if (!esBoolQ(f.archivadas)) q = q.or('todas_archivadas.is.null,todas_archivadas.eq.false')
   for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
@@ -484,6 +507,8 @@ export const pagosService = {
       p_archivadas:   esBoolQ(f.archivadas),
       p_paga_cliente: f.paga_cliente === undefined ? null : esBoolQ(f.paga_cliente),
       p_clase:        f.clase ?? null,
+      p_sin_imputar:  f.sin_imputar === undefined ? null : esBoolQ(f.sin_imputar),
+      p_concepto_id:  f.concepto_id ?? null,
     })
     // Cada grupo trae `facturas` (solo facturas), `notas_credito` y `total` /
     // `imputable` con signo (la NC resta).
@@ -577,6 +602,7 @@ export const pagosService = {
     // El schema ya lo frena; se repite porque es plata: una NC no se paga.
     if (esNc && dto.orden) throw new PagosHttpError(409, 'NC_NO_SE_PAGA', { campo: 'orden' })
     validarImportes(dto, dto.imputaciones, { validarFecha: true })
+    validarPeriodoIva(dto.periodo_iva, dto.fecha)
     const ef = importesEfectivos(dto)
 
     // «Archivo primero» (20260924u): la lectura se toma de la base, nunca del
@@ -633,6 +659,8 @@ export const pagosService = {
       obs: dto.obs ?? '', paga_cliente: dto.paga_cliente,
       plan_cheques: dto.plan_cheques ?? null,
       clase: dto.clase,
+      // Null: la base pone el sugerido (mes de la fecha, o el primer mes abierto).
+      periodo_iva: dto.periodo_iva ?? null,
       aplica_a: esNc ? (dto.aplica_a ?? []).map((a) => ({ factura_id: a.factura_id, monto: aCentavos(a.monto) })) : null,
       lectura_estado: lectura?.estado ?? 'manual',
       lectura_json: lectura ? {
@@ -722,7 +750,7 @@ export const pagosService = {
   async editarFactura(id: number, dto: UpdateFacturaDto, userId: string, verPii: boolean) {
     const { data: actual, error: e0 } = await supabase
       .from('pagos_facturas')
-      .select('id, estado, clase, proveedor_id, fecha, vence_el, neto, iva, percepciones, otros, no_gravado, exento, total, aprobada_at')
+      .select('id, estado, clase, proveedor_id, fecha, vence_el, neto, iva, percepciones, otros, no_gravado, exento, total, aprobada_at, periodo_iva, sin_imputar')
       .eq('id', id).maybeSingle()
     if (e0) throw new PagosHttpError(500, 'DB_ERROR', e0.message)
     if (!actual) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
@@ -734,6 +762,12 @@ export const pagosService = {
     // congela lo que mueve plata (la RPC lo repite).
     const conPagos = a.estado === 'pagada' || a.estado === 'pagada_parcial'
     const { imputaciones, motivo, ...campos } = dto
+    // Importada de ARCA sin imputar (20260927b): el reparto va por
+    // POST /facturas/:id/imputar (con el concepto). Misma regla que la RPC.
+    if (a.sin_imputar && imputaciones) throw new PagosHttpError(409, 'FACTURA_SIN_IMPUTAR', { factura_id: id, usar: 'imputar' })
+    // Período IVA contra la fecha que va a quedar (20260927a). Si solo cambia
+    // la fecha, el trigger de la base recalcula el período.
+    if (campos.periodo_iva !== undefined) validarPeriodoIva(campos.periodo_iva, String(campos.fecha ?? a.fecha))
     if (campos.aplica_a !== undefined) {
       // Las reglas de la RPC adelantadas al campo (misma respuesta).
       if (!esNc) throw errorDeCampo('CAMPO_NO_EDITABLE', 'aplica_a')
@@ -811,9 +845,11 @@ export const pagosService = {
 
   /** «No aprobás lo que cargaste» (admin exento). La RPC decide aprobar vs sellar una pagada al cargar. */
   async aprobarFactura(id: number, userId: string, perfil: Perfil | null) {
-    const { data: f, error } = await supabase.from('pagos_facturas').select('id, created_by, estado').eq('id', id).maybeSingle()
+    const { data: f, error } = await supabase.from('pagos_facturas').select('id, created_by, estado, sin_imputar').eq('id', id).maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
+    // Sin concepto ni reparto no hay costo que validar (20260927b). La RPC lo repite.
+    if ((f as { sin_imputar?: boolean }).sin_imputar) throw new PagosHttpError(409, 'FACTURA_SIN_IMPUTAR', { factura_id: id })
     // La doble firma cede ante `aprobar_propias` (20260921f). Acá se adelanta
     // el error al formulario; la RPC repite la regla y es la que manda.
     if ((f as { created_by: string | null }).created_by === userId
@@ -1357,6 +1393,18 @@ export const pagosService = {
 
   // ═══════════════════════════════════ Catálogos ══════════════════════════════
 
+  /**
+   * GET /facturas/periodo-iva-sugerido (20260927a): el mes en que se
+   * informaría un comprobante de esa fecha. Es el de la fecha, salvo que ese
+   * mes esté cerrado en Contabilidad (lectura de `cont_periodos`, excepción
+   * de solo lectura a §5.18): ahí, el primer mes abierto siguiente.
+   */
+  async periodoIvaSugerido(fecha: string): Promise<{ periodo_iva: string; corrido: boolean }> {
+    const r = rpcOk<string | null>(await supabase.rpc('_pagos_periodo_iva_sugerido', { p_fecha: fecha }))
+    const periodo = r ? String(r).slice(0, 10) : mesDe(fecha)
+    return { periodo_iva: periodo, corrido: periodo !== mesDe(fecha) }
+  },
+
   /** Obras activas y archivadas como centros de costo. El módulo no depende de GET /api/obras. */
   async catalogoObras() {
     const filas = await todasLasFilas<Record<string, unknown>>((d, h) =>
@@ -1371,7 +1419,8 @@ export const pagosService = {
    */
   async cuentasOrigen(token?: string | null) {
     const sb = token ? createSupabaseClient(token) : supabase
-    const orden: Record<string, number> = { banco: 0, caja: 1, valores: 2 }
+    // Tarjetas y billeteras (20260927h) después de bancos, caja y valores.
+    const orden: Record<string, number> = { banco: 0, caja: 1, valores: 2, tarjeta: 3, billetera: 4 }
     const { data, error } = await sb.from('tesoreria_cuentas')
       .select('id, tipo, nombre, banco, moneda').eq('activo', true).order('nombre').order('id')
     if (error) throw mapRpcError(error)

@@ -59,6 +59,8 @@ export function normRubro(v: Celda): string | null {
     case 'pn': case 'patrimonio neto': case 'patrimonio': return 'pn'
     case 'ingreso': case 'ingresos': case 'resultado positivo': return 'ingreso'
     case 'egreso': case 'egresos': case 'gasto': case 'gastos': case 'resultado negativo': return 'egreso'
+    // Título «RESULTADO DEL PERIODO» del plan de Finnegans (pieza 5): madre de ingresos y gastos.
+    case 'resultado': case 'resultados': case 'resultado del periodo': case 'resultado del ejercicio': return 'resultado'
     default: return t || String(v).trim().toLowerCase()
   }
 }

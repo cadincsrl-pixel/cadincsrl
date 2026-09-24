@@ -88,6 +88,18 @@ const ConceptoId = z.number({ error: 'CONCEPTO_REQUERIDO' }).int('CONCEPTO_INVAL
 const BOOL_Q = z.enum(['1', '0', 'true', 'false']).optional()
 export const esBoolQ = (v?: string) => v === '1' || v === 'true'
 
+/**
+ * Período IVA (20260927a): el mes en que el comprobante se informa en el
+ * Libro IVA compras y la posición. Acepta 'YYYY-MM' o 'YYYY-MM-01' y
+ * devuelve siempre el día 1. Nunca anterior al mes de la fecha (lo valida el
+ * service con la fecha, y la base con un CHECK y su trigger).
+ */
+export const PeriodoIva = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])(-01)?$/, 'PERIODO_IVA_INVALIDO')
+  .transform((s) => (s.length === 7 ? `${s}-01` : s))
+
+/** Cómo entró la factura (20260927b). */
+export const ORIGENES_CARGA = ['manual', 'arca_recibidos'] as const
+
 // ── Facturas ────────────────────────────────────────────────────────────────
 
 export const ImputacionSchema = z.object({
@@ -249,6 +261,8 @@ export const CreateFacturaSchema = z.object({
   clase:               z.enum(CLASES).default('factura'),
   /** Sólo NC: a qué facturas acredita. Sin esto (o vacío), queda como crédito a favor. */
   aplica_a:            AplicaALista.nullable().optional(),
+  /** Mes en que se informa en el Libro IVA. Ausente o null: lo sugiere la base (mes de la fecha, o el primer abierto). */
+  periodo_iva:         PeriodoIva.nullable().optional(),
 }).superRefine((f, ctx) => {
   const err = (path: string, message = 'NC_TIPO_INVALIDO') => ctx.addIssue({ code: 'custom', path: [path], message })
   if (f.clase === 'nota_credito') {
@@ -307,6 +321,11 @@ export const UpdateFacturaSchema = z.object({
    * `clase` no se edita (no está en el schema: .strict la rebota).
    */
   aplica_a:            AplicaALista.optional(),
+  /**
+   * Período IVA (20260927a). Editable siempre, también pagada o aprobada: es
+   * clasificación fiscal (como `concepto_id`), no desaprueba. Sin null.
+   */
+  periodo_iva:         PeriodoIva.optional(),
 }).strict()
 export type UpdateFacturaDto = z.infer<typeof UpdateFacturaSchema>
 
@@ -383,6 +402,14 @@ export const ListFacturasQuerySchema = z.object({
   con_credito:      BOOL_Q,
   /** Concepto de la factura (20260925i). */
   concepto_id:      z.coerce.number().int().positive().optional(),
+  /** Período IVA 'YYYY-MM' (20260927a) y las informadas en otro mes que el de su fecha. */
+  periodo_iva:      z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'PERIODO_IVA_INVALIDO').optional(),
+  periodo_iva_distinto: BOOL_Q,
+  /** Importadas de ARCA sin concepto ni reparto (20260927b). Filtra solo si viene. */
+  sin_imputar:      BOOL_Q,
+  tributos_a_revisar: BOOL_Q,
+  origen_carga:     z.enum(ORIGENES_CARGA).optional(),
+  importacion_id:   z.coerce.number().int().positive().optional(),
   orden:            z.enum(FACTURAS_ORDEN).default('vencimiento'),
   limit:            z.coerce.number().int().min(1).max(500).default(50),
   offset:           z.coerce.number().int().min(0).default(0),
@@ -391,12 +418,103 @@ export type ListFacturasQuery = z.infer<typeof ListFacturasQuerySchema>
 
 /** `concepto` (20260925m): grupo = concepto_id como texto; sin concepto → 'sin_concepto'. */
 export const FACTURAS_RESUMEN_GRUPOS = ['proveedor', 'centro_costo', 'obra', 'mes_emision', 'estado', 'vencimiento', 'forma_pago', 'concepto'] as const
-// `pagos_resumen` no filtra por concepto: se saca del schema para que nadie
-// crea que el resumen lo respeta (sin esto se ignoraría en silencio).
-export const FacturasResumenQuerySchema = ListFacturasQuerySchema.omit({ orden: true, limit: true, offset: true, concepto_id: true }).extend({
+// Los filtros que `pagos_resumen` no respeta se sacan del schema para que
+// nadie crea que el resumen los aplica (se ignorarían en silencio).
+// `concepto_id` y `sin_imputar` sí los filtra desde 20260927k: los chips de
+// la bandeja tienen que contar lo mismo que la lista.
+export const FacturasResumenQuerySchema = ListFacturasQuerySchema.omit({
+  orden: true, limit: true, offset: true,
+  periodo_iva: true, periodo_iva_distinto: true, tributos_a_revisar: true, origen_carga: true, importacion_id: true,
+}).extend({
   grupo: z.enum(FACTURAS_RESUMEN_GRUPOS).default('estado'),
 })
 export type FacturasResumenQuery = z.infer<typeof FacturasResumenQuerySchema>
+
+/** GET /facturas/periodo-iva-sugerido?fecha=YYYY-MM-DD (20260927a). */
+export const PeriodoIvaSugeridoQuerySchema = z.object({ fecha: FechaISO })
+
+// ── Importador de «Mis Comprobantes Recibidos» de ARCA (20260927b/c) ────────
+
+/**
+ * Una fila ya normalizada (la arma `arca-recibidos.ts` o el navegador). Los
+ * importes pueden venir con signo (algunas exportaciones traen las NC en
+ * negativo): la base toma el valor absoluto y el signo lo da el tipo.
+ * `alicuotas` = null en el formato clásico (sin columnas por alícuota).
+ */
+export const FilaRecibidaSchema = z.object({
+  fecha:               FechaISO,
+  cbte_tipo:           z.number().int().min(1).max(999),
+  pto_vta:             z.number().int().min(0).max(99999),
+  numero:              z.number().int().min(1).max(99999999),
+  numero_hasta:        z.number().int().nullable().optional(),
+  cod_autorizacion:    z.string().max(20).nullable().optional(),
+  emisor_doc_tipo:     z.union([z.number().int(), z.string().max(20)]),
+  emisor_doc_nro:      z.string().max(20),
+  emisor_razon_social: z.string().max(200).default(''),
+  moneda:              z.string().max(5).default('PES'),
+  tipo_cambio:         z.number().positive().default(1),
+  neto_gravado:        z.number().default(0),
+  no_gravado:          z.number().default(0),
+  exento:              z.number().default(0),
+  otros_tributos:      z.number().default(0),
+  iva:                 z.number().default(0),
+  total:               z.number(),
+  alicuotas:           z.array(z.object({
+    alicuota_id: z.number().int().refine((n) => (ALICUOTA_IDS as readonly number[]).includes(n), 'ALICUOTA_INVALIDA'),
+    base_imp:    z.number(),
+    importe:     z.number(),
+  })).max(6).nullable().optional(),
+}).strict()
+export type FilaRecibidaDto = z.infer<typeof FilaRecibidaSchema>
+
+/**
+ * `filas` es el contrato de la spec (filas ya normalizadas). Además, para no
+ * duplicar el parser, el backend acepta el archivo crudo: `csv` (texto tal
+ * cual lo baja ARCA, con `;` o `,`) o `matriz` (la hoja del Excel como
+ * `sheet_to_json({ header: 1, raw: true })`). Exactamente uno de los tres.
+ */
+export const ImportarRecibidosSchema = z.object({
+  filas:       z.array(FilaRecibidaSchema).min(1).max(2000).optional(),
+  csv:         z.string().max(5_000_000).optional(),
+  matriz:      z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))).min(1).max(2100).optional(),
+  archivo:     z.string().max(255).default(''),
+  hash_sha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
+  confirmar:   z.boolean().default(false),
+}).strict().superRefine((b, ctx) => {
+  const n = [b.filas !== undefined, b.csv !== undefined, b.matriz !== undefined].filter(Boolean).length
+  if (n !== 1) ctx.addIssue({ code: 'custom', path: ['filas'], message: 'SIN_FILAS' })
+})
+export type ImportarRecibidosDto = z.infer<typeof ImportarRecibidosSchema>
+
+/** Imputar una importada: concepto + reparto por obra (Σ = total − percepciones). */
+export const ImputarFacturaSchema = z.object({
+  concepto_id:  ConceptoId,
+  imputaciones: z.array(ImputacionSchema).min(1).max(50),
+  descripcion:  z.string().trim().min(3).max(300).optional(),
+}).strict()
+export type ImputarFacturaDto = z.infer<typeof ImputarFacturaSchema>
+
+/** Imputar en lote: un concepto y UNA obra (100 % a esa obra). */
+export const ImputarLoteSchema = z.object({
+  ids:         z.array(Id).min(1).max(200),
+  concepto_id: ConceptoId,
+  obra_cod:    z.string().trim().min(1).max(40),
+}).strict()
+export type ImputarLoteDto = z.infer<typeof ImputarLoteSchema>
+
+/**
+ * Pagadas en lote con tarjeta de crédito o billetera (20260927h): compras de
+ * vendedores distintos (Mercado Libre) ya pagadas en el momento. Una OP por
+ * factura. `forma_pago` 'otro' = saldo de billetera. Sin `fecha`, cada una se
+ * paga en la fecha de su factura.
+ */
+export const MarcarPagadasSchema = z.object({
+  factura_ids:      z.array(Id).min(1).max(200),
+  cuenta_origen_id: Id,
+  forma_pago:       z.enum(['tarjeta', 'otro']),
+  fecha:            FechaISO.optional(),
+}).strict()
+export type MarcarPagadasDto = z.infer<typeof MarcarPagadasSchema>
 
 // ── Adjuntos ────────────────────────────────────────────────────────────────
 

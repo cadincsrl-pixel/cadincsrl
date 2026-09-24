@@ -12,6 +12,7 @@ import { supabase } from '../../lib/supabase.js'
 import { hoyAR } from '../pagos/pagos.util.js'
 import { ContabilidadHttpError, mapRpcError, type PgError } from './contabilidad.errors.js'
 import { rpc } from './comun.js'
+import { automaticosService } from './automaticos.service.js'
 
 export interface CtbEjercicio { id: number; nombre: string; desde: string; hasta: string; estado: 'abierto' | 'cerrado' }
 
@@ -85,7 +86,25 @@ export const periodosService = {
     return lista.find((p) => p.id === periodo.id) ?? { ...periodo, puede_cerrar: false, bloqueo_cerrar: null, puede_reabrir: false, bloqueo_reabrir: null }
   },
 
-  async cerrar(id: number, userId: string, db: SupabaseClient = supabase) {
+  /**
+   * Cerrar. Desde la fase 3, si en el rango del período hay orígenes sin
+   * contabilizar, pendientes, desactualizados o a revertir, frena con 409
+   * HAY_PENDIENTES_AUTOMATICOS { cantidad, por_estado } salvo `forzar`.
+   */
+  async cerrar(id: number, userId: string, db: SupabaseClient = supabase, forzar = false) {
+    if (!forzar) {
+      const { data: p, error } = await db.from('cont_periodos').select('id, desde, hasta').eq('id', id).maybeSingle()
+      if (error) throw mapRpcError(error as PgError)
+      // Sin período: que conteste la RPC (PERIODO_NO_EXISTE).
+      if (p) {
+        const { desde, hasta } = p as { desde: string; hasta: string }
+        const hoy = hoyAR()
+        const pend = desde <= hoy ? await automaticosService.pendientesDelRango(desde, hasta < hoy ? hasta : hoy, db) : null
+        if (pend && pend.total > 0) {
+          throw new ContabilidadHttpError(409, 'HAY_PENDIENTES_AUTOMATICOS', { periodo_id: id, cantidad: pend.total, por_estado: pend.por_estado })
+        }
+      }
+    }
     const r = await rpc<{ periodo: PeriodoFila; numerados: number; desde_numero: number | null; hasta_numero: number | null }>(
       db, 'cont_cerrar_periodo', { p_periodo_id: id, p_user_id: userId })
     return { ...r, periodo: await this.conAcciones(r.periodo, db) }

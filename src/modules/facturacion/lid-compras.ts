@@ -25,6 +25,12 @@
  *       · campos 23–25 (emisor/corredor, IVA comisión): solo para 033/058/059/060/063;
  *         el resto con ceros y blancos.
  *
+ * PERÍODO IVA (20260927a): el libro de un mes junta los comprobantes cuyo
+ * `periodo_iva` es ese mes, no los de fecha en ese mes. Un comprobante de
+ * agosto que llegó tarde (o cuyo mes ya estaba cerrado) se informa en
+ * septiembre con SU fecha (campo 1 = fecha del comprobante): el detalle lo
+ * marca `fuera_de_mes` y suma una validación `info`.
+ *
  * La posición de IVA (débito − crédito − percepciones − retenciones) es una
  * AYUDA para el contador, no la DDJJ: no arrastra saldos a favor de meses
  * anteriores (el LID los toma de la declaración anterior).
@@ -101,12 +107,27 @@ export interface FilaFacturaCompra {
   id: number; tipo_comprobante: string; cbte_tipo_arca: number | null; numero: string | null; fecha: string
   neto: number | string | null; iva: number | string | null; no_gravado: number | string | null; exento: number | string | null
   total: number | string; estado: string; paga_cliente: boolean; desglose_a_revisar: boolean | null
+  /** Mes (día 1) en que se informa (20260927a). Sin dato (filas viejas en tests): el mes de `fecha`. */
+  periodo_iva: string
+  /** «Otros tributos» de ARCA sin clasificar (importadas de Mis Comprobantes Recibidos, 20260927b). */
+  tributos_a_revisar?: boolean | null
   proveedor: { razon_social: string | null; cuit: string | null } | null
   iva_detalle: Array<{ alicuota_id: number; base_imp: number | string; importe: number | string }>
   tributos: Array<{ tipo: string; importe: number | string }>
 }
 
 const num = (v: unknown) => (v === null || v === undefined || v === '' ? 0 : Number(v))
+
+/** 'YYYY-MM-DD' → 'YYYY-MM-01'. */
+export const mesDe = (fecha: string) => `${fecha.slice(0, 7)}-01`
+
+/** El período IVA de la fila (día 1) y si difiere del mes de la fecha. */
+export function periodoDeFila(f: Pick<FilaFacturaCompra, 'fecha' | 'periodo_iva'>): { periodo_iva: string; fuera_de_mes: boolean } {
+  const periodo = f.periodo_iva ? mesDe(String(f.periodo_iva)) : mesDe(f.fecha)
+  return { periodo_iva: periodo, fuera_de_mes: periodo !== mesDe(f.fecha) }
+}
+
+const ddmmaaaa = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`
 
 /**
  * Factura de proveedor → comprobante del libro. Devuelve el motivo si no se
@@ -305,6 +326,8 @@ export interface FilaDetalleCompra {
   perc_iva: number; perc_iibb: number; perc_otras: number; otros_tributos: number; total: number
   estado: string
   incluido: boolean; motivo_exclusion: string | null
+  /** Período IVA en que se informa (día 1) y si es distinto del mes de la fecha (20260927a). */
+  periodo_iva: string; fuera_de_mes: boolean
 }
 
 export interface LibroCompras {
@@ -360,7 +383,24 @@ export function armarLibroCompras(
       alicuota: '', neto: num(x.fila.neto), iva: num(x.fila.iva), credito_fiscal: 0, no_gravado: num(x.fila.no_gravado),
       exento: num(x.fila.exento), perc_iva: 0, perc_iibb: 0, perc_otras: 0, otros_tributos: 0, total: num(x.fila.total),
       estado: x.fila.estado, incluido: false, motivo_exclusion: x.motivo,
+      ...periodoDeFila(x.fila),
     })
+  }
+
+  // Período IVA y tributos sin clasificar de cada comprobante, por id de la factura.
+  const meta = new Map(filas.map(x => [x.fila.id, x.fila]))
+  // Avisos por fila (valen también para las que no se pudieron normalizar).
+  for (const x of filas) {
+    const p = periodoDeFila(x.fila)
+    const etq = x.c ? etiquetaCompra(x.c) : x.etiquetaCruda
+    if (p.fuera_de_mes) {
+      validaciones.push({ comprobante: etq, severidad: 'info', mensaje:
+        `Comprobante del ${ddmmaaaa(x.fila.fecha)} informado en este período (período IVA corrido).` })
+    }
+    if (x.fila.tributos_a_revisar && (x.fila.tributos ?? []).some(t => t.tipo === 'otro')) {
+      validaciones.push({ comprobante: etq, severidad: 'advertencia', mensaje:
+        'Otros tributos de ARCA sin clasificar: si hay percepción de IVA, no se computa hasta clasificarla.' })
+    }
   }
 
   const comps = filas.map(x => x.c).filter((c): c is CompraLid => !!c).sort((a, b) =>
@@ -400,6 +440,7 @@ export function armarLibroCompras(
       perc_iva: c.perc_iva, perc_iibb: c.perc_iibb, perc_otras: c.perc_nacionales + c.perc_municipales + c.impuestos_internos,
       otros_tributos: c.otros_tributos, total: c.total, estado: c.estado,
       incluido: !motivo, motivo_exclusion: motivo,
+      ...periodoDeFila(meta.get(c.ref_id) ?? { fecha: c.fecha, periodo_iva: mesDe(c.fecha) }),
     })
     if (motivo || !lc) { if (!duplicada) excluidos++; continue }
 

@@ -180,10 +180,10 @@ describe('filtro por concepto', () => {
     expect(de('v_pagos_facturas', 'eq')).toContainEqual(['concepto_id', 2])
   })
 
-  it('el resumen agrupa por concepto pero no lo filtra (pagos_resumen no tiene el filtro)', () => {
+  it('el resumen agrupa por concepto y también lo filtra (pagos_resumen.p_concepto_id, 20260927k)', () => {
     const r = FacturasResumenQuerySchema.parse({ grupo: 'concepto', concepto_id: '2' })
     expect(r.grupo).toBe('concepto')
-    expect('concepto_id' in r).toBe(false)
+    expect(r.concepto_id).toBe(2)
   })
 })
 

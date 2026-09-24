@@ -12,7 +12,7 @@ import {
 const CENCOSUD: FilaFacturaCompra = {
   id: 11, tipo_comprobante: 'A', cbte_tipo_arca: 1, numero: '08837-00004557', fecha: '2026-09-18',
   neto: '116495.87', iva: '24464.13', no_gravado: null, exento: null, total: '152609.59',
-  estado: 'pagada', paga_cliente: false, desglose_a_revisar: false,
+  estado: 'pagada', paga_cliente: false, desglose_a_revisar: false, periodo_iva: '2026-09-01',
   proveedor: { razon_social: 'Cencosud S.A', cuit: '30590360763' },
   iva_detalle: [{ alicuota_id: 5, base_imp: 116495.87, importe: 24464.13 }],
   tributos: [{ tipo: 'percepcion_iva', importe: 3494.88 }, { tipo: 'percepcion_iibb', importe: 8154.71 }],
@@ -183,5 +183,39 @@ describe('posicionIva', () => {
   it('pagos a cuenta que superan el determinado: el sobrante es libre disponibilidad', () => {
     const p = posicionIva('2026-09', { debito: 10000, credito: 8000, percepciones: 3000, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0 })
     expect(p).toMatchObject({ a_pagar: 0, libre_disponibilidad: 1000 })
+  })
+})
+
+describe('período IVA (20260927a)', () => {
+  it('una factura de agosto informada en septiembre: fuera_de_mes + validación info, y el campo 1 sigue siendo su fecha', () => {
+    const agosto: FilaFacturaCompra = { ...CENCOSUD, id: 30, numero: '08837-00004000', fecha: '2026-08-28', periodo_iva: '2026-09-01' }
+    const libro = armarLibroCompras('2026-09', [conFila(CENCOSUD), conFila(agosto)])
+    const d = libro.detalle.find(x => x.ref_id === 30)!
+    expect(d).toMatchObject({ periodo_iva: '2026-09-01', fuera_de_mes: true, incluido: true })
+    expect(libro.detalle.find(x => x.ref_id === 11)).toMatchObject({ periodo_iva: '2026-09-01', fuera_de_mes: false })
+    expect(libro.validaciones).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severidad: 'info', mensaje: 'Comprobante del 28/08/2026 informado en este período (período IVA corrido).' }),
+    ]))
+    // Orden por fecha: la de agosto va primero, con SU fecha en el campo 1.
+    expect(libro.archivos.cbte.split('\r\n')[0]!.slice(0, 8)).toBe('20260828')
+    expect(libro.resumen.comprobantes).toBe(2)
+  })
+
+  it('sin periodo_iva (fila vieja) toma el mes de la fecha', () => {
+    const vieja = { ...CENCOSUD, periodo_iva: undefined as unknown as string }
+    const libro = armarLibroCompras('2026-09', [conFila(vieja)])
+    expect(libro.detalle[0]).toMatchObject({ periodo_iva: '2026-09-01', fuera_de_mes: false })
+    expect(libro.validaciones.some(v => v.severidad === 'info' && v.mensaje.includes('período IVA corrido'))).toBe(false)
+  })
+
+  it('«otros tributos» de ARCA sin clasificar: advertencia', () => {
+    const imp: FilaFacturaCompra = {
+      ...CENCOSUD, id: 31, numero: '00003-00001234', tributos_a_revisar: true,
+      tributos: [{ tipo: 'otro', importe: 3494.88 }, { tipo: 'percepcion_iibb', importe: 8154.71 }],
+    }
+    const libro = armarLibroCompras('2026-09', [conFila(imp)])
+    expect(libro.validaciones).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severidad: 'advertencia', mensaje: expect.stringContaining('Otros tributos de ARCA sin clasificar') }),
+    ]))
   })
 })

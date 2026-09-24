@@ -124,6 +124,11 @@ const ModuloPermisosSchema = z.object({
   asientos_manuales:     z.boolean().optional(),
   cerrar_periodos:       z.boolean().optional(),
   editar_plan:           z.boolean().optional(),
+  // Contabilidad fase 3 (20260927d–f): motor de asientos automáticos y mapeos.
+  contabilizar:          z.boolean().optional(),
+  editar_mapeos:         z.boolean().optional(),
+  // Pagos: alta masiva desde «Mis Comprobantes Recibidos» de ARCA (20260927b/c).
+  importar_comprobantes: z.boolean().optional(),
   obras_scope:       z.enum(['todas', 'asignadas']).optional(),
 })
 

@@ -85,7 +85,10 @@ export const cuentasService = {
       const madre = codigo.slice(0, codigo.lastIndexOf('.'))
       const { data, error } = await db.from('v_cont_cuentas').select('rubro').eq('codigo', madre).maybeSingle()
       if (error) throw error
-      rubro = (data as { rubro: string } | null)?.rubro ?? a.rubro
+      const deMadre = (data as { rubro: string } | null)?.rubro
+      // Bajo un título «resultado» (pieza 5) no se hereda: la hija es ingreso,
+      // egreso o resultado y conserva el suyo (la base valida la combinación).
+      rubro = deMadre && deMadre !== 'resultado' ? deMadre : a.rubro
     }
     return this.guardar({
       id, codigo, nombre: dto.nombre ?? a.nombre, rubro,

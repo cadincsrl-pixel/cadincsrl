@@ -393,6 +393,17 @@ export const UpdateExternoSchema = z.object({
 })
 export type UpdateExternoDto = z.infer<typeof UpdateExternoSchema>
 
+/**
+ * Lo que liquidó el comisionista (Casilda) en una CVLP 060/061, después de su
+ * comisión (20260927d). El asiento de la CVLP va por el neto liquidado
+ * (contador 24/09). null = borrarlo.
+ */
+export const LiquidoExternoSchema = z.object({
+  // El signo y el tope contra el total los valida el service (400 LIQUIDO_INVALIDO).
+  liquido: z.number().max(999_999_999_999.99).nullable(),
+}).strict()
+export type LiquidoExternoDto = z.infer<typeof LiquidoExternoSchema>
+
 export const ListExternosQuerySchema = z.object({
   cliente_id: idPos.optional(),
   cbte_tipo: z.string().regex(/^[\d,]*$/).optional(),

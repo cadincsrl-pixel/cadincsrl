@@ -17,6 +17,8 @@
  * facturas_compra: no se tocan (decisiones 8 y 9).
  *
  * Rutas literales (`/facturas/resumen`, `/facturas/export`, `/facturas/aprobar`,
+ * `/facturas/periodo-iva-sugerido`, `/facturas/importar-arca`, `/facturas/imputar-lote`,
+ * `/facturas/marcar-pagadas`,
  * `/ordenes/resumen`, `/ordenes/upload-comprobante`, `/ordenes/comprobante-pendiente`,
  * `/proveedores/saldos`, `/proveedores/export`) van ANTES de `/:id`.
  */
@@ -33,6 +35,9 @@ import { lecturaService } from './lectura.service.js'
 import { desgloseService } from './desglose.service.js'
 import { conceptosService } from './conceptos.service.js'
 import { chequesService } from './cheques.service.js'
+import { importarArcaService } from './importar-arca.service.js'
+import { imputarService } from './imputar.service.js'
+import { marcarPagadasService } from './marcar-pagadas.service.js'
 import {
   TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, esBoolQ,
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
@@ -43,6 +48,7 @@ import {
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
   ListConceptosQuerySchema, CreateConceptoSchema, UpdateConceptoSchema,
+  PeriodoIvaSugeridoQuerySchema, ImportarRecibidosSchema, ImputarFacturaSchema, ImputarLoteSchema, MarcarPagadasSchema,
 } from './pagos.schema.js'
 
 const pagos = new Hono()
@@ -60,6 +66,8 @@ const tabFacturaOProveedores = requireTab('pagos', ['facturas', 'proveedores'])
 const aprobarFacturas = requireFlag('pagos', 'aprobar_facturas')
 const registrarPagos  = requireFlag('pagos', 'registrar_pagos')
 const verPiiFlag      = requireFlag('pagos', 'ver_pii')
+// Alta masiva desde «Mis Comprobantes Recibidos» de ARCA (20260927b/c). Default false.
+const importarComprobantes = requireFlag('pagos', 'importar_comprobantes')
 
 /** Errores tipados → `{ error, campo?, detail? }`. Lo demás sube al onError global. */
 function handler(fn: (c: any) => Promise<any>) {
@@ -110,6 +118,34 @@ pagos.post('/facturas/leer', creacion, tabFactura, zValidator('json', LeerFactur
 
 pagos.delete('/facturas/lectura-pendiente', creacion, tabFactura, zValidator('json', BorrarPendienteSchema), handler(async (c) =>
   lecturaService.descartar(c.req.valid('json').storage_path)))
+
+// Período IVA sugerido para una fecha (20260927a): el mes de la fecha, o el
+// primer mes abierto si ese está cerrado en Contabilidad. Lo usa el modal de
+// carga mientras el usuario no toque el campo.
+pagos.get('/facturas/periodo-iva-sugerido', lectura, tabFactura,
+  zValidator('query', PeriodoIvaSugeridoQuerySchema, (r, c) => {
+    if (!r.success) return c.json({ error: 'DATOS_INVALIDOS', campo: 'fecha', detail: { campo: 'fecha', mensaje: 'fecha YYYY-MM-DD' } }, 400)
+  }),
+  handler(async (c) => pagosService.periodoIvaSugerido(c.req.valid('query').fecha)))
+
+// Importar «Mis Comprobantes Recibidos» de ARCA (20260927b/c): vista previa
+// (confirmar=false) o todo o nada. Entran impagas y SIN IMPUTAR.
+pagos.post('/facturas/importar-arca', creacion, tabFactura, importarComprobantes, zValidator('json', ImportarRecibidosSchema), handler(async (c) =>
+  importarArcaService.importar(c.req.valid('json'), c.get('user').id)))
+
+// Imputar en lote: un concepto y una obra al 100 %. Literal antes de /:id.
+pagos.post('/facturas/imputar-lote', actualizacion, tabFactura, zValidator('json', ImputarLoteSchema), handler(async (c) =>
+  imputarService.imputarLote(c.req.valid('json'), c.get('user').id)))
+
+// Pagadas en lote con tarjeta o billetera (20260927h): una OP por factura,
+// hecho consumado (sin aprobación previa). Quien carga facturas o admin: lo
+// mira el service (no hay requirePermiso «creación o admin» distinto del normal).
+pagos.post('/facturas/marcar-pagadas', lectura, tabFactura, zValidator('json', MarcarPagadasSchema), handler(async (c) => {
+  const userId = c.get('user').id
+  return marcarPagadasService.marcar(c.req.valid('json'), userId, await perfilDe(userId))
+}))
+
+pagos.get('/importaciones', lectura, tabFactura, handler(async () => importarArcaService.listar()))
 
 pagos.get('/facturas/:id', lectura, tabPago, handler(async (c) =>
   pagosService.detalleFactura(idParam(c), await verPii(c), esBoolQ(c.req.query('borrados')), c.get('accessToken'))))
@@ -165,6 +201,10 @@ pagos.post('/facturas/:id/aplicar-nc', lectura, tabPago, zValidator('json', Apli
   }
   return pagosService.aplicarNc(idParam(c), c.req.valid('json'), userId, verPiiDe(perfil))
 }))
+
+// Imputar una importada de ARCA: concepto + reparto por obra (20260927b).
+pagos.post('/facturas/:id/imputar', actualizacion, tabFactura, zValidator('json', ImputarFacturaSchema), handler(async (c) =>
+  imputarService.imputar(idParam(c), c.req.valid('json'), c.get('user').id, await verPii(c))))
 
 // Marcar corregida: observada → pendiente (nunca a aprobada).
 pagos.post('/facturas/:id/corregida', actualizacion, tabFactura, zValidator('json', CorregidaSchema), handler(async (c) =>

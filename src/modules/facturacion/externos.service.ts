@@ -262,6 +262,27 @@ export const externosService = {
     return (await this.detalle(id, db)).externo
   },
 
+  /**
+   * PATCH /externos/:id/liquido (20260927d): solo CVLP (060/061), 0 < líquido
+   * ≤ total. Lo lee el motor de asientos (`cvlp_modo='neto_liquidado'`); el
+   * saldo del externo en Ventas sigue siendo el total del papel.
+   */
+  async liquido(id: number, liquido: number | null, userId: string, db: SupabaseClient = supabase): Promise<unknown> {
+    const { data: act, error: e0 } = await db.from('ventas_comprobantes_externos').select('id, cbte_tipo, total').eq('id', id).maybeSingle()
+    if (e0) throw mapRpcError(e0 as PgError)
+    if (!act) throw new FacturacionHttpError(404, 'EXTERNO_NO_EXISTE', { externo_id: id })
+    const a = act as { cbte_tipo: number; total: number | string }
+    if (![60, 61].includes(Number(a.cbte_tipo))) throw new FacturacionHttpError(400, 'NO_ES_CVLP', { campo: 'liquido', cbte_tipo: a.cbte_tipo })
+    const valor = liquido == null ? null : Math.round(liquido * 100) / 100
+    if (valor != null && (valor <= 0 || valor > Number(a.total))) {
+      throw new FacturacionHttpError(400, 'LIQUIDO_INVALIDO', { campo: 'liquido', liquido: valor, total: Number(a.total) })
+    }
+    const { error } = await db.from('ventas_comprobantes_externos').update({ liquido: valor, updated_by: userId }).eq('id', id)
+    if (error) throw errorEscritura(error as PgError)
+    console.info(`[facturacion] externo ${id}: líquido CVLP ${valor ?? 'borrado'} por ${userId}`)
+    return (await this.detalle(id, db)).externo
+  },
+
   async borrar(id: number, db: SupabaseClient = supabase): Promise<void> {
     const { data, error } = await db.from('ventas_comprobantes_externos').delete().eq('id', id).select('id')
     if (error) throw errorEscritura(error as PgError)

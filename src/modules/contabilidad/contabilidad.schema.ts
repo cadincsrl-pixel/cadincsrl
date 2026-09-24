@@ -23,7 +23,13 @@ const BoolQ = z.enum(['0', '1', 'true', 'false']).optional()
 /** numeric(14,2): hasta 999.999.999.999,99. */
 const Importe = z.number().min(0).max(999_999_999_999.99)
 
-export const RUBROS = ['activo', 'pasivo', 'pn', 'ingreso', 'egreso'] as const
+/**
+ * `resultado` (pieza 5, plan de Finnegans): SOLO títulos. Es la 4000000
+ * «RESULTADO DEL PERIODO», madre de ingresos (4100000) y de gastos (4200000);
+ * sus hijas pueden ser resultado, ingreso o egreso. Imputable → 400
+ * RESULTADO_SOLO_TITULO (acá y en la base).
+ */
+export const RUBROS = ['activo', 'pasivo', 'pn', 'ingreso', 'egreso', 'resultado'] as const
 export const AUXILIARES = ['none', 'cliente', 'proveedor', 'tesoreria'] as const
 export const CODIGO_RE = /^[1-9](\.[0-9]{1,3}){0,5}$/
 
@@ -43,6 +49,8 @@ export const CuentaSchema = z.object({
   imputable: z.boolean(),
   auxiliar:  z.enum(AUXILIARES).default('none'),
   obs:       z.string().max(500).optional().default(''),
+}).superRefine((c, ctx) => {
+  if (c.rubro === 'resultado' && c.imputable) ctx.addIssue({ code: 'custom', path: ['rubro'], message: 'RESULTADO_SOLO_TITULO' })
 })
 export type CuentaDto = z.infer<typeof CuentaSchema>
 
@@ -54,6 +62,9 @@ export const UpdateCuentaSchema = z.object({
   imputable: z.boolean().optional(),
   auxiliar:  z.enum(AUXILIARES).optional(),
   obs:       z.string().max(500).optional(),
+}).superRefine((c, ctx) => {
+  // Solo si vienen los dos; si no, lo decide la base contra lo guardado.
+  if (c.rubro === 'resultado' && c.imputable === true) ctx.addIssue({ code: 'custom', path: ['rubro'], message: 'RESULTADO_SOLO_TITULO' })
 })
 export type UpdateCuentaDto = z.infer<typeof UpdateCuentaSchema>
 
@@ -172,7 +183,12 @@ export type SumasSaldosQuery = z.infer<typeof SumasSaldosQuerySchema>
 
 // ── Tesorería ───────────────────────────────────────────────────────────────
 
-export const TIPOS_TESORERIA = ['banco', 'caja', 'valores'] as const
+/**
+ * `tarjeta` = tarjeta de crédito de la empresa (pasivo; sin CBU ni alias,
+ * `banco` = emisor) y `billetera` = Mercado Pago u otra (CVU en `cbu` y alias).
+ * 20260927h. CBU/alias solo en banco y billetera (`validarDatosBanco`).
+ */
+export const TIPOS_TESORERIA = ['banco', 'caja', 'valores', 'tarjeta', 'billetera'] as const
 const Cbu = z.string().trim().regex(/^\d{22}$/, 'CBU_INVALIDO')
 
 export const TesoreriaSchema = z.object({
@@ -203,6 +219,75 @@ export const UpdateTesoreriaSchema = z.object({
 export type UpdateTesoreriaDto = z.infer<typeof UpdateTesoreriaSchema>
 
 export const ListTesoreriaQuerySchema = z.object({ incluir_inactivas: BoolQ })
+
+// ── Asientos automáticos y mapeos (fase 3, 20260927d–f) ─────────────────────
+
+/** Orígenes que contabiliza el motor (`cont_contabilizar`). */
+export const FUENTES = ['ventas_facturas', 'ventas_comprobantes_externos', 'ventas_cobros', 'pagos_facturas', 'pagos_ordenes'] as const
+export type CtbFuente = (typeof FUENTES)[number]
+export const PENDIENTE_ESTADOS = ['sin_contabilizar', 'pendiente', 'desactualizado', 'a_revertir'] as const
+
+export const PendientesQuerySchema = z.object({
+  /** Default: `cont_config.automaticos_desde`. */
+  desde:  FechaISO.optional(),
+  /** Default: hoy (AR). */
+  hasta:  FechaISO.optional(),
+  fuente: z.enum(FUENTES).optional(),
+  estado: z.enum(PENDIENTE_ESTADOS).optional(),
+  motivo: z.string().trim().max(60).optional(),
+  limit:  z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+})
+export type PendientesQuery = z.infer<typeof PendientesQuerySchema>
+
+export const PropuestaQuerySchema = z.object({
+  origen_tabla: z.enum(FUENTES),
+  origen_id:    IdQ,
+})
+
+/** Dónde siguió el contabilizador (lo devuelve la RPC y se reenvía tal cual). */
+export const CursorSchema = z.object({
+  fecha: FechaISO,
+  tabla: z.enum(FUENTES),
+  id:    Id,
+}).strict()
+
+export const ContabilizarSchema = z.object({
+  hasta:             FechaISO,
+  fuentes:           z.array(z.enum(FUENTES)).min(1).max(FUENTES.length).optional(),
+  /** Corregir también en períodos cerrados con contraasientos: exige `cerrar_periodos`. */
+  revertir_cerrados: z.boolean().optional().default(false),
+  /** Opcional: seguir desde donde quedó la llamada anterior (`hay_mas`). */
+  cursor:            CursorSchema.nullable().optional(),
+}).strict()
+export type ContabilizarDto = z.infer<typeof ContabilizarSchema>
+
+export const MapeoInputSchema = z.object({
+  clave:     z.string().trim().min(1).max(60),
+  subclave:  z.string().max(120),
+  cuenta_id: Id.nullable(),
+}).strict()
+export const GuardarMapeosSchema = z.object({
+  mapeos: z.array(MapeoInputSchema).min(1, 'SIN_FILAS').max(500, 'DEMASIADAS_FILAS'),
+}).strict()
+export type GuardarMapeosDto = z.infer<typeof GuardarMapeosSchema>
+
+export const CVLP_MODOS = ['neto_liquidado', 'bruto'] as const
+export const COMPRAS_FECHA_CONTABLE = ['fecha', 'mes_iva'] as const
+export const ConfigSchema = z.object({
+  automaticos_desde:      FechaISO.refine((s) => s >= '2026-07-01', 'CONFIG_INVALIDA').optional(),
+  cvlp_modo:              z.enum(CVLP_MODOS).optional(),
+  compras_fecha_contable: z.enum(COMPRAS_FECHA_CONTABLE).optional(),
+  /** Pendiente de definir con el contador (P3.4): hoy solo null. */
+  paga_cliente_modo:      z.null().optional(),
+}).strict().refine((b) => Object.keys(b).length > 0, { message: 'CONFIG_INVALIDA', path: [] })
+export type ConfigDto = z.infer<typeof ConfigSchema>
+
+/** POST /periodos/:id/cerrar: body opcional. */
+export const CerrarPeriodoSchema = z.object({
+  /** Cerrar aunque haya orígenes sin contabilizar o desactualizados. */
+  forzar: z.boolean().optional().default(false),
+}).strict()
 
 // ── Catálogos ───────────────────────────────────────────────────────────────
 
