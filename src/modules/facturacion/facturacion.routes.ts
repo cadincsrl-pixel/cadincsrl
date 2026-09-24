@@ -37,6 +37,8 @@ import { externosService } from './externos.service.js'
 import { deudoresService } from './deudores.service.js'
 import { lidVentasService } from './lid-ventas.service.js'
 import { aAnsi, nombreArchivo } from './lid-ventas.js'
+import { lidComprasService } from './lid-compras.service.js'
+import { nombreArchivoCompras } from './lid-compras.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
   ListClientesQuerySchema, CreateClienteSchema, UpdateClienteSchema, ObrasClienteSchema,
@@ -47,7 +49,7 @@ import {
   ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema, AdjuntoCobroSchema,
   PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
   CreateExternoSchema, UpdateExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
-  LidVentasQuerySchema, LidVentasDescargarQuerySchema,
+  LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
 
@@ -63,6 +65,10 @@ const eliminacion   = requirePermiso(MOD, 'eliminacion')
 const tabFacturas   = requireTab(MOD, 'facturas')
 const tabClientes   = requireTab(MOD, 'clientes')
 const tabFinnegans  = requireTab(MOD, 'finnegans')
+// Libros de IVA y posición del mes (24/09). Acepta también `finnegans`, la tab
+// que tenía el libro de ventas antes: la migración 20260924x la renombra en
+// profiles/roles, y esto cubre el rato entre el deploy y la migración.
+const tabImpuestos  = requireTab(MOD, ['impuestos', 'finnegans'])
 const tabCatalogos  = requireTab(MOD, ['facturas', 'clientes', 'finnegans'])
 const tabListado    = requireTab(MOD, ['facturas', 'finnegans'])
 const tabLeerClientes = requireTab(MOD, ['facturas', 'clientes'])
@@ -363,18 +369,19 @@ fact.delete('/externos/:id', eliminacion, tabSaldos, handler(async (c) => {
   return c.body(null, 204)
 }))
 
-// ═══════════════════════════════════ Libro IVA Digital — Ventas ═════════════
-// Es trabajo del contador: lectura + tab `finnegans` (la suya). Lo emitido por
-// el ERP (prod, autorizadas) + lo importado de ARCA del período. Diseño de
-// registro y fuentes en lid-ventas.ts.
+// ═══════════════════════════════════ Impuestos: Libro IVA Digital ═══════════
+// Es trabajo del contador: lectura + tab `impuestos`. Ventas: lo emitido por el
+// ERP (prod, autorizadas) + lo importado de ARCA del período. Compras: las
+// facturas de proveedor del módulo Compras. Diseño de registro y fuentes en
+// lid-ventas.ts y lid-compras.ts.
 
-fact.get('/lid-ventas', lectura, tabFinnegans, valida('query', LidVentasQuerySchema), handler(async (c) => {
+fact.get('/lid-ventas', lectura, tabImpuestos, valida('query', LidVentasQuerySchema), handler(async (c) => {
   const q = c.req.valid('query')
   return lidVentasService.libro(q.periodo, esBoolQ(q.incluir_cvlp), db(c))
 }))
 
 // El .txt tal cual se importa en el LID: ANSI (Latin-1 / Windows-1252), CRLF.
-fact.get('/lid-ventas/descargar', lectura, tabFinnegans, valida('query', LidVentasDescargarQuerySchema), handler(async (c) => {
+fact.get('/lid-ventas/descargar', lectura, tabImpuestos, valida('query', LidVentasDescargarQuerySchema), handler(async (c) => {
   const q = c.req.valid('query')
   const libro = await lidVentasService.libro(q.periodo, esBoolQ(q.incluir_cvlp), db(c))
   const bytes = aAnsi(q.archivo === 'cbte' ? libro.archivos.cbte : libro.archivos.alicuotas)
@@ -385,6 +392,28 @@ fact.get('/lid-ventas/descargar', lectura, tabFinnegans, valida('query', LidVent
       'Content-Disposition': `attachment; filename="${nombreArchivo(q.periodo, q.archivo)}"`,
     },
   })
+}))
+
+fact.get('/lid-compras', lectura, tabImpuestos, valida('query', LidComprasQuerySchema), handler(async (c) =>
+  lidComprasService.libro(c.req.valid('query').periodo, db(c))))
+
+fact.get('/lid-compras/descargar', lectura, tabImpuestos, valida('query', LidComprasDescargarQuerySchema), handler(async (c) => {
+  const q = c.req.valid('query')
+  const libro = await lidComprasService.libro(q.periodo, db(c))
+  const bytes = aAnsi(q.archivo === 'cbte' ? libro.archivos.cbte : libro.archivos.alicuotas)
+  return new Response(bytes.buffer as ArrayBuffer, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/plain; charset=windows-1252',
+      'Content-Disposition': `attachment; filename="${nombreArchivoCompras(q.periodo, q.archivo)}"`,
+    },
+  })
+}))
+
+// Débito − crédito − percepciones − retenciones. Ayuda para el contador, no la DDJJ.
+fact.get('/posicion-iva', lectura, tabImpuestos, valida('query', LidVentasQuerySchema), handler(async (c) => {
+  const q = c.req.valid('query')
+  return lidComprasService.posicion(q.periodo, esBoolQ(q.incluir_cvlp), db(c))
 }))
 
 export default fact

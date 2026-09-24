@@ -405,3 +405,11 @@ export const LidVentasQuerySchema = z.object({
 export const LidVentasDescargarQuerySchema = LidVentasQuerySchema.extend({
   archivo: z.enum(['cbte', 'alicuotas']),
 })
+
+// ── Libro IVA Digital de Compras (RG 4597) ──────────────────────────────────
+export const LidComprasQuerySchema = z.object({
+  periodo: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'período AAAA-MM'),
+})
+export const LidComprasDescargarQuerySchema = LidComprasQuerySchema.extend({
+  archivo: z.enum(['cbte', 'alicuotas']),
+})
