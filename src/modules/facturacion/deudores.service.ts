@@ -56,26 +56,25 @@ export interface Deudor {
   a_cuenta: number
   nc_disponible: number
   saldo_neto: number
-  al_dia: number
-  d1_30: number
+  /** Antigüedad por días desde la FECHA de la factura (24/09: el vencimiento de cobro no se usa). */
+  d0_30: number
   d31_60: number
   d61_90: number
   d90_mas: number
-  vencido: number
   saldo_a_revisar: number
   comprobantes: number
   ultima_cobranza: string | null
   ultima_cobranza_total: number | null
 }
 
-const CAMPOS_TOTALES = ['saldo', 'a_cuenta', 'nc_disponible', 'saldo_neto', 'al_dia', 'd1_30', 'd31_60', 'd61_90', 'd90_mas', 'vencido', 'saldo_a_revisar'] as const
+const CAMPOS_TOTALES = ['saldo', 'a_cuenta', 'nc_disponible', 'saldo_neto', 'd0_30', 'd31_60', 'd61_90', 'd90_mas', 'saldo_a_revisar'] as const
 
 /** Suma en centavos (los montos son numeric(14,2)). */
 const sumar = (xs: number[]) => Math.round(xs.reduce((a, x) => a + Math.round(Number(x) * 100), 0)) / 100
 
 export const deudoresService = {
   /**
-   * Débitos con saldo > 0 del cliente (ordenados por vencimiento: así «Aplicar
+   * Débitos con saldo > 0 del cliente (ordenados por fecha: así «Aplicar
    * automático» va del más viejo al más nuevo) y, aparte, sus créditos libres
    * (NC del ERP con parte no absorbida, NC externas y cobros con a cuenta).
    */
@@ -87,7 +86,7 @@ export const deudoresService = {
     if (!cli) throw new FacturacionHttpError(404, 'CLIENTE_NO_EXISTE', { cliente_id: clienteId })
     const { data, error } = await db.rpc('ventas_saldos_al', { p_al: q.al ?? null, p_cliente_id: clienteId, p_ambiente: ambiente })
       .gt('saldo', 0)
-      .order('vence_el').order('fecha').order('pto_vta').order('numero')
+      .order('fecha').order('pto_vta').order('numero')
     if (error) throw mapRpcError(error as PgError)
     const filas = (data ?? []) as FilaSaldo[]
     const debitos = filas.filter((f) => f.naturaleza === 'debito')
@@ -100,7 +99,6 @@ export const deudoresService = {
       creditos,
       totales: {
         debitos: sumar(debitos.map((d) => d.saldo)),
-        vencido: sumar(debitos.filter((d) => d.dias_vencido > 0).map((d) => d.saldo)),
         creditos: sumar(creditos.map((c) => c.saldo)),
         a_cuenta: sumar(creditos.filter((c) => c.origen === 'cobro').map((c) => c.saldo)),
         nc_disponible: sumar(creditos.filter((c) => c.origen !== 'cobro').map((c) => c.saldo)),
@@ -108,10 +106,10 @@ export const deudoresService = {
     }
   },
 
-  /** Estado de deudores por cliente a una fecha de corte, ordenado por saldo neto. */
+  /** Estado de deudores por cliente a una fecha de corte, ordenado por saldo neto; antigüedad desde la fecha de la factura. */
   async deudores(q: DeudoresQuery, db: SupabaseClient = supabase) {
     const ambiente = ambienteDe(q.ambiente)
-    const { data, error } = await db.rpc('ventas_deudores_al', { p_al: q.al ?? null, p_ambiente: ambiente })
+    const { data, error } = await db.rpc('ventas_deudores_antiguedad_al', { p_al: q.al ?? null, p_ambiente: ambiente })
       .order('saldo_neto', { ascending: false }).order('cliente_razon_social')
     if (error) throw mapRpcError(error as PgError)
     let rows = (data ?? []) as Deudor[]

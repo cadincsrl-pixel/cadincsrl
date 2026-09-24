@@ -143,7 +143,7 @@ describe('deudores, pendientes y saldos iniciales', () => {
   it('Alina ve deudores y estado de cuenta, no saldos iniciales', async () => {
     state.profile = ALINA
     expect((await get('/deudores')).status).toBe(200)
-    expect(llamada('ventas_deudores_al')).toMatchObject({ p_ambiente: 'prod', p_al: null })
+    expect(llamada('ventas_deudores_antiguedad_al')).toMatchObject({ p_ambiente: 'prod', p_al: null })
     expect((await get('/clientes/2/estado-cuenta?desde=2026-09-01')).status).toBe(200)
     expect((await get('/clientes/2/pendientes')).status).toBe(200)
     expect(llamada('ventas_saldos_al')).toMatchObject({ p_cliente_id: 2, p_ambiente: 'prod' })
