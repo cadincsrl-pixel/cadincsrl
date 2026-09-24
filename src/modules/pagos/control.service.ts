@@ -27,6 +27,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '../../lib/supabase.js'
 import { BUCKET } from './adjuntos.service.js'
 import { normNumeroFactura, aCentavos } from './pagos.util.js'
+import { MODELO_LECTURA_DEFAULT } from './lectura/ia.js'
 
 export type EstadoControl = 'coincide' | 'difiere' | 'ilegible' | 'error'
 
@@ -210,6 +211,9 @@ function bloqueDelArchivo(base64: string, mime: string): Anthropic.ContentBlockP
  * Lee el comprobante y guarda el control. NUNCA lanza: cualquier problema
  * termina en una fila con estado 'error' o 'ilegible'.
  */
+/** Los Haiku no aceptan el parámetro `effort`; Opus y Sonnet 5 sí. */
+export const admiteEffort = (modelo: string) => !/haiku/i.test(modelo)
+
 export async function controlarFactura(
   facturaId: number,
   adjuntoId: number | null,
@@ -219,7 +223,7 @@ export async function controlarFactura(
   // 2026-09-24: por defecto el mismo modelo que la lectura completa
   // (claude-opus-5) y ya no el del asistente: son tareas distintas y
   // compartir la variable hacía que cambiar uno moviera el otro.
-  const modelo = process.env.PAGOS_CONTROL_MODEL ?? process.env.PAGOS_LECTURA_MODEL ?? 'claude-opus-5'
+  const modelo = process.env.PAGOS_CONTROL_MODEL ?? process.env.PAGOS_LECTURA_MODEL ?? MODELO_LECTURA_DEFAULT
   const guardar = async (c: Omit<ControlFactura, 'factura_id' | 'adjunto_id' | 'modelo'>) => {
     const fila: ControlFactura = { ...c, factura_id: facturaId, adjunto_id: adjuntoId, modelo }
     const { data } = await supabase.from('pagos_facturas_control').insert(fila).select('*').single()
@@ -254,10 +258,13 @@ export async function controlarFactura(
     // Con claude-opus-5 el razonamiento está prendido por defecto: esfuerzo
     // bajo (son tres datos) y margen de tokens para que no se corte antes
     // del JSON.
+    // Haiku 4.5 rechaza `effort` con 400 («This model does not support the
+    // effort parameter», probado 24/09): sin esta guarda, poner Haiku en
+    // PAGOS_CONTROL_MODEL dejaba cada control en «error».
     const r = await client.messages.create({
       model: modelo,
       max_tokens: 4000,
-      output_config: { effort: 'low' },
+      ...(admiteEffort(modelo) ? { output_config: { effort: 'low' as const } } : {}),
       messages: [{ role: 'user', content: [bloque, { type: 'text', text: PROMPT }] }],
     })
     const texto = r.content.filter(b => b.type === 'text').map(b => (b as { text: string }).text).join('\n')

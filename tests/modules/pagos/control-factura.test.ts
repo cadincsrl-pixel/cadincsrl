@@ -14,7 +14,7 @@ vi.mock('../../../src/lib/supabase.js', () => ({
   createSupabaseClient: () => ({}),
 }))
 
-import { aNumero, aFecha, compararLectura } from '../../../src/modules/pagos/control.service.js'
+import { aNumero, aFecha, compararLectura, admiteEffort } from '../../../src/modules/pagos/control.service.js'
 
 describe('aNumero: el total puede venir de varias formas', () => {
   it('número, y string con punto o con coma', () => {
@@ -159,5 +159,13 @@ describe('compararLectura: la fecha de emisión (20260923a)', () => {
     const r = compararLectura({ legible: true, numero: null, total: null, fecha: '18/09/2026' }, null, 1, '2026-09-18')
     expect(r.estado).toBe('coincide')
     expect(r.nota).toContain('no se pudo leer el número ni el total')
+  })
+})
+
+describe('admiteEffort', () => {
+  it('Haiku no acepta effort (400 real, 24/09); Opus y Sonnet sí', () => {
+    expect(admiteEffort('claude-haiku-4-5-20251001')).toBe(false)
+    expect(admiteEffort('claude-opus-5')).toBe(true)
+    expect(admiteEffort('claude-sonnet-5')).toBe(true)
   })
 })

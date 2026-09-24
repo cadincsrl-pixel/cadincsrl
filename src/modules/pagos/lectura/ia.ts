@@ -22,7 +22,10 @@ import { z } from 'zod'
 import { TIPOS_TRIBUTO } from './arca.js'
 
 /** Modelo por defecto. Se puede cambiar sin deploy con PAGOS_LECTURA_MODEL. */
-export const MODELO_LECTURA_DEFAULT = 'claude-opus-5'
+// 24/09: Sonnet 5 en vez de Opus 5 (más barato). Probado sobre las 17 facturas
+// reales cargadas: Sonnet leyó igual que Opus en todas (CUIT, número, fecha,
+// neto, IVA, percepciones, total); Haiku 4.5 erró 6 de 17, así que no.
+export const MODELO_LECTURA_DEFAULT = 'claude-sonnet-5'
 
 const MIME_IMAGEN = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 
