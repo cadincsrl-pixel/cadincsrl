@@ -330,6 +330,55 @@ describe('imputar', () => {
   })
 })
 
+// ═══════════════════════ Históricas: pago a reconstruir ══════════════════════
+
+describe('compras de meses ya pagados (pago_a_reconstruir)', () => {
+  it('importar: historica viaja como p_historica (default false)', async () => {
+    state.profile = IMPORTADOR
+    await post('/facturas/importar-arca', { filas: [FILA] })
+    expect(llamada('pagos_importar_recibidos')).toMatchObject({ p_historica: false })
+    rpcMock.mockClear()
+    const r = await post('/facturas/importar-arca', { filas: [FILA], historica: true, confirmar: true })
+    expect(r.status).toBe(200)
+    expect(llamada('pagos_importar_recibidos')).toMatchObject({ p_historica: true, p_confirmar: true })
+    expect((await post('/facturas/importar-arca', { filas: [FILA], historica: 'si' })).status).toBe(400)
+  })
+
+  it('lista y resumen filtran pago_a_reconstruir solo si viene', async () => {
+    state.profile = COMPRAS
+    await pagos.request('/facturas?pago_a_reconstruir=0')
+    expect(filtros).toContainEqual(['v_pagos_facturas', 'pago_a_reconstruir', false])
+    filtros.length = 0
+    await pagos.request('/facturas')
+    expect(filtros.some((f) => f[1] === 'pago_a_reconstruir')).toBe(false)
+    await pagos.request('/facturas/resumen?pago_a_reconstruir=1')
+    expect(llamada('pagos_resumen')).toMatchObject({ p_pago_a_reconstruir: true })
+    rpcMock.mockClear()
+    await pagos.request('/facturas/resumen')
+    expect(llamada('pagos_resumen')).toMatchObject({ p_pago_a_reconstruir: null })
+  })
+
+  it('«vence en 7 días» no trae las de meses ya pagados', async () => {
+    state.profile = COMPRAS
+    await pagos.request('/facturas?vencimiento=7')
+    expect(filtros).toContainEqual(['v_pagos_facturas', 'pago_a_reconstruir', false])
+  })
+
+  it('aprobar una a reconstruir → 409 FACTURA_A_RECONSTRUIR sin RPC; la RPC también lo mapea a 409', async () => {
+    state.profile = APROBADOR
+    state.facturas = [{ id: 5, created_by: 'otro', estado: 'pendiente', sin_imputar: false, pago_a_reconstruir: true }]
+    const r = await post('/facturas/5/aprobar')
+    expect(r.status).toBe(409)
+    expect(await r.json()).toMatchObject({ error: 'FACTURA_A_RECONSTRUIR', detail: { factura_id: 5 } })
+    expect(llamada('pagos_aprobar_factura')).toBeUndefined()
+    state.facturas = [{ id: 5, created_by: 'otro', estado: 'pendiente', sin_imputar: false, pago_a_reconstruir: false }]
+    rpcMock.mockImplementation(async () => ({ data: null, error: { message: 'FACTURA_A_RECONSTRUIR' } }))
+    const r2 = await post('/facturas/5/aprobar')
+    expect(r2.status).toBe(409)
+    expect(await r2.json()).toMatchObject({ error: 'FACTURA_A_RECONSTRUIR' })
+  })
+})
+
 // ═══════════════════════════════ Pagadas en lote ════════════════════════════
 
 describe('marcar pagadas con tarjeta / billetera', () => {

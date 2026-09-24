@@ -288,6 +288,8 @@ export const proveedoresService = {
       sb.from('v_pagos_facturas')
         .select('id, tipo_comprobante, numero, fecha, vence_el, total, saldo, saldo_pagable, nc_pendiente, acreditado, nc_txt, estado, vencida, descripcion')
         .eq('proveedor_id', id).eq('clase', 'factura').in('estado', ['pendiente', 'observada', 'aprobada', 'pagada_parcial'])
+        // Las importadas de meses ya pagados no son deuda (20260928b): van aparte en `a_reconstruir`.
+        .eq('pago_a_reconstruir', false)
         .order('vence_el', { ascending: true, nullsFirst: false }).order('id').limit(200),
       sb.from('pagos_proveedor_contactos')
         .select('id, nombre, rol, email, telefono, recibe_avisos, orden, obs')

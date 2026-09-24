@@ -320,6 +320,8 @@ function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'li
     // y abierta. Sin esto «vence en 7 días» listaba facturas ya pagadas.
     q = q.not('vence_el', 'is', null).lte('vence_el', sumarDias(hoyAR(), Number(f.vencimiento)))
       .eq('paga_cliente', false).gt('saldo', 0).in('estado', ESTADOS_ABIERTOS)
+      // Las de meses ya pagados no vencen (20260928): el pago ya ocurrió.
+      .eq('pago_a_reconstruir', false)
   }
   if (esBoolQ(f.sin_adjunto)) q = q.or('tiene_factura_adj.is.null,tiene_factura_adj.eq.false')
   if (esBoolQ(f.sin_numero)) q = q.eq('sin_numero', true)
@@ -336,6 +338,7 @@ function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'li
   if (f.periodo_iva) q = q.eq('periodo_iva', `${f.periodo_iva}-01`)
   if (f.periodo_iva_distinto !== undefined) q = q.eq('periodo_iva_distinto', esBoolQ(f.periodo_iva_distinto))
   if (f.sin_imputar !== undefined) q = q.eq('sin_imputar', esBoolQ(f.sin_imputar))
+  if (f.pago_a_reconstruir !== undefined) q = q.eq('pago_a_reconstruir', esBoolQ(f.pago_a_reconstruir))
   if (f.tributos_a_revisar !== undefined) q = q.eq('tributos_a_revisar', esBoolQ(f.tributos_a_revisar))
   if (f.origen_carga) q = q.eq('origen_carga', f.origen_carga)
   if (f.importacion_id) q = q.eq('importacion_id', f.importacion_id)
@@ -508,6 +511,7 @@ export const pagosService = {
       p_paga_cliente: f.paga_cliente === undefined ? null : esBoolQ(f.paga_cliente),
       p_clase:        f.clase ?? null,
       p_sin_imputar:  f.sin_imputar === undefined ? null : esBoolQ(f.sin_imputar),
+      p_pago_a_reconstruir: f.pago_a_reconstruir === undefined ? null : esBoolQ(f.pago_a_reconstruir),
       p_concepto_id:  f.concepto_id ?? null,
     })
     // Cada grupo trae `facturas` (solo facturas), `notas_credito` y `total` /
@@ -845,10 +849,13 @@ export const pagosService = {
 
   /** «No aprobás lo que cargaste» (admin exento). La RPC decide aprobar vs sellar una pagada al cargar. */
   async aprobarFactura(id: number, userId: string, perfil: Perfil | null) {
-    const { data: f, error } = await supabase.from('pagos_facturas').select('id, created_by, estado, sin_imputar').eq('id', id).maybeSingle()
+    const { data: f, error } = await supabase.from('pagos_facturas').select('id, created_by, estado, sin_imputar, pago_a_reconstruir').eq('id', id).maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
     // Sin concepto ni reparto no hay costo que validar (20260927b). La RPC lo repite.
+    // De un mes ya pagado (20260928): no se aprueba, el pago ya ocurrió y se
+    // reconstruye con los extractos. La RPC lo repite.
+    if ((f as { pago_a_reconstruir?: boolean }).pago_a_reconstruir) throw new PagosHttpError(409, 'FACTURA_A_RECONSTRUIR', { factura_id: id })
     if ((f as { sin_imputar?: boolean }).sin_imputar) throw new PagosHttpError(409, 'FACTURA_SIN_IMPUTAR', { factura_id: id })
     // La doble firma cede ante `aprobar_propias` (20260921f). Acá se adelanta
     // el error al formulario; la RPC repite la regla y es la que manda.

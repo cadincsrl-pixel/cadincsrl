@@ -407,6 +407,11 @@ export const ListFacturasQuerySchema = z.object({
   periodo_iva_distinto: BOOL_Q,
   /** Importadas de ARCA sin concepto ni reparto (20260927b). Filtra solo si viene. */
   sin_imputar:      BOOL_Q,
+  /**
+   * Importadas de meses ya pagados (20260928): el pago se reconstruye con los
+   * extractos. No son deuda. Filtra solo si viene (la bandeja manda `0`).
+   */
+  pago_a_reconstruir: BOOL_Q,
   tributos_a_revisar: BOOL_Q,
   origen_carga:     z.enum(ORIGENES_CARGA).optional(),
   importacion_id:   z.coerce.number().int().positive().optional(),
@@ -420,8 +425,9 @@ export type ListFacturasQuery = z.infer<typeof ListFacturasQuerySchema>
 export const FACTURAS_RESUMEN_GRUPOS = ['proveedor', 'centro_costo', 'obra', 'mes_emision', 'estado', 'vencimiento', 'forma_pago', 'concepto'] as const
 // Los filtros que `pagos_resumen` no respeta se sacan del schema para que
 // nadie crea que el resumen los aplica (se ignorarían en silencio).
-// `concepto_id` y `sin_imputar` sí los filtra desde 20260927k: los chips de
-// la bandeja tienen que contar lo mismo que la lista.
+// `concepto_id` y `sin_imputar` sí los filtra desde 20260927k, y
+// `pago_a_reconstruir` desde 20260928: los chips de la bandeja tienen que
+// contar lo mismo que la lista.
 export const FacturasResumenQuerySchema = ListFacturasQuerySchema.omit({
   orden: true, limit: true, offset: true,
   periodo_iva: true, periodo_iva_distinto: true, tributos_a_revisar: true, origen_carga: true, importacion_id: true,
@@ -480,6 +486,11 @@ export const ImportarRecibidosSchema = z.object({
   archivo:     z.string().max(255).default(''),
   hash_sha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
   confirmar:   z.boolean().default(false),
+  /**
+   * Compras de meses ya pagados (reconstrucción, 20260928): entran con
+   * `pago_a_reconstruir` y no cuentan como deuda, ni se aprueban, ni avisan.
+   */
+  historica:   z.boolean().default(false),
 }).strict().superRefine((b, ctx) => {
   const n = [b.filas !== undefined, b.csv !== undefined, b.matriz !== undefined].filter(Boolean).length
   if (n !== 1) ctx.addIssue({ code: 'custom', path: ['filas'], message: 'SIN_FILAS' })

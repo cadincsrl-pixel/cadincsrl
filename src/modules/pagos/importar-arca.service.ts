@@ -7,7 +7,8 @@
  * mes de la fecha. Con `confirmar=false` es VISTA PREVIA y no escribe nada;
  * con `true` es TODO O NADA (422 IMPORTACION_CON_ERRORES si alguna fila
  * falla). Las facturas entran impagas, `sin_imputar` (sin concepto ni reparto
- * por obra) y no se pueden aprobar hasta imputarlas.
+ * por obra) y no se pueden aprobar hasta imputarlas. Con `historica`
+ * (20260928) son de meses ya pagados: `pago_a_reconstruir`, fuera de la deuda.
  *
  * Entrada: `filas` ya normalizadas (contrato de la spec), o el archivo crudo
  * (`csv` o `matriz`) que se parsea acá con `arca-recibidos.ts`. En ese caso
@@ -70,10 +71,11 @@ export const importarArcaService = {
     const { data, error } = await supabase.rpc('pagos_importar_recibidos', {
       p_filas: filas, p_user_id: userId, p_confirmar: dto.confirmar,
       p_archivo: dto.archivo ?? '', p_hash: dto.hash_sha256 ?? null,
+      p_historica: dto.historica ?? false,
     })
     if (error) throw mapRpcError(error)
     const r = (data ?? {}) as Record<string, unknown>
-    console.info(`[pagos] importar ARCA recibidos ${dto.confirmar ? 'CONFIRMADO' : 'vista previa'} «${dto.archivo ?? ''}» por ${userId}: `
+    console.info(`[pagos] importar ARCA recibidos ${dto.confirmar ? 'CONFIRMADO' : 'vista previa'}${dto.historica ? ' (histórica)' : ''} «${dto.archivo ?? ''}» por ${userId}: `
       + `${String(r.total_filas)} filas, ${String(r.nuevas)} nuevas, ${String(r.duplicadas)} duplicadas, ${String(r.errores)} con error, `
       + `${Array.isArray(r.proveedores_nuevos) ? r.proveedores_nuevos.length : 0} proveedores nuevos`
       + (r.importacion_id != null ? ` (importación ${String(r.importacion_id)})` : ''))
