@@ -152,3 +152,231 @@ export const MotivoSchema = z.object({ motivo: z.string().max(1000).optional().n
 export const RegistrarFinnegansSchema = z.object({
   numero_finnegans: z.string().trim().min(1, 'número de Finnegans vacío').max(100),
 })
+
+// ═══════════════════════ Cobranzas, saldos iniciales y deudores ═══════════════
+// Contrato «Ventas — Cobranzas y estado de deudores (v1)» + base 20260924k…n.
+// Solo forma: las reglas (saldos, mismo cliente, cheques, totales) las valida
+// la RPC bajo FOR UPDATE, que es la fuente de verdad.
+
+/** 'prod' por defecto; 'homo' para probar con facturas de homologación. */
+export const AmbienteCobranzaSchema = z.enum(['prod', 'homo'])
+export type AmbienteCobranza = z.infer<typeof AmbienteCobranzaSchema>
+export const AmbienteQuerySchema = z.object({ ambiente: AmbienteCobranzaSchema.optional() })
+
+const importe = z.coerce.number().positive('importe > 0').max(1e13)
+const idPos = z.coerce.number().int().positive()
+const textoOpc = (max: number) => z.string().max(max).optional().nullable()
+
+export const MedioCobroSchema = z.object({
+  forma: z.enum(['transferencia', 'cheque', 'echeq', 'efectivo', 'otro']),
+  importe,
+  cuenta_bancaria_id: idPos.optional().nullable(),
+  cheque_numero: textoOpc(50),
+  cheque_banco: textoOpc(100),
+  cheque_librador: textoOpc(200),
+  cheque_fecha_cobro: fechaIso.optional().nullable(),
+  obs: textoOpc(1000),
+})
+
+export const TIPOS_RETENCION = ['iibb', 'tem', 'suss', 'ganancias', 'iva', 'otra'] as const
+export const RetencionCobroSchema = z.object({
+  tipo: z.enum(TIPOS_RETENCION),
+  importe,
+  jurisdiccion: textoOpc(100),
+  certificado_numero: textoOpc(100),
+  fecha: fechaIso.optional().nullable(),
+  obs: textoOpc(1000),
+  /** Certificado subido antes con POST /cobros/retenciones/upload-url (retenciones/pendientes/…). */
+  adjunto_path: z.string().max(300).optional().nullable(),
+  adjunto_nombre: textoOpc(255),
+  adjunto_mime: textoOpc(100),
+})
+export type RetencionCobroDto = z.infer<typeof RetencionCobroSchema>
+
+/** Destino de una imputación: exactamente uno de factura_id (ERP) o externo_id. */
+export const ItemImputacionSchema = z.object({
+  factura_id: idPos.optional().nullable(),
+  externo_id: idPos.optional().nullable(),
+  importe,
+}).refine((i) => (i.factura_id != null) !== (i.externo_id != null), { message: 'factura_id o externo_id (uno solo)', path: ['factura_id'] })
+export type ItemImputacionDto = z.infer<typeof ItemImputacionSchema>
+
+export const RegistrarCobroSchema = z.object({
+  cobro: z.object({
+    fecha: fechaIso.optional().nullable(),
+    cliente_id: idPos,
+    obs: textoOpc(2000),
+    ambiente: AmbienteCobranzaSchema.optional(),
+  }),
+  medios: z.array(MedioCobroSchema).max(50).optional().default([]),
+  retenciones: z.array(RetencionCobroSchema).max(50).optional().default([]),
+  imputaciones: z.array(ItemImputacionSchema).max(500).optional().default([]),
+})
+export type RegistrarCobroDto = z.infer<typeof RegistrarCobroSchema>
+
+export const ImputarSchema = z.object({
+  items: z.array(ItemImputacionSchema).min(1, 'al menos una imputación').max(500),
+  fecha: fechaIso.optional().nullable(),
+})
+export type ImputarDto = z.infer<typeof ImputarSchema>
+
+export const CompensarSchema = z.object({
+  nc: z.object({
+    factura_id: idPos.optional().nullable(),
+    externo_id: idPos.optional().nullable(),
+  }).refine((n) => (n.factura_id != null) !== (n.externo_id != null), { message: 'nc.factura_id o nc.externo_id (uno solo)', path: ['factura_id'] }),
+  items: z.array(ItemImputacionSchema).min(1, 'al menos una imputación').max(500),
+  fecha: fechaIso.optional().nullable(),
+})
+export type CompensarDto = z.infer<typeof CompensarSchema>
+
+export const AnularCobroSchema = z.object({ motivo: z.string().trim().min(1, 'motivo vacío').max(1000) })
+export const AnularImputacionSchema = z.object({ motivo: z.string().max(1000).optional().nullable() })
+
+export const ListCobrosQuerySchema = z.object({
+  cliente_id: idPos.optional(),
+  desde: fechaIso.optional(),
+  hasta: fechaIso.optional(),
+  estado: z.enum(['vigente', 'anulado']).optional(),
+  con_a_cuenta: z.string().optional(),
+  q: z.string().max(200).optional(),
+  ambiente: AmbienteCobranzaSchema.optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(500).optional().default(50),
+})
+export type ListCobrosQuery = z.infer<typeof ListCobrosQuerySchema>
+
+export const ListImputacionesQuerySchema = z.object({
+  cobro_id: idPos.optional(),
+  factura_id: idPos.optional(),
+  externo_id: idPos.optional(),
+  nc_factura_id: idPos.optional(),
+  nc_externo_id: idPos.optional(),
+  incluir_anuladas: z.string().optional(),
+})
+export type ListImputacionesQuery = z.infer<typeof ListImputacionesQuerySchema>
+
+export const UploadRetencionSchema = z.object({
+  nombre_archivo: z.string().trim().min(1).max(255),
+  mime_type: z.string().max(100),
+  size_bytes: z.coerce.number().int().positive(),
+})
+export type UploadRetencionDto = z.infer<typeof UploadRetencionSchema>
+
+export const AdjuntoRetencionSchema = z.object({
+  adjunto_path: z.string().min(1).max(300),
+  adjunto_nombre: textoOpc(255),
+  adjunto_mime: textoOpc(100),
+})
+export type AdjuntoRetencionDto = z.infer<typeof AdjuntoRetencionSchema>
+
+export const PendientesQuerySchema = z.object({
+  ambiente: AmbienteCobranzaSchema.optional(),
+  al: fechaIso.optional(),
+})
+
+export const DeudoresQuerySchema = z.object({
+  al: fechaIso.optional(),
+  ambiente: AmbienteCobranzaSchema.optional(),
+  q: z.string().max(200).optional(),
+})
+export type DeudoresQuery = z.infer<typeof DeudoresQuerySchema>
+
+export const EstadoCuentaQuerySchema = z.object({
+  desde: fechaIso.optional(),
+  hasta: fechaIso.optional(),
+  ambiente: AmbienteCobranzaSchema.optional(),
+})
+export type EstadoCuentaQuery = z.infer<typeof EstadoCuentaQuerySchema>
+
+export const VencimientoSchema = z.object({
+  /** null = volver al automático (fecha + plazo del cliente; FCE: fch_vto_pago). */
+  vence_el: fechaIso.nullable(),
+})
+
+// ── Saldos iniciales (comprobantes externos) ────────────────────────────────
+
+export const CBTE_TIPOS_EXTERNOS = [1, 2, 3, 6, 7, 8, 60, 61, 201, 202, 203] as const
+const CbteTipoExternoSchema = z.coerce.number().int()
+  .refine((n) => (CBTE_TIPOS_EXTERNOS as readonly number[]).includes(n), 'cbte_tipo: 1, 2, 3, 6, 7, 8, 60, 61, 201, 202 o 203')
+const monto0 = z.coerce.number().min(0).max(1e13)
+
+const ExternoBase = {
+  cliente_id: idPos,
+  /** Código de ARCA. Alternativa: tipo (FC/ND/NC) + letra (A/B). */
+  cbte_tipo: CbteTipoExternoSchema.optional().nullable(),
+  tipo: z.enum(['FC', 'ND', 'NC']).optional().nullable(),
+  letra: z.enum(['A', 'B']).optional().nullable(),
+  pto_vta: z.coerce.number().int().min(0).max(99999),
+  numero: z.coerce.number().int().min(1).max(99999999),
+  fecha: fechaIso,
+  vence_el: fechaIso.optional().nullable(),
+  neto: monto0.optional().nullable(),
+  no_gravado: monto0.optional().nullable(),
+  exento: monto0.optional().nullable(),
+  iva: monto0.optional().nullable(),
+  total: z.coerce.number().positive('total > 0').max(1e13),
+  /** Deuda (FC/ND) o crédito sin usar (NC) a la fecha de corte. Default = total. */
+  saldo_inicial: monto0.optional().nullable(),
+  saldo_a_revisar: z.boolean().optional(),
+  saldo_motivo: textoOpc(1000),
+  origen: z.enum(['finnegans', 'portal', 'otro']).optional(),
+  obs: textoOpc(2000),
+}
+
+export const CreateExternoSchema = z.object(ExternoBase)
+  .refine((e) => e.cbte_tipo != null || (e.tipo != null && e.letra != null), { message: 'cbte_tipo, o tipo y letra', path: ['cbte_tipo'] })
+export type CreateExternoDto = z.infer<typeof CreateExternoSchema>
+
+export const UpdateExternoSchema = z.object({
+  cliente_id: idPos.optional(),
+  cbte_tipo: CbteTipoExternoSchema.optional(),
+  pto_vta: z.coerce.number().int().min(0).max(99999).optional(),
+  numero: z.coerce.number().int().min(1).max(99999999).optional(),
+  fecha: fechaIso.optional(),
+  vence_el: fechaIso.optional(),
+  neto: monto0.optional(),
+  no_gravado: monto0.optional(),
+  exento: monto0.optional(),
+  iva: monto0.optional(),
+  total: z.coerce.number().positive().max(1e13).optional(),
+  saldo_inicial: monto0.optional(),
+  saldo_motivo: textoOpc(1000),
+  origen: z.enum(['finnegans', 'portal', 'otro']).optional(),
+  obs: textoOpc(2000),
+})
+export type UpdateExternoDto = z.infer<typeof UpdateExternoSchema>
+
+export const ListExternosQuerySchema = z.object({
+  cliente_id: idPos.optional(),
+  cbte_tipo: z.string().regex(/^[\d,]*$/).optional(),
+  tipo: z.enum(['FC', 'ND', 'NC']).optional(),
+  a_revisar: z.string().optional(),
+  con_saldo: z.string().optional(),
+  origen: z.enum(['finnegans', 'portal', 'otro']).optional(),
+  desde: fechaIso.optional(),
+  hasta: fechaIso.optional(),
+  q: z.string().max(200).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(1000).optional().default(100),
+})
+export type ListExternosQuery = z.infer<typeof ListExternosQuerySchema>
+
+const celda = z.union([z.string(), z.number(), z.boolean(), z.null()])
+export const ImportarExternosSchema = z.object({
+  /** Filas ya parseadas: claves de la RPC (cbte_tipo, pto_vta, numero…) o los encabezados del Excel de ARCA. */
+  filas: z.array(z.record(z.string(), celda)).max(2000).optional(),
+  /** Alternativa: CSV con encabezado (coma, punto y coma o tab). */
+  csv: z.string().max(5_000_000).optional(),
+  confirmar: z.boolean().optional().default(false),
+  origen: z.enum(['finnegans', 'portal', 'otro']).optional().default('portal'),
+}).refine((b) => (b.filas?.length ?? 0) > 0 || (b.csv ?? '').trim().length > 0, { message: 'filas o csv', path: ['filas'] })
+export type ImportarExternosDto = z.infer<typeof ImportarExternosSchema>
+
+export const MarcarExternosSchema = z.object({
+  ids: z.array(idPos).min(1, 'al menos un comprobante').max(2000),
+  accion: z.enum(['cobrada', 'impaga', 'revisar']),
+  motivo: textoOpc(1000),
+  fecha: fechaIso.optional().nullable(),
+})
+export type MarcarExternosDto = z.infer<typeof MarcarExternosSchema>

@@ -32,13 +32,21 @@ import { emisionService } from './emision.service.js'
 import { cuentasService } from './cuentas.service.js'
 import { fceService } from './fce.service.js'
 import { padronService } from './padron.service.js'
+import { cobrosService } from './cobros.service.js'
+import { externosService } from './externos.service.js'
+import { deudoresService } from './deudores.service.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
   ListClientesQuerySchema, CreateClienteSchema, UpdateClienteSchema, ObrasClienteSchema,
   GuardarFacturaSchema, ListFacturasQuerySchema, ResumenQuerySchema,
   EmitirSchema, MotivoSchema, RegistrarFinnegansSchema,
   FceClienteQuerySchema, CuentaSchema, UpdateCuentaSchema, ListCuentasQuerySchema, esBoolQ,
+  RegistrarCobroSchema, ImputarSchema, CompensarSchema, AnularCobroSchema, AnularImputacionSchema,
+  ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema,
+  PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
+  CreateExternoSchema, UpdateExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
 } from './facturacion.schema.js'
+import { z } from 'zod'
 
 const MOD = 'facturacion'
 const fact = new Hono()
@@ -56,6 +64,18 @@ const tabCatalogos  = requireTab(MOD, ['facturas', 'clientes', 'finnegans'])
 const tabListado    = requireTab(MOD, ['facturas', 'finnegans'])
 const tabLeerClientes = requireTab(MOD, ['facturas', 'clientes'])
 const registrarFinnegans = requireFlag(MOD, 'registrar_finnegans')
+// Cobranzas (20260924k…o). Tabs: cobranzas (cobros e imputaciones), deudores
+// (deudores y estado de cuenta), saldos_iniciales (externos, importar, marcar).
+const tabCobranzas    = requireTab(MOD, 'cobranzas')
+const tabDeudores     = requireTab(MOD, 'deudores')
+const tabSaldos       = requireTab(MOD, 'saldos_iniciales')
+const tabLeerCobros   = requireTab(MOD, ['cobranzas', 'deudores'])
+// La compensación y la anulación de una imputación se hacen también desde la ficha de la NC (tab facturas).
+const tabCompensar    = requireTab(MOD, ['cobranzas', 'facturas'])
+const tabImputaciones = requireTab(MOD, ['cobranzas', 'deudores', 'facturas', 'saldos_iniciales'])
+const tabVencimiento  = requireTab(MOD, ['facturas', 'cobranzas', 'deudores'])
+const registrarCobros = requireFlag(MOD, 'registrar_cobros')
+const anularCobros    = requireFlag(MOD, 'anular_cobros')
 
 /** Errores tipados → `{ error, campo?, detail?, ...extra }`. Lo demás sube al onError global. */
 function handler(fn: (c: any) => Promise<any>) {
@@ -228,5 +248,91 @@ fact.post('/facturas/:id/registrar-finnegans', lectura, registrarFinnegans, tabF
 
 fact.post('/facturas/:id/deshacer-registro', lectura, registrarFinnegans, tabFinnegans, handler(async (c) =>
   facturasService.deshacerRegistro(idParam(c), uid(c), db(c))))
+
+fact.patch('/facturas/:id/vencimiento', actualizacion, tabVencimiento, valida('json', VencimientoSchema), handler(async (c) =>
+  deudoresService.cambiarVencimiento(idParam(c), c.req.valid('json').vence_el, uid(c), db(c))))
+
+// ═══════════════════════════════════ Cobranzas ══════════════════════════════
+// Contrato «Ventas — Cobranzas y estado de deudores (v1)». Todo filtra
+// ambiente='prod' salvo `?ambiente=homo`. Las RPC vuelven a chequear los flags.
+
+fact.get('/cobros', lectura, tabLeerCobros, valida('query', ListCobrosQuerySchema), handler(async (c) =>
+  cobrosService.listar(c.req.valid('query'), db(c))))
+
+// Certificados de retención: literales ANTES de /cobros/:id.
+fact.post('/cobros/retenciones/upload-url', lectura, registrarCobros, tabCobranzas, valida('json', UploadRetencionSchema), handler(async (c) =>
+  cobrosService.uploadUrlRetencion(c.req.valid('json'))))
+
+fact.post('/cobros/retenciones/descartar-pendiente', lectura, registrarCobros, tabCobranzas,
+  valida('json', z.object({ storage_path: z.string().min(1).max(300) })), handler(async (c) =>
+    cobrosService.descartarPendiente(c.req.valid('json').storage_path)))
+
+const urlRetencion = handler(async (c) => cobrosService.urlRetencion(idParam(c), db(c)))
+fact.get('/cobros/retenciones/:id/url', lectura, tabLeerCobros, urlRetencion)
+fact.get('/retenciones/:id/url', lectura, tabLeerCobros, urlRetencion)
+
+fact.post('/cobros/retenciones/:id/adjunto', lectura, registrarCobros, tabCobranzas, valida('json', AdjuntoRetencionSchema), handler(async (c) =>
+  cobrosService.adjuntarRetencion(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+fact.get('/cobros/:id', lectura, tabLeerCobros, handler(async (c) =>
+  cobrosService.detalle(idParam(c), db(c))))
+
+fact.post('/cobros', lectura, registrarCobros, tabCobranzas, valida('json', RegistrarCobroSchema), handler(async (c) =>
+  cobrosService.registrar(c.req.valid('json'), c.req.query('ambiente'), uid(c), db(c))))
+
+fact.post('/cobros/:id/imputar', lectura, registrarCobros, tabCobranzas, valida('json', ImputarSchema), handler(async (c) =>
+  cobrosService.imputar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+fact.post('/cobros/:id/anular', lectura, anularCobros, tabCobranzas, valida('json', AnularCobroSchema), handler(async (c) =>
+  cobrosService.anular(idParam(c), c.req.valid('json').motivo, uid(c), db(c))))
+
+fact.post('/compensaciones', lectura, registrarCobros, tabCompensar, valida('json', CompensarSchema), handler(async (c) =>
+  cobrosService.compensar(c.req.valid('json'), uid(c), db(c))))
+
+fact.get('/imputaciones', lectura, tabImputaciones, valida('query', ListImputacionesQuerySchema), handler(async (c) =>
+  cobrosService.imputaciones(c.req.valid('query'), db(c))))
+
+fact.post('/imputaciones/:id/anular', lectura, anularCobros, tabCompensar, handler(async (c) => {
+  const { motivo } = await bodyOpcional(c, AnularImputacionSchema)
+  return cobrosService.anularImputacion(idParam(c), motivo, uid(c), db(c))
+}))
+
+// Débitos con saldo (grilla «Aplicación de comprobantes») + créditos libres (popup de compensación).
+fact.get('/clientes/:id/pendientes', lectura, requireTab(MOD, ['cobranzas', 'deudores', 'facturas']), valida('query', PendientesQuerySchema), handler(async (c) =>
+  deudoresService.pendientes(idParam(c), c.req.valid('query'), db(c))))
+
+// ═══════════════════════════════════ Deudores ═══════════════════════════════
+
+fact.get('/deudores', lectura, tabDeudores, valida('query', DeudoresQuerySchema), handler(async (c) =>
+  deudoresService.deudores(c.req.valid('query'), db(c))))
+
+fact.get('/clientes/:id/estado-cuenta', lectura, tabDeudores, valida('query', EstadoCuentaQuerySchema), handler(async (c) =>
+  deudoresService.estadoCuenta(idParam(c), c.req.valid('query'), db(c))))
+
+// ═══════════════════════════════════ Saldos iniciales (externos) ════════════
+
+fact.get('/externos', lectura, tabSaldos, valida('query', ListExternosQuerySchema), handler(async (c) =>
+  externosService.listar(c.req.valid('query'), db(c))))
+
+// Vista previa (confirmar=false) o importación todo-o-nada. Literales ANTES de /externos/:id.
+fact.post('/externos/importar', creacion, tabSaldos, valida('json', ImportarExternosSchema), handler(async (c) =>
+  externosService.importar(c.req.valid('json'), uid(c), db(c))))
+
+fact.post('/externos/marcar', actualizacion, tabSaldos, valida('json', MarcarExternosSchema), handler(async (c) =>
+  externosService.marcar(c.req.valid('json'), uid(c), db(c))))
+
+fact.get('/externos/:id', lectura, tabSaldos, handler(async (c) =>
+  externosService.detalle(idParam(c), db(c))))
+
+fact.post('/externos', creacion, tabSaldos, valida('json', CreateExternoSchema), handler(async (c) =>
+  externosService.crear(c.req.valid('json'), uid(c), db(c))))
+
+fact.patch('/externos/:id', actualizacion, tabSaldos, valida('json', UpdateExternoSchema), handler(async (c) =>
+  externosService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+fact.delete('/externos/:id', eliminacion, tabSaldos, handler(async (c) => {
+  await externosService.borrar(idParam(c), db(c))
+  return c.body(null, 204)
+}))
 
 export default fact

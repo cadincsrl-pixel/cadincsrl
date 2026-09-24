@@ -76,6 +76,9 @@ export const VERBOS: Record<string, string> = {
   emitir: 'emitir en ARCA', reconciliar: 'reconciliar con ARCA', descartar: 'descartar',
   'volver-a-borrador': 'volver a borrador', alta: 'dar de alta',
   'actualizar-desde-arca': 'actualizar desde el padrón de ARCA',
+  // Cobranzas de Ventas (2026-09-24). `anular` y `upload-url` ya están arriba.
+  imputar: 'imputar', marcar: 'marcar saldo', importar: 'importar', vencimiento: 'cambiar vencimiento',
+  adjunto: 'adjuntar certificado', 'descartar-pendiente': 'descartar adjunto pendiente',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
@@ -152,6 +155,11 @@ export const ENTIDADES: Record<string, string> = {
   facturacion: 'factura de venta', 'facturacion/facturas': 'factura de venta',
   'facturacion/clientes': 'cliente', 'facturacion/clientes/obras': 'obras del cliente',
   'facturacion/cuentas': 'cuenta bancaria (FCE)',
+  // Cobranzas: POST /facturacion/cobros/5/imputar → «imputar cobro 5»;
+  // una compensación con NC crea imputaciones.
+  'facturacion/cobros': 'cobro', 'facturacion/cobros/retenciones': 'certificado de retención',
+  'facturacion/imputaciones': 'imputación', 'facturacion/compensaciones': 'imputación',
+  'facturacion/externos': 'comprobante externo',
 }
 
 /** Palabras que aparecen como segmentos de ruta: nunca son un id. */
@@ -330,7 +338,7 @@ export function extraerId(j: unknown): string | undefined {
     const v = o[k]
     if (typeof v === 'number' || (typeof v === 'string' && v !== '')) return String(v)
   }
-  for (const k of ['data', 'item', 'solicitud', 'remito', 'movimiento', 'tramo', 'liquidacion', 'factura']) {
+  for (const k of ['data', 'item', 'solicitud', 'remito', 'movimiento', 'tramo', 'liquidacion', 'factura', 'cobro', 'externo']) {
     const v = o[k]
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       const id = extraerId(v)
