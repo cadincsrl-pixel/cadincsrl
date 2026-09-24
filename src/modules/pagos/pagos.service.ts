@@ -279,8 +279,6 @@ function aplicarFiltrosOrdenes(q: any, f: Omit<ListOrdenesQuery, 'limit' | 'offs
   if (f.hasta) q = q.lte('fecha', f.hasta)
   if (esBoolQ(f.sin_comprobante)) q = q.eq('tiene_comprobante', false)
   if (esBoolQ(f.en_cartera)) q = q.eq('en_cartera', true)
-  if (esBoolQ(f.con_nota_credito)) q = q.gt('monto_nc', 0)
-  if (esBoolQ(f.sin_registrar)) q = q.eq('estado', 'emitida').is('numero_finnegans', null)
   for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
   return q
 }
@@ -896,17 +894,13 @@ export const pagosService = {
   async listarOrdenes(f: ListOrdenesQuery, verPii: boolean, token: string) {
     const sb = createSupabaseClient(token)
     const q = aplicarFiltrosOrdenes(sb.from('v_pagos_ordenes').select('*', { count: 'exact' }), f)
-    const [lista, tot, pendReg] = await Promise.all([
+    const [lista, tot] = await Promise.all([
       q.order('fecha', { ascending: false }).order('numero', { ascending: false }).range(f.offset, f.offset + f.limit - 1),
       supabase.rpc('pagos_ordenes_resumen', {
         p_grupo: 'forma_pago', p_eje: 'op',
         p_desde: f.desde ?? null, p_hasta: f.hasta ?? null,
         p_proveedor_id: f.proveedor_id ?? null, p_forma_pago: f.forma_pago ?? null,
       }),
-      // Lo que el contador tiene pendiente de pasar a Finnegans, sin filtros:
-      // es un número de «cuánto me falta», no de lo que muestra la pantalla.
-      supabase.from('pagos_ordenes').select('id', { count: 'exact', head: true })
-        .eq('estado', 'emitida').is('numero_finnegans', null),
     ])
     if (lista.error) throw new PagosHttpError(500, 'DB_ERROR', lista.error.message)
     const items = ((lista.data ?? []) as Record<string, unknown>[]).map((r) => enmascararFila(r, verPii))
@@ -917,8 +911,7 @@ export const pagosService = {
       monto_pagado: sumaCentavos(grupos.map((g) => Number(g.monto_pagado ?? 0))),
       monto_nc: sumaCentavos(grupos.map((g) => Number(g.monto_nc ?? 0))),
     }
-    const sin_registrar = pendReg.error ? null : (pendReg.count ?? 0)
-    return { items, total, limit: f.limit, offset: f.offset, hasMore: f.offset + items.length < total, totales, sin_registrar }
+    return { items, total, limit: f.limit, offset: f.offset, hasMore: f.offset + items.length < total, totales }
   },
 
   /** Todas las órdenes que matchean el filtro, para el Excel. Pagina en el server. */

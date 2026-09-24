@@ -2,7 +2,7 @@
  * Lecturas de saldos de Ventas: pendientes de un cliente (grilla «Aplicación
  * de comprobantes» y popup de compensación), estado de deudores y estado de
  * cuenta. TODO sale de la fuente única `ventas_saldos_al` (20260924m), vía
- * `ventas_deudores_al` y `ventas_estado_cuenta`. Ambiente 'prod' salvo que se
+ * `ventas_deudores_antiguedad_al` (antigüedad desde la fecha de la factura) y `ventas_estado_cuenta`. Ambiente 'prod' salvo que se
  * pida 'homo'.
  *
  * También el cambio de vencimiento de cobro de una factura

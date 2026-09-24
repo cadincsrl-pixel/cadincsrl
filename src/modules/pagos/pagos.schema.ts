@@ -542,9 +542,6 @@ export const ListOrdenesQuerySchema = z.object({
   hasta:             FechaISO.optional(),
   sin_comprobante:   BOOL_Q,
   en_cartera:        BOOL_Q,
-  con_nota_credito:  BOOL_Q,
-  /** Emitidas que el contador todavía no pasó a Finnegans (20260923c). */
-  sin_registrar:     BOOL_Q,
   limit:             z.coerce.number().int().min(1).max(500).default(50),
   offset:            z.coerce.number().int().min(0).default(0),
 })
