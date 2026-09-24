@@ -31,6 +31,7 @@ import { proveedoresService, enmascararProveedor } from './proveedores.service.j
 import { pagosAdjuntosService } from './adjuntos.service.js'
 import { lecturaService } from './lectura.service.js'
 import { desgloseService } from './desglose.service.js'
+import { conceptosService } from './conceptos.service.js'
 import {
   TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, esBoolQ,
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
@@ -40,6 +41,7 @@ import {
   CompletarDesgloseSchema, LeerAdjuntoSchema,
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
+  ListConceptosQuerySchema, CreateConceptoSchema, UpdateConceptoSchema,
 } from './pagos.schema.js'
 
 const pagos = new Hono()
@@ -323,6 +325,21 @@ pagos.post('/proveedores/:id/baja', actualizacion, tabProveedores, zValidator('j
 
 pagos.post('/proveedores/:id/reactivar', actualizacion, tabProveedores, handler(async (c) =>
   proveedoresService.reactivar(idParam(c), c.get('user').id, c.get('accessToken'))))
+
+// ═══════════════════════════════════ Conceptos de compra (20260925i) ═══════
+// La lista la usan el modal de carga (facturas), los filtros de la bandeja y
+// la ficha, que también se abre desde pagos: cualquier tab de pagos la lee.
+// La ajusta quien tiene `pagos.actualizacion` (el contador). Sin DELETE: se
+// da de baja con `activo=false`, y nunca el último activo.
+
+pagos.get('/conceptos', lectura, tabProvLect, zValidator('query', ListConceptosQuerySchema), handler(async (c) =>
+  conceptosService.listar(c.req.valid('query'), c.get('accessToken'))))
+
+pagos.post('/conceptos', actualizacion, tabProvLect, zValidator('json', CreateConceptoSchema), handler(async (c) =>
+  conceptosService.crear(c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
+
+pagos.patch('/conceptos/:id', actualizacion, tabProvLect, zValidator('json', UpdateConceptoSchema), handler(async (c) =>
+  conceptosService.editar(idParam(c), c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
 
 // ═══════════════════════════════════ Catálogos ══════════════════════════════
 

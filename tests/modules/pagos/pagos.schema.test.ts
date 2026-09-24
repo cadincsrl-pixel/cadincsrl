@@ -72,7 +72,7 @@ describe('CreateFacturaSchema', () => {
   // campos, punto de venta y comprobante, y manda el compuesto.
   const base = {
     proveedor_id: 1, tipo_comprobante: 'A', numero: '0013-00402141',
-    fecha: '2026-09-18', total: 1210, descripcion: 'Hierro 8 mm',
+    fecha: '2026-09-18', total: 1210, descripcion: 'Hierro 8 mm', concepto_id: 2,
     imputaciones: [{ obra_cod: 'CC 1', monto: 1210 }],
   }
   it('plan de cheques (20260923n): cantidad 1–24, primer cobro fecha, cada 1–365; null lo borra', () => {
@@ -150,7 +150,7 @@ describe('líneas de OP (la NC ya no es línea, 20260925a)', () => {
 describe('nota de crédito como comprobante (20260925a)', () => {
   const NC = {
     proveedor_id: 1, tipo_comprobante: 'A', numero: '0001-00000012', fecha: '2026-09-18', total: 300,
-    descripcion: 'Devolución de soga', imputaciones: [{ obra_cod: 'CC 1', monto: 300 }], clase: 'nota_credito', cbte_tipo_arca: 3,
+    descripcion: 'Devolución de soga', concepto_id: 2, imputaciones: [{ obra_cod: 'CC 1', monto: 300 }], clase: 'nota_credito', cbte_tipo_arca: 3,
   }
   const issues = (r: { success: boolean; error?: { issues: { path: PropertyKey[]; message: string }[] } }) =>
     (r.error?.issues ?? []).map((i) => `${i.path.join('.')}:${i.message}`)

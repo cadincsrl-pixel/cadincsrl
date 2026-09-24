@@ -65,6 +65,13 @@ export interface Propuesta {
   clase: 'factura' | 'nota_credito'
   /** Sólo NC: las facturas que menciona el papel (sólo IA). El service las cruza con las abiertas del proveedor. */
   comprobantes_asociados: ComprobanteAsociado[]
+  /**
+   * Concepto sugerido por la IA (20260925i), ya validado contra los activos.
+   * Lo pone `analizarComprobante` (no la fusión: depende de la base); null si
+   * la IA no sugirió o sugirió un id que no está en la lista.
+   */
+  concepto_id_sugerido?: number | null
+  concepto_sugerido?: string | null
 }
 
 export interface ComprobanteAsociado { letra: string | null; punto_venta: string | null; numero: string | null }

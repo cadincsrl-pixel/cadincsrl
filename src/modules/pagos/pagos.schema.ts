@@ -78,6 +78,13 @@ const Monto = z.number().positive().multipleOf(0.01).max(999_999_999_999.99)
 const MontoNoNeg = z.number().min(0).multipleOf(0.01).max(999_999_999_999.99)
 const MontoConSigno = z.number().multipleOf(0.01).min(-999_999_999_999.99).max(999_999_999_999.99)
 const Id = z.number().int().positive()
+/**
+ * Concepto de la factura (20260925i–n): UNO por comprobante, de la lista
+ * `pagos_conceptos` que ajusta el contador. Obligatorio en el alta (la base
+ * lo exige recién con `20260925n`; el schema se adelanta). El mensaje es el
+ * código, para que el modal lo muestre bajo el Select.
+ */
+const ConceptoId = z.number({ error: 'CONCEPTO_REQUERIDO' }).int('CONCEPTO_INVALIDO').positive('CONCEPTO_INVALIDO')
 const BOOL_Q = z.enum(['1', '0', 'true', 'false']).optional()
 export const esBoolQ = (v?: string) => v === '1' || v === 'true'
 
@@ -219,6 +226,8 @@ export const CreateFacturaSchema = z.object({
   total:               Monto,
   forma_pago_prevista: z.enum(FORMAS_PREVISTAS).default('transferencia'),
   descripcion:         z.string().trim().min(3).max(300),
+  /** Qué se compró, clasificado (combustible, materiales…). `descripcion` sigue siendo el detalle. */
+  concepto_id:         ConceptoId,
   obs:                 z.string().trim().max(2000).optional().default(''),
   paga_cliente:        z.boolean().default(false),
   plan_cheques:        PlanChequesSchema.nullable().optional(),
@@ -271,6 +280,12 @@ export const UpdateFacturaSchema = z.object({
   total:               Monto.optional(),
   forma_pago_prevista: z.enum(FORMAS_PREVISTAS).optional(),
   descripcion:         z.string().trim().min(3).max(300).optional(),
+  /**
+   * Editable SIEMPRE, también en pagadas y aprobadas: es clasificación, no
+   * plata (no está en CAMPOS_CONGELADOS ni en CAMPOS_QUE_DESAPRUEBAN). No
+   * admite null: una factura con concepto no se puede dejar sin.
+   */
+  concepto_id:         ConceptoId.optional(),
   obs:                 z.string().trim().max(2000).optional(),
   paga_cliente:        z.boolean().optional(),
   plan_cheques:        PlanChequesSchema.nullable().optional(),
@@ -357,14 +372,19 @@ export const ListFacturasQuerySchema = z.object({
   clase:            z.enum(CLASES).optional(),
   /** NC aprobadas con crédito sin aplicar (`nc_disponible > 0`). */
   con_credito:      BOOL_Q,
+  /** Concepto de la factura (20260925i). */
+  concepto_id:      z.coerce.number().int().positive().optional(),
   orden:            z.enum(FACTURAS_ORDEN).default('vencimiento'),
   limit:            z.coerce.number().int().min(1).max(500).default(50),
   offset:           z.coerce.number().int().min(0).default(0),
 })
 export type ListFacturasQuery = z.infer<typeof ListFacturasQuerySchema>
 
-export const FACTURAS_RESUMEN_GRUPOS = ['proveedor', 'centro_costo', 'obra', 'mes_emision', 'estado', 'vencimiento', 'forma_pago'] as const
-export const FacturasResumenQuerySchema = ListFacturasQuerySchema.omit({ orden: true, limit: true, offset: true }).extend({
+/** `concepto` (20260925m): grupo = concepto_id como texto; sin concepto → 'sin_concepto'. */
+export const FACTURAS_RESUMEN_GRUPOS = ['proveedor', 'centro_costo', 'obra', 'mes_emision', 'estado', 'vencimiento', 'forma_pago', 'concepto'] as const
+// `pagos_resumen` no filtra por concepto: se saca del schema para que nadie
+// crea que el resumen lo respeta (sin esto se ignoraría en silencio).
+export const FacturasResumenQuerySchema = ListFacturasQuerySchema.omit({ orden: true, limit: true, offset: true, concepto_id: true }).extend({
   grupo: z.enum(FACTURAS_RESUMEN_GRUPOS).default('estado'),
 })
 export type FacturasResumenQuery = z.infer<typeof FacturasResumenQuerySchema>
@@ -598,6 +618,27 @@ export type UpdateProveedorDto = z.infer<typeof UpdateProveedorSchema>
 /** La puerta del contador: solo datos de pago, ni razón social ni CUIT. */
 export const DatosPagoSchema = UpdateProveedorSchema.omit({ razon_social: true, cuit: true, obs: true }).strict()
 export type DatosPagoDto = z.infer<typeof DatosPagoSchema>
+
+// ── Conceptos de compra (20260925i) ─────────────────────────────────────────
+
+/** `nombre_norm` lo arma un trigger: no se manda. Sin DELETE: se da de baja con `activo=false`. */
+export const CreateConceptoSchema = z.object({
+  nombre: Texto(80).min(2),
+  orden:  z.number().int().min(0).max(32767).nullable().optional(),
+}).strict()
+export type CreateConceptoDto = z.infer<typeof CreateConceptoSchema>
+
+export const UpdateConceptoSchema = z.object({
+  nombre: Texto(80).min(2).optional(),
+  orden:  z.number().int().min(0).max(32767).nullable().optional(),
+  activo: z.boolean().optional(),
+}).strict().refine((d) => Object.values(d).some((v) => v !== undefined), { message: 'SIN_CAMBIOS' })
+export type UpdateConceptoDto = z.infer<typeof UpdateConceptoSchema>
+
+export const ListConceptosQuerySchema = z.object({
+  incluir_inactivos: BOOL_Q,
+})
+export type ListConceptosQuery = z.infer<typeof ListConceptosQuerySchema>
 
 export const ListProveedoresQuerySchema = z.object({
   q:              z.string().max(200).optional(),

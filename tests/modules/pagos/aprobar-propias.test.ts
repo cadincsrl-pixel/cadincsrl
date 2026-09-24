@@ -102,7 +102,7 @@ describe('crearFactura — la factura nace aprobada', () => {
 
   const dto = {
     proveedor_id: 9, tipo_comprobante: 'A', numero: '0001-1', fecha: '2026-01-01',
-    total: 1000, descripcion: 'materiales de obra', forma_pago_prevista: 'transferencia',
+    total: 1000, descripcion: 'materiales de obra', concepto_id: 2, forma_pago_prevista: 'transferencia',
     paga_cliente: false, imputaciones: [{ obra_cod: 'CC-018', monto: 1000 }],
   } as any
 

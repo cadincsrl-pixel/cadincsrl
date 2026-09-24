@@ -89,7 +89,7 @@ const iaBase: LecturaIA = {
     { tipo: 'percepcion_iibb', jurisdiccion: 'Tucumán', descripcion: 'Perc. IIBB Tucumán', alicuota_pct: 3.5, base_imponible: 120000, importe: 4200 },
     { tipo: 'percepcion_iva', jurisdiccion: null, descripcion: 'Perc. IVA RG 2408', alicuota_pct: 3, base_imponible: 120000, importe: 3209.59 },
   ],
-  total: 152609.59, comprobantes_asociados: [], detalle_breve: 'Materiales de ferretería', notas: null,
+  total: 152609.59, comprobantes_asociados: [], detalle_breve: 'Materiales de ferretería', concepto_id: 2, notas: null,
 }
 
 describe('fusionar', () => {
@@ -213,7 +213,7 @@ describe('importes con desglose', () => {
 describe('schema', () => {
   const ok = {
     proveedor_id: 1, tipo_comprobante: 'A', numero: '0001-00000001', fecha: '2026-09-18', total: 1240,
-    descripcion: 'algo', imputaciones: [{ obra_cod: 'X', monto: 1210 }],
+    descripcion: 'algo', concepto_id: 2, imputaciones: [{ obra_cod: 'X', monto: 1210 }],
   }
   it('acepta el desglose y rechaza alícuotas repetidas o inválidas', () => {
     expect(CreateFacturaSchema.safeParse({ ...ok, iva_detalle: [{ alicuota_id: 5, base_imp: 1000, importe: 210 }] }).success).toBe(true)

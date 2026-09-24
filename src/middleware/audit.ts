@@ -156,6 +156,7 @@ export const ENTIDADES: Record<string, string> = {
   'pagos/facturas/adjuntos': 'adjunto de factura',
   'pagos/ordenes': 'orden de pago', 'pagos/ordenes/adjuntos': 'adjunto de orden de pago',
   'pagos/proveedores': 'proveedor (pagos)', 'pagos/catalogos': 'catálogo',
+  'pagos/conceptos': 'concepto de compra',
   // Facturación de venta. PUT /facturacion/clientes/5/obras → «obras del cliente 5».
   facturacion: 'factura de venta', 'facturacion/facturas': 'factura de venta',
   'facturacion/clientes': 'cliente', 'facturacion/clientes/obras': 'obras del cliente',

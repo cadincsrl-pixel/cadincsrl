@@ -30,7 +30,7 @@ import { BUCKET, sha256OfBlob, extFromMime, borrarDelBucket } from './adjuntos.s
 import { MAX_ADJUNTO_BYTES, MIME_PERMITIDOS, PREFIJO_LECTURA, type LeerFacturaDto } from './pagos.schema.js'
 import { hoyAR, normNumeroFactura } from './pagos.util.js'
 import { parsearQrArca, type QrArca } from './lectura/arca.js'
-import { leerFacturaConIA, type ResultadoIA } from './lectura/ia.js'
+import { leerFacturaConIA, type ConceptoOfrecido, type ResultadoIA } from './lectura/ia.js'
 import { fusionar, controlesDeContexto, type AvisoLectura, type Propuesta } from './lectura/fusion.js'
 
 const MIME_SET = new Set<string>(MIME_PERMITIDOS)
@@ -120,6 +120,24 @@ function validarPath(path: string) {
 }
 
 /**
+ * Los conceptos activos, en el orden de la pantalla, para ofrecérselos a la
+ * IA. Si la consulta falla la lectura sigue sin sugerencia: nunca se cae una
+ * lectura por esto.
+ */
+export async function conceptosActivos(): Promise<ConceptoOfrecido[]> {
+  const { data, error } = await supabase.from('pagos_conceptos').select('id, nombre')
+    .eq('activo', true).order('orden', { ascending: true, nullsFirst: false }).order('id')
+  if (error || !Array.isArray(data)) return []
+  return (data as { id: number; nombre: string }[]).map((c) => ({ id: Number(c.id), nombre: c.nombre }))
+}
+
+/** Lo que devolvió la IA, sólo si es uno de los conceptos ofrecidos. */
+export function conceptoSugerido(ia: ResultadoIA, conceptos: readonly ConceptoOfrecido[]): { id: number; nombre: string } | null {
+  if (!ia.ok || ia.lectura.concepto_id == null) return null
+  return conceptos.find((c) => c.id === ia.lectura.concepto_id) ?? null
+}
+
+/**
  * Lo común de las dos lecturas (archivo nuevo y adjunto ya guardado): QR que
  * mandó el navegador + IA + fusión. Nunca falla por la IA: sin key o con la
  * API caída devuelve lo del QR (o nada) y avisa.
@@ -127,8 +145,12 @@ function validarPath(path: string) {
 export async function analizarComprobante(buffer: Buffer, mime: string, qrTexto: string | null) {
   const qr = parsearQrArca(qrTexto)
   const qrIlegible = !!qrTexto && !qr
-  const ia: ResultadoIA = await leerFacturaConIA(buffer, mime)
+  const conceptos = await conceptosActivos()
+  const ia: ResultadoIA = await leerFacturaConIA(buffer, mime, conceptos)
   const fusion = fusionar(qr, ia.ok ? ia.lectura : null, { hoy: hoyAR() })
+  const concepto = conceptoSugerido(ia, conceptos)
+  fusion.propuesta.concepto_id_sugerido = concepto?.id ?? null
+  fusion.propuesta.concepto_sugerido = concepto?.nombre ?? null
   if (qrIlegible) {
     fusion.avisos.push({ campo: 'qr', severidad: 'advertencia', codigo: 'QR_NO_ES_DE_ARCA',
       mensaje: 'El QR del comprobante no es un QR de factura de ARCA válido: se usó sólo la lectura del papel.' })
@@ -266,6 +288,7 @@ export function camposEditados(p: Propuesta, final: {
   neto?: number | null; no_gravado?: number | null; exento?: number | null; cae?: string | null
   iva?: { alicuota_id: number; base_imp: number; importe: number }[] | null
   tributos?: { tipo: string; importe: number }[] | null
+  concepto_id?: number | null
 }): string[] {
   const out: string[] = []
   const numProp = normNumeroFactura(`${p.punto_venta ?? ''}-${p.numero_comprobante ?? ''}`)
@@ -284,5 +307,6 @@ export function camposEditados(p: Propuesta, final: {
   if (final.iva && firmaIva(p.iva) !== firmaIva(final.iva)) out.push('iva')
   const firmaTrib = (xs: { tipo: string; importe: number }[]) => xs.map((x) => `${x.tipo}:${n(x.importe)}`).sort().join('|')
   if (final.tributos && firmaTrib(p.tributos) !== firmaTrib(final.tributos)) out.push('tributos')
+  if (p.concepto_id_sugerido != null && final.concepto_id !== undefined && p.concepto_id_sugerido !== final.concepto_id) out.push('concepto_id')
   return out
 }

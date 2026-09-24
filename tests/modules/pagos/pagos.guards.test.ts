@@ -81,7 +81,7 @@ const CONTADOR_SIN_ANULAR = perfil({ lectura: true, registrar_pagos: true, ver_p
 
 const FACTURA_BASE = {
   proveedor_id: 1, tipo_comprobante: 'A', numero: '0001-00000007', fecha: HOY, total: 1_000_000, descripcion: 'Hierro 8 mm',
-  imputaciones: [{ obra_cod: 'CC 1', monto: 1_000_000 }],
+  concepto_id: 2, imputaciones: [{ obra_cod: 'CC 1', monto: 1_000_000 }],
 }
 
 beforeEach(() => {

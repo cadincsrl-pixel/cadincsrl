@@ -70,9 +70,32 @@ export const LecturaIASchema = z.object({
     numero: Txt,
   })),
   detalle_breve: Txt,
+  // El concepto de compra (20260925i), elegido de la lista que se le pasa en
+  // el prompt, por id. null si no hay lista o si no se puede decidir.
+  concepto_id: z.number().int().nullable(),
   notas: Txt,
 })
 export type LecturaIA = z.infer<typeof LecturaIASchema>
+
+/** Un concepto de compra activo, tal como se le ofrece al modelo. */
+export interface ConceptoOfrecido { id: number; nombre: string }
+
+/**
+ * La lista de conceptos para el prompt. Sale de la base en cada lectura (el
+ * contador la ajusta desde el sistema), así que no se puede escribir fija.
+ */
+export function instruccionConcepto(conceptos: readonly ConceptoOfrecido[]): string {
+  if (conceptos.length === 0) return `
+
+Concepto
+- concepto_id: null.`
+  return `
+
+Concepto de compra (cómo lo clasifica la contabilidad)
+- concepto_id: el id de UNO de estos conceptos, según lo que se compró (lo mismo que resumiste en detalle_breve). Gasoil, nafta o GNC → Combustible; cemento, hierro, cal, pintura para obra → Materiales de obra; flete o transporte → Fletes y transporte; repuestos o arreglos de vehículos o máquinas → Mantenimiento y repuestos.
+${conceptos.map((c) => `  ${c.id} = ${c.nombre}`).join('\n')}
+- Si el comprobante mezcla varias cosas, el concepto de lo que más pesa en el total. Si no se puede decidir, null. Nunca un id que no esté en la lista.`
+}
 
 export type ResultadoIA =
   | { ok: true; lectura: LecturaIA; modelo: string }
@@ -127,7 +150,7 @@ function bloqueDelArchivo(base64: string, mime: string): Anthropic.Beta.BetaCont
  * Refusal fallbacks prendidos (recomendación para claude-opus-5): si el
  * modelo declina, la API reintenta sola con otro modelo en la misma llamada.
  */
-export async function leerFacturaConIA(archivo: Buffer, mime: string): Promise<ResultadoIA> {
+export async function leerFacturaConIA(archivo: Buffer, mime: string, conceptos: readonly ConceptoOfrecido[] = []): Promise<ResultadoIA> {
   const modelo = process.env.PAGOS_LECTURA_MODEL ?? MODELO_LECTURA_DEFAULT
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, motivo: 'SIN_API_KEY', modelo: null }
   const bloque = bloqueDelArchivo(archivo.toString('base64'), mime)
@@ -142,7 +165,7 @@ export async function leerFacturaConIA(archivo: Buffer, mime: string): Promise<R
       fallbacks: 'default',
       system: SISTEMA,
       output_config: { format: betaZodOutputFormat(LecturaIASchema) },
-      messages: [{ role: 'user', content: [bloque, { type: 'text', text: INSTRUCCIONES }] }],
+      messages: [{ role: 'user', content: [bloque, { type: 'text', text: INSTRUCCIONES + instruccionConcepto(conceptos) }] }],
     })
     if (r.stop_reason === 'refusal') return { ok: false, motivo: 'RECHAZADO', modelo: r.model }
     if (r.stop_reason === 'max_tokens') return { ok: false, motivo: 'RESPUESTA_CORTADA', modelo: r.model }

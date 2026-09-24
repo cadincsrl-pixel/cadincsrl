@@ -311,6 +311,7 @@ function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'li
   if (f.es_interna !== undefined) q = q.eq('es_interna', esBoolQ(f.es_interna))
   if (f.clase) q = q.eq('clase', f.clase)
   if (esBoolQ(f.con_credito)) q = q.gt('nc_disponible', 0)
+  if (f.concepto_id) q = q.eq('concepto_id', f.concepto_id)
   // Facturas cuyas obras están TODAS archivadas: solo con el tilde.
   if (!esBoolQ(f.archivadas)) q = q.or('todas_archivadas.is.null,todas_archivadas.eq.false')
   for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
@@ -620,7 +621,8 @@ export const pagosService = {
       cae: dto.cae ?? null, cae_vto: dto.cae_vto ?? null, cbte_tipo_arca: dto.cbte_tipo_arca ?? null,
       iva_detalle: dto.iva_detalle ?? null, tributos: dto.tributos ?? null,
       total: aCentavos(dto.total), forma_pago_prevista: dto.forma_pago_prevista,
-      descripcion: dto.descripcion, obs: dto.obs ?? '', paga_cliente: dto.paga_cliente,
+      descripcion: dto.descripcion, concepto_id: dto.concepto_id,
+      obs: dto.obs ?? '', paga_cliente: dto.paga_cliente,
       plan_cheques: dto.plan_cheques ?? null,
       clase: dto.clase,
       aplica_a: esNc ? (dto.aplica_a ?? []).map((a) => ({ factura_id: a.factura_id, monto: aCentavos(a.monto) })) : null,
@@ -633,6 +635,7 @@ export const pagosService = {
           numero: dto.numero, fecha: dto.fecha, total: dto.total, tipo_comprobante: dto.tipo_comprobante,
           vence_el: dto.vence_el ?? null, neto: ef.neto ?? null, no_gravado: dto.no_gravado ?? null,
           exento: dto.exento ?? null, cae: dto.cae ?? null, iva: dto.iva_detalle ?? [], tributos: dto.tributos ?? [],
+          concepto_id: dto.concepto_id,
         }),
       } : null,
     }
