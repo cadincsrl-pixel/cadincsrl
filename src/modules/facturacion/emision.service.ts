@@ -351,11 +351,32 @@ export const emisionService = {
   },
 
   /** GET /arca/estado. Nunca rompe: si ARCA no responde, `dummy: null` y `error`. */
-  async estado() {
+  /**
+   * Ambiente y talonario del proceso, SIN consultar a ARCA (instantáneo). De acá
+   * sale el cartel de homologación: antes salía de `estado()`, que tarda unos
+   * segundos, y el cartel aparecía tarde y corría la página justo cuando
+   * alguien iba a tocar «Nueva factura» (2026-09-23).
+   */
+  ambiente() {
     const falta = arcaLoQueFalta()
-    const ambiente = ambienteProceso()
-    const pto = talonarioSeguro()
-    const base = { ambiente, configurado: falta.length === 0, falta, pto_vta: pto }
+    return { ambiente: ambienteProceso(), configurado: falta.length === 0, falta, pto_vta: talonarioSeguro() }
+  },
+
+  /**
+   * Estado completo: FEDummy + último autorizado de 6 tipos = 7 llamadas a ARCA.
+   * Se cachea 60 s para no repetirlas cada vez que alguien abre Facturación.
+   */
+  async estado() {
+    const ahora = Date.now()
+    if (cacheEstado && ahora - cacheEstado.at < ESTADO_TTL_MS) return cacheEstado.valor
+    const valor = await this.estadoSinCache()
+    cacheEstado = { at: ahora, valor }
+    return valor
+  },
+
+  async estadoSinCache() {
+    const base = this.ambiente()
+    const falta = base.falta
     if (falta.length) return { ...base, dummy: null, ultimo: null, error: null }
     const cfg = arcaConfig()
     let dummy: { appServer: string; dbServer: string; authServer: string } | null = null
@@ -375,6 +396,9 @@ export const emisionService = {
     return { ...base, dummy, ultimo, error: errores.length ? errores.join(' · ') : null }
   },
 }
+
+const ESTADO_TTL_MS = 60_000
+let cacheEstado: { at: number; valor: Awaited<ReturnType<typeof emisionService.estadoSinCache>> } | null = null
 
 function talonarioSeguro(): number {
   try {

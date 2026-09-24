@@ -110,6 +110,7 @@ async function exigirFlagEmision(c: any, id: number): Promise<void> {
 
 // ═══════════════════════════════════ Estado y catálogos ═════════════════════
 
+fact.get('/arca/ambiente', lectura, handler(async () => emisionService.ambiente()))
 fact.get('/arca/estado', lectura, tabCatalogos, handler(async () => emisionService.estado()))
 
 fact.get('/condiciones-iva', lectura, tabCatalogos, handler(async () => CONDICIONES_IVA))
