@@ -89,7 +89,7 @@ const iaBase: LecturaIA = {
     { tipo: 'percepcion_iibb', jurisdiccion: 'Tucumán', descripcion: 'Perc. IIBB Tucumán', alicuota_pct: 3.5, base_imponible: 120000, importe: 4200 },
     { tipo: 'percepcion_iva', jurisdiccion: null, descripcion: 'Perc. IVA RG 2408', alicuota_pct: 3, base_imponible: 120000, importe: 3209.59 },
   ],
-  total: 152609.59, detalle_breve: 'Materiales de ferretería', notas: null,
+  total: 152609.59, comprobantes_asociados: [], detalle_breve: 'Materiales de ferretería', notas: null,
 }
 
 describe('fusionar', () => {
@@ -123,10 +123,32 @@ describe('fusionar', () => {
     const r = fusionar(parsearQrArca(url({ ...qrJson, nroDocRec: 20111111112 })), iaBase, { hoy: '2026-09-24' })
     expect(r.avisos.some((a) => a.codigo === 'RECEPTOR_NO_ES_CADINC')).toBe(true)
   })
-  it('nota de crédito → error', () => {
+  it('nota de crédito: aviso INFORMATIVO (se carga como NC, 20260925a) y la propuesta lleva clase', () => {
     const r = fusionar(parsearQrArca(url({ ...qrJson, tipoCmp: 3 })), null, { hoy: '2026-09-24' })
     expect(r.estado).toBe('qr')
-    expect(r.avisos.some((a) => a.codigo === 'ES_NOTA_DE_CREDITO')).toBe(true)
+    expect(r.avisos.find((a) => a.codigo === 'ES_NOTA_DE_CREDITO')?.severidad).toBe('info')
+    expect(r.propuesta.clase).toBe('nota_credito')
+    expect(r.propuesta.tipo_comprobante).toBe('A')
+  })
+  it('una factura lleva clase factura y sin asociados, aunque la IA invente alguno', () => {
+    const r = fusionar(parsearQrArca(url(qrJson)), { ...iaBase, comprobantes_asociados: [{ letra: 'A', punto_venta: '1', numero: '45' }] }, { hoy: '2026-09-24' })
+    expect(r.propuesta.clase).toBe('factura')
+    expect(r.propuesta.comprobantes_asociados).toEqual([])
+  })
+  it('NC leída por la IA (sin QR): clase por letra + clase, y los asociados normalizados', () => {
+    const r = fusionar(null, {
+      ...iaBase, clase: 'nota_credito', codigo_comprobante: null, numero: '00000012',
+      comprobantes_asociados: [{ letra: 'A', punto_venta: '0001', numero: '45' }, { letra: 'A', punto_venta: null, numero: null }],
+    }, { hoy: '2026-09-24' })
+    expect(r.propuesta.cbte_tipo_arca).toBe(3)
+    expect(r.propuesta.clase).toBe('nota_credito')
+    expect(r.propuesta.comprobantes_asociados).toEqual([{ letra: 'A', punto_venta: '00001', numero: '00000045' }])
+    expect(r.avisos.some((a) => a.severidad === 'error' && a.codigo === 'ES_NOTA_DE_CREDITO')).toBe(false)
+  })
+  it('duplicada: el mensaje dice «nota de crédito» si es NC', () => {
+    const p = fusionar(parsearQrArca(url({ ...qrJson, tipoCmp: 3 })), null, { hoy: '2026-09-24' }).propuesta
+    const av = controlesDeContexto(p, { proveedor: { id: 1, razon_social: 'X', activo: true }, duplicadas: [{ id: 9, numero: 'x', estado: 'aprobada' }], archivoRepetido: null })
+    expect(av.find((a) => a.codigo === 'FACTURA_YA_CARGADA')?.mensaje).toMatch(/^Esta nota de crédito/)
   })
   it('sin IA: lo del QR y aviso', () => {
     const r = fusionar(parsearQrArca(url(qrJson)), null, { hoy: '2026-09-24' })

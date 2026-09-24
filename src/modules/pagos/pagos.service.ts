@@ -17,11 +17,19 @@
  *   - no pagás lo que cargaste         → 403 NO_PUEDE_PAGAR_PROPIA { factura_id }
  *   - no pagás lo que aprobaste        → 403 NO_PUEDE_PAGAR_LO_QUE_APROBO { factura_id }
  *
- * Nota de crédito (decisión 7): es una LÍNEA de la OP (`tipo = 'nota_credito'`)
- * sobre una factura aprobada, con `nc_numero`/`nc_fecha` y su PDF como adjunto
- * `nota_credito`. No suma plata: `monto_pagado = Σ factura + Σ a_cuenta`;
- * `saldo = total − Σ factura − Σ nota_credito`. Una OP de solo NC lleva
- * `forma_pago = 'nota_credito'` y `monto_pagado = 0` (CHECK `pagos_ordenes_nc_chk`).
+ * Nota de crédito (20260925a–d, decisión del dueño del 24/09): es un
+ * COMPROBANTE de `pagos_facturas` con `clase = 'nota_credito'`, su desglose,
+ * su reparto por obra (Σ = total − percepciones) y a qué facturas acredita
+ * (`pagos_nc_aplicaciones`, única puerta `_pagos_guardar_aplicaciones`).
+ *   - Baja la deuda cuando se APRUEBA (misma doble firma que una factura).
+ *     Mientras está pendiente/observada, lo que declara aplicar queda
+ *     RESERVADO: el tope de una OP es `saldo_pagable` (= saldo − nc_pendiente).
+ *   - Lo que sobra queda como crédito a favor (`nc_disponible`) y se aplica a
+ *     mano con POST /facturas/:id/aplicar-nc (`pagos_aplicar_nc`, solo agrega).
+ *   - Una NC nunca se paga (NC_NO_SE_PAGA) ni es línea de una OP
+ *     (NC_ES_COMPROBANTE). El circuito de «devolución del proveedor» se borró.
+ *   - Quien suma importes de `v_pagos_facturas` pone el signo por `clase`
+ *     (la NC resta); `saldo` ya es 0 en la NC.
  */
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import { todasLasFilas } from '../../lib/paginar.js'
@@ -35,7 +43,7 @@ import {
   FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
   type CreateOrdenDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
-  type ImputacionDto, type RegistrarFinnegansDto, type DevolucionProveedorDto,
+  type ImputacionDto, type RegistrarFinnegansDto, type AplicarNcDto, sumaAplicaA,
 } from './pagos.schema.js'
 import {
   pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, hashDelBucket, BUCKET,
@@ -303,6 +311,8 @@ function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'li
   if (f.pagada_al_cargar !== undefined) q = q.eq('pagada_al_cargar', esBoolQ(f.pagada_al_cargar))
   if (esBoolQ(f.cuenta_cambiada)) q = q.eq('cuenta_cambio_tras_aprobar', true)
   if (f.es_interna !== undefined) q = q.eq('es_interna', esBoolQ(f.es_interna))
+  if (f.clase) q = q.eq('clase', f.clase)
+  if (esBoolQ(f.con_credito)) q = q.gt('nc_disponible', 0)
   // Facturas cuyas obras están TODAS archivadas: solo con el tilde.
   if (!esBoolQ(f.archivadas)) q = q.or('todas_archivadas.is.null,todas_archivadas.eq.false')
   for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
@@ -360,6 +370,78 @@ async function adjuntarLectura(facturaId: number, l: LecturaGuardada, userId: st
   }
 }
 
+// ── Aplicaciones de notas de crédito (20260925a) ────────────────────────────
+
+/** Un lado de la aplicación, con lo que hace falta para mostrarlo (de `v_pagos_facturas`). */
+export interface ComprobanteAplicado {
+  id: number
+  clase: string
+  tipo_comprobante: string
+  cbte_tipo_arca: number | null
+  numero: string | null
+  fecha: string
+  total: number
+  estado: string
+  aprobada_at: string | null
+  saldo: number
+  saldo_pagable: number | null
+  nc_disponible: number | null
+}
+
+/**
+ * Una fila de `pagos_nc_aplicaciones` con los dos comprobantes. `vigente`: la
+ * NC no está anulada. `aprobada`: la NC está aprobada, o sea que esta
+ * aplicación YA bajó la deuda; vigente sin aprobar = reservado.
+ */
+export interface AplicacionNc {
+  id: number
+  nc_id: number
+  factura_id: number
+  monto: number
+  created_at: string
+  vigente: boolean
+  aprobada: boolean
+  nc: ComprobanteAplicado | null
+  factura: ComprobanteAplicado | null
+}
+
+const COLS_COMPROBANTE_APLICADO =
+  'id, clase, tipo_comprobante, cbte_tipo_arca, numero, fecha, total, estado, aprobada_at, saldo, saldo_pagable, nc_disponible'
+
+/**
+ * Aplicaciones de NC agrupadas por `lado`: `'factura'` → por factura (qué NC
+ * la acreditan); `'nc'` → por NC (a qué facturas acredita). Dos queries
+ * planas en vez de un embed: la tabla tiene dos FK a `pagos_facturas`.
+ */
+export async function aplicacionesDe(lado: 'factura' | 'nc', ids: number[], token: string): Promise<Map<number, AplicacionNc[]>> {
+  const out = new Map<number, AplicacionNc[]>()
+  if (ids.length === 0) return out
+  const sb = createSupabaseClient(token)
+  const col = lado === 'nc' ? 'nc_id' : 'factura_id'
+  const { data, error } = await sb.from('pagos_nc_aplicaciones')
+    .select('id, nc_id, factura_id, monto, created_at').in(col, ids).order('id')
+  if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
+  const filas = (data ?? []) as { id: number; nc_id: number; factura_id: number; monto: number | string; created_at: string }[]
+  if (filas.length === 0) return out
+  const todos = [...new Set(filas.flatMap((a) => [Number(a.nc_id), Number(a.factura_id)]))]
+  const { data: comps, error: e2 } = await sb.from('v_pagos_facturas').select(COLS_COMPROBANTE_APLICADO).in('id', todos)
+  if (e2) throw new PagosHttpError(500, 'DB_ERROR', e2.message)
+  const porId = new Map(((comps ?? []) as unknown as ComprobanteAplicado[]).map((c) => [Number(c.id), c]))
+  for (const a of filas) {
+    const nc = porId.get(Number(a.nc_id)) ?? null
+    const fila: AplicacionNc = {
+      id: Number(a.id), nc_id: Number(a.nc_id), factura_id: Number(a.factura_id), monto: Number(a.monto),
+      created_at: a.created_at,
+      vigente: !!nc && nc.estado !== 'anulada',
+      aprobada: !!nc && nc.estado !== 'anulada' && nc.aprobada_at != null,
+      nc, factura: porId.get(Number(a.factura_id)) ?? null,
+    }
+    const k = lado === 'nc' ? fila.nc_id : fila.factura_id
+    out.set(k, [...(out.get(k) ?? []), fila])
+  }
+  return out
+}
+
 export const pagosService = {
 
   // ═══════════════════════════════════ Facturas ═══════════════════════════════
@@ -398,7 +480,10 @@ export const pagosService = {
       p_palabras:     pal.length ? pal : null,
       p_archivadas:   esBoolQ(f.archivadas),
       p_paga_cliente: f.paga_cliente === undefined ? null : esBoolQ(f.paga_cliente),
+      p_clase:        f.clase ?? null,
     })
+    // Cada grupo trae `facturas` (solo facturas), `notas_credito` y `total` /
+    // `imputable` con signo (la NC resta).
     return { grupos: rpcOk<unknown[]>(r) ?? [] }
   },
 
@@ -419,7 +504,7 @@ export const pagosService = {
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
 
-    const [imp, adjuntos, lineas, control, ivaDet, tribDet] = await Promise.all([
+    const [imp, adjuntos, lineas, control, ivaDet, tribDet, aplicaciones] = await Promise.all([
       sb.from('pagos_imputaciones')
         .select('id, obra_cod, monto, obs, created_at, updated_at, obra:obras(cod, nom, cc, es_interna, es_deposito, archivada)')
         .eq('factura_id', id).order('monto', { ascending: false }).order('id'),
@@ -433,6 +518,7 @@ export const pagosService = {
       // El desglose como lo pide ARCA (20260924u).
       sb.from('pagos_factura_iva').select('alicuota_id, base_imp, importe').eq('factura_id', id).order('alicuota_id'),
       sb.from('pagos_factura_tributos').select('id, tipo, jurisdiccion, descripcion, alicuota, base_imp, importe').eq('factura_id', id).order('id'),
+      aplicacionesDe((f as { clase?: string }).clase === 'nota_credito' ? 'nc' : 'factura', [id], token),
     ])
     if (imp.error) throw new PagosHttpError(500, 'DB_ERROR', imp.error.message)
     if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
@@ -457,6 +543,9 @@ export const pagosService = {
       tributos: tribDet.data ?? [],
       adjuntos,
       pagos,
+      // En la NC: a qué facturas acredita. En la factura: qué NC la acreditan
+      // (vigentes y anuladas; `vigente`/`aprobada` dicen cuáles bajan la deuda).
+      aplicaciones: aplicaciones.get(id) ?? [],
       control,
       aprobacion: {
         aprobada_por: fila.aprobada_por ?? null,
@@ -481,6 +570,9 @@ export const pagosService = {
    * `factura` por el total, que deja la factura `pagada` sin revisar).
    */
   async crearFactura(dto: CreateFacturaDto, userId: string, perfil: Perfil | null) {
+    const esNc = dto.clase === 'nota_credito'
+    // El schema ya lo frena; se repite porque es plata: una NC no se paga.
+    if (esNc && dto.orden) throw new PagosHttpError(409, 'NC_NO_SE_PAGA', { campo: 'orden' })
     validarImportes(dto, dto.imputaciones, { validarFecha: true })
     const ef = importesEfectivos(dto)
 
@@ -532,6 +624,8 @@ export const pagosService = {
       total: aCentavos(dto.total), forma_pago_prevista: dto.forma_pago_prevista,
       descripcion: dto.descripcion, obs: dto.obs ?? '', paga_cliente: dto.paga_cliente,
       plan_cheques: dto.plan_cheques ?? null,
+      clase: dto.clase,
+      aplica_a: esNc ? (dto.aplica_a ?? []).map((a) => ({ factura_id: a.factura_id, monto: aCentavos(a.monto) })) : null,
       lectura_estado: lectura?.estado ?? 'manual',
       lectura_json: lectura ? {
         lectura_id: lectura.id, modelo: lectura.modelo, archivo: lectura.nombre_archivo,
@@ -579,7 +673,11 @@ export const pagosService = {
     // se puede aprobar (la paga el cliente, el proveedor quedó inactivo, o
     // nació 'pagada' con su orden), queda como nació y alguien la aprueba
     // después. Un error acá NO puede tirar abajo una carga que ya se guardó.
-    if (flagPagos(perfil, 'aprobar_facturas') && flagPagos(perfil, 'aprobar_propias')) {
+    //
+    // Una NOTA DE CRÉDITO no nace aprobada (24/09): aprobarla BAJA deuda, y
+    // eso no se hace con la misma firma de quien la cargó sin que pase por
+    // «para aprobar». Con `aprobar_propias` la puede aprobar él mismo con un clic.
+    if (dto.clase !== 'nota_credito' && flagPagos(perfil, 'aprobar_facturas') && flagPagos(perfil, 'aprobar_propias')) {
       try {
         const aprobada = rpcOk<Record<string, unknown>>(
           await supabase.rpc('pagos_aprobar_factura', { p_factura_id: facturaId, p_user_id: userId }))
@@ -590,7 +688,7 @@ export const pagosService = {
     }
     const { data: parecidas } = await supabase
       .from('pagos_facturas').select('id, tipo_comprobante, numero')
-      .eq('proveedor_id', dto.proveedor_id).eq('total', aCentavos(dto.total)).eq('fecha', dto.fecha)
+      .eq('proveedor_id', dto.proveedor_id).eq('clase', dto.clase).eq('total', aCentavos(dto.total)).eq('fecha', dto.fecha)
       .neq('estado', 'anulada').neq('id', facturaId).limit(5)
     if (parecidas && parecidas.length > 0) avisos.push({ code: 'FACTURA_POSIBLE_DUPLICADA', facturas: parecidas })
 
@@ -605,15 +703,36 @@ export const pagosService = {
   async editarFactura(id: number, dto: UpdateFacturaDto, userId: string, verPii: boolean) {
     const { data: actual, error: e0 } = await supabase
       .from('pagos_facturas')
-      .select('id, estado, proveedor_id, fecha, vence_el, neto, iva, percepciones, otros, no_gravado, exento, total, aprobada_at')
+      .select('id, estado, clase, proveedor_id, fecha, vence_el, neto, iva, percepciones, otros, no_gravado, exento, total, aprobada_at')
       .eq('id', id).maybeSingle()
     if (e0) throw new PagosHttpError(500, 'DB_ERROR', e0.message)
     if (!actual) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
     const a = actual as Record<string, any>
     if (a.estado === 'anulada') throw new PagosHttpError(409, 'FACTURA_CERRADA')
 
+    const esNc = a.clase === 'nota_credito'
+    // En una NC «pagada»/«pagada_parcial» quiere decir aplicada: también
+    // congela lo que mueve plata (la RPC lo repite).
     const conPagos = a.estado === 'pagada' || a.estado === 'pagada_parcial'
     const { imputaciones, motivo, ...campos } = dto
+    if (campos.aplica_a !== undefined) {
+      // Las reglas de la RPC adelantadas al campo (misma respuesta).
+      if (!esNc) throw errorDeCampo('CAMPO_NO_EDITABLE', 'aplica_a')
+      if (a.aprobada_at != null || !['pendiente', 'observada'].includes(a.estado)) {
+        throw new PagosHttpError(409, 'NC_APLICACION_CONGELADA', { nc_id: id, estado: a.estado })
+      }
+      const totalNuevo = Number(campos.total ?? a.total)
+      if (aCentavos(sumaAplicaA(campos.aplica_a)) > aCentavos(totalNuevo)) {
+        throw errorDeCampo('NC_SUPERA_TOTAL', 'aplica_a', { nc_id: id, total: aCentavos(totalNuevo), aplicado: sumaAplicaA(campos.aplica_a) })
+      }
+      campos.aplica_a = campos.aplica_a.map((x) => ({ factura_id: x.factura_id, monto: aCentavos(x.monto) }))
+    }
+    if (esNc) {
+      for (const k of ['vence_el', 'plan_cheques'] as const) {
+        if (campos[k]) throw errorDeCampo('NC_TIPO_INVALIDO', k)
+      }
+      if (campos.paga_cliente) throw errorDeCampo('NC_TIPO_INVALIDO', 'paga_cliente')
+    }
     // Con detalle, las columnas agregadas se mandan YA derivadas (las mismas
     // que va a dejar `_pagos_guardar_desglose`): así lo que se compara contra
     // lo congelado y lo que valida el cierre es lo que va a quedar guardado.
@@ -718,10 +837,10 @@ export const pagosService = {
    */
   async anularFactura(id: number, motivo: string, userId: string, perfil: Perfil | null) {
     const { data, error } = await supabase
-      .from('pagos_facturas').select('id, estado, created_by, created_at, pagada_al_cargar, aprobada_at').eq('id', id).maybeSingle()
+      .from('pagos_facturas').select('id, estado, clase, created_by, created_at, pagada_al_cargar, aprobada_at').eq('id', id).maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!data) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
-    const f = data as { estado: string; created_by: string | null; created_at: string; pagada_al_cargar: boolean; aprobada_at: string | null }
+    const f = data as { estado: string; clase: string; created_by: string | null; created_at: string; pagada_al_cargar: boolean; aprobada_at: string | null }
     if (f.estado === 'anulada') throw new PagosHttpError(409, 'FACTURA_CERRADA')
     const propia = f.created_by === userId
     const admin = esAdmin(perfil)
@@ -735,12 +854,39 @@ export const pagosService = {
       return enmascararRespuesta(
         rpcOk<Record<string, unknown>>(await supabase.rpc('pagos_anular_pagada_al_cargar', { p_factura_id: id, p_motivo: motivo, p_user_id: userId })), verPiiDe(perfil))
     }
-    if (f.estado === 'pagada' || f.estado === 'pagada_parcial') throw new PagosHttpError(409, 'FACTURA_CON_PAGOS')
+    // Una NC aplicada («pagada»/«pagada_parcial») SÍ se anula: la deuda vuelve
+    // a las facturas que acreditaba (lo hace la RPC). Una factura con NC
+    // vigentes aplicadas rebota en la RPC con FACTURA_CON_NC { nc_ids }.
+    if (f.clase !== 'nota_credito' && (f.estado === 'pagada' || f.estado === 'pagada_parcial')) {
+      throw new PagosHttpError(409, 'FACTURA_CON_PAGOS')
+    }
     if (!(admin || permisoPagos(perfil, 'eliminacion') || (propia && permisoPagos(perfil, 'actualizacion')))) {
       throw new PagosHttpError(403, 'SIN_PERMISO', { flag: 'eliminacion', motivo: 'una factura ajena la anula quien tiene eliminación' })
     }
     return enmascararRespuesta(
       rpcOk<Record<string, unknown>>(await supabase.rpc('pagos_anular_factura', { p_factura_id: id, p_motivo: motivo, p_user_id: userId })), verPiiDe(perfil))
+  },
+
+  /**
+   * POST /facturas/:id/aplicar-nc: aplica crédito sobrante de una NC aprobada
+   * a facturas del mismo proveedor. Solo agrega (si ya había aplicación a esa
+   * factura, suma). La ruta ya chequeó `aprobar_facturas` O `registrar_pagos`;
+   * la RPC valida el resto con locks (NC_NO_APROBADA, NC_SIN_CREDITO,
+   * NC_SUPERA_TOTAL, NC_SUPERA_SALDO, NC_OTRO_PROVEEDOR).
+   * Devuelve `{ nc, facturas }` (filas de v_pagos_facturas).
+   */
+  async aplicarNc(id: number, dto: AplicarNcDto, userId: string, verPii: boolean) {
+    const res = rpcOk<{ nc: Record<string, unknown>; facturas: Record<string, unknown>[] }>(
+      await supabase.rpc('pagos_aplicar_nc', {
+        p_nc_id:    id,
+        p_aplica_a: dto.aplica_a.map((a) => ({ factura_id: a.factura_id, monto: aCentavos(a.monto) })),
+        p_user_id:  userId,
+      }))
+    console.info(`[pagos] NC ${id}: aplicado ${sumaAplicaA(dto.aplica_a)} a facturas ${dto.aplica_a.map((a) => a.factura_id).join(',')} (user ${userId})`)
+    return {
+      nc: res.nc ? enmascararFila(res.nc, verPii) : res.nc,
+      facturas: (res.facturas ?? []).map((f) => enmascararFila(f, verPii)),
+    }
   },
 
   // ═══════════════════════════════════ Órdenes ════════════════════════════════
@@ -840,15 +986,20 @@ export const pagosService = {
 
     const facturaIds = [...new Set(((lineas.data ?? []) as any[])
       .map((l) => l.factura_id).filter((x): x is number => typeof x === 'number'))]
+    // NC vigentes aplicadas a esas facturas (20260925a): van con su PDF
+    // dentro de la carpeta de la OP, al lado de la factura que acreditan.
+    const ncPorFactura = await aplicacionesDe('factura', facturaIds, token)
+    const ncIds = [...new Set([...ncPorFactura.values()].flat().filter((a) => a.vigente).map((a) => a.nc_id))]
+    const conPapeles = [...new Set([...facturaIds, ...ncIds])]
     const [facturas, adjF] = await Promise.all([
       facturaIds.length === 0 ? Promise.resolve({ data: [], error: null }) : sb
         .from('v_pagos_facturas')
         .select('id, tipo_comprobante, numero, fecha, vence_el, total, estado, descripcion, proveedor_nom')
         .in('id', facturaIds),
-      facturaIds.length === 0 ? Promise.resolve({ data: [], error: null }) : sb
+      conPapeles.length === 0 ? Promise.resolve({ data: [], error: null }) : sb
         .from('pagos_facturas_adjuntos')
         .select('id, factura_id, tipo, storage_path, nombre_archivo, mime_type, size_bytes')
-        .in('factura_id', facturaIds).is('deleted_at', null),
+        .in('factura_id', conPapeles).is('deleted_at', null),
     ])
     if (facturas.error) throw new PagosHttpError(500, 'DB_ERROR', facturas.error.message)
     if (adjF.error)     throw new PagosHttpError(500, 'DB_ERROR', adjF.error.message)
@@ -864,7 +1015,7 @@ export const pagosService = {
       for (const u of urls ?? []) if (u.signedUrl && !u.error) firmadas.set(u.path ?? '', u.signedUrl)
     }
 
-    const archivo = (a: any, origen: 'factura' | 'pago') => ({
+    const archivo = (a: any, origen: 'factura' | 'pago' | 'nota_credito') => ({
       adjunto_id: a.id, tipo: a.tipo, origen,
       nombre_archivo: a.nombre_archivo, mime_type: a.mime_type, size_bytes: a.size_bytes,
       url: firmadas.get(a.storage_path) ?? null,
@@ -914,6 +1065,14 @@ export const pagosService = {
               descripcion: fx.descripcion ?? '',
               aplicado,
               archivos: (adjDeFactura.get(fid) ?? []).map((a) => archivo(a, 'factura')),
+              notas_credito: (ncPorFactura.get(fid) ?? []).filter((a) => a.vigente).map((a) => ({
+                nc_id: a.nc_id,
+                tipo_comprobante: a.nc?.tipo_comprobante ?? null, numero: a.nc?.numero ?? null,
+                fecha: a.nc?.fecha ?? null, total: a.nc?.total ?? null, estado: a.nc?.estado ?? null,
+                aprobada: a.aprobada,
+                monto_aplicado: a.monto,
+                archivos: (adjDeFactura.get(a.nc_id) ?? []).map((x) => archivo(x, 'nota_credito')),
+              })),
             }
           }),
         }
@@ -965,12 +1124,18 @@ export const pagosService = {
     // Una sola query para todas las líneas, no una por línea.
     const facturaIds = [...new Set(((lineas.data ?? []) as any[])
       .map((l) => l.factura_id).filter((x): x is number => typeof x === 'number'))]
+    // Las NC aplicadas a cada factura (20260925a), solo las vigentes: la OP
+    // no las suma (son crédito, no plata), pero el contador tiene que ver que
+    // la factura no se pagó entera porque hubo una NC, con el PDF de la NC.
+    const ncPorFactura = await aplicacionesDe('factura', facturaIds, token)
+    const ncIds = [...new Set([...ncPorFactura.values()].flat().filter((a) => a.vigente).map((a) => a.nc_id))]
+    const conPapeles = [...new Set([...facturaIds, ...ncIds])]
     let adjPorFactura = new Map<number, unknown[]>()
-    if (facturaIds.length > 0) {
+    if (conPapeles.length > 0) {
       const { data: adjF, error: adjErr } = await sb
         .from('pagos_facturas_adjuntos')
         .select('id, factura_id, tipo, nombre_archivo, mime_type, size_bytes, created_at')
-        .in('factura_id', facturaIds).is('deleted_at', null)
+        .in('factura_id', conPapeles).is('deleted_at', null)
         .order('tipo').order('created_at', { ascending: false })
       if (adjErr) throw new PagosHttpError(500, 'DB_ERROR', adjErr.message)
       adjPorFactura = ((adjF ?? []) as any[]).reduce((m, a) => {
@@ -982,7 +1147,12 @@ export const pagosService = {
     }
     const lineasConPapeles = ((lineas.data ?? []) as any[]).map((l) => ({
       ...l,
-      factura: l.factura ? { ...l.factura, adjuntos: adjPorFactura.get(l.factura_id) ?? [] } : l.factura,
+      factura: l.factura ? {
+        ...l.factura,
+        adjuntos: adjPorFactura.get(l.factura_id) ?? [],
+        notas_credito: (ncPorFactura.get(l.factura_id) ?? []).filter((a) => a.vigente)
+          .map((a) => ({ ...a, adjuntos: adjPorFactura.get(a.nc_id) ?? [] })),
+      } : l.factura,
     }))
 
     return { ...enmascararFila(o as Record<string, unknown>, verPii), lineas: lineasConPapeles, cheques: cheques.data ?? [], adjuntos }
@@ -1001,41 +1171,28 @@ export const pagosService = {
     if (dto.fecha > hoy) throw errorDeCampo('FECHA_FUTURA', 'fecha', { hoy })
     if (dto.fecha_cobro && dto.fecha_cobro < dto.fecha) throw errorDeCampo('FECHA_COBRO_INVALIDA', 'fecha_cobro')
 
-    const montoPagado = sumaCentavos(dto.lineas.filter((l) => l.tipo !== 'nota_credito').map((l) => l.monto))
-    const montoNc = sumaCentavos(dto.lineas.filter((l) => l.tipo === 'nota_credito').map((l) => l.monto))
-    const tieneNc = dto.lineas.some((l) => l.tipo === 'nota_credito')
-    for (const l of dto.lineas) {
-      if (l.tipo === 'nota_credito' && (!l.nc_numero || !l.nc_fecha)) throw errorDeCampo('NC_DATOS_REQUERIDOS', 'lineas', { factura_id: l.factura_id })
-      if (l.nc_fecha && l.nc_fecha > hoy) throw errorDeCampo('FECHA_FUTURA', 'lineas', { factura_id: l.factura_id, hoy })
-    }
-
-    // Con plata: la forma es obligatoria y manda comprobante / fecha de cobro.
-    // Sin plata (solo NC): forma_pago = 'nota_credito', sin comprobante de pago.
-    let formaPago: string = dto.forma_pago ?? ''
+    // Desde el 2026-09-25 la nota de crédito no es una línea de la OP (es un
+    // comprobante aplicado a la factura): toda OP mueve plata.
+    const montoPagado = sumaCentavos(dto.lineas.map((l) => l.monto))
+    const formaPago: string = dto.forma_pago ?? ''
+    if (!formaPago) throw errorDeCampo('FORMA_PAGO_REQUERIDA', 'forma_pago')
+    validarCheques(formaPago, dto.cheques, dto.fecha, montoPagado)
     const tipos = new Set(dto.adjuntos.map((a) => a.tipo))
-    if (montoPagado > 0) {
-      if (!formaPago) throw errorDeCampo('FORMA_PAGO_REQUERIDA', 'forma_pago')
-      validarCheques(formaPago, dto.cheques, dto.fecha, montoPagado)
-      if ((FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(formaPago) && !tipos.has('comprobante_pago')) {
-        throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { forma_pago: formaPago, tipo: 'comprobante_pago' })
-      }
-    } else {
-      formaPago = 'nota_credito'
-    }
-    if (tieneNc && !tipos.has('nota_credito')) {
-      throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { tipo: 'nota_credito' })
+    if ((FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(formaPago) && !tipos.has('comprobante_pago')) {
+      throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { forma_pago: formaPago, tipo: 'comprobante_pago' })
     }
 
     // Separación de funciones, por factura, antes de la RPC (admin exento).
     const facturaIds = [...new Set(dto.lineas.map((l) => l.factura_id).filter((x): x is number => x != null))]
     if (facturaIds.length > 0) {
       const { data: facts, error } = await supabase
-        .from('pagos_facturas').select('id, created_by, aprobada_por, proveedor_id').in('id', facturaIds)
+        .from('pagos_facturas').select('id, clase, created_by, aprobada_por, proveedor_id').in('id', facturaIds)
       if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
-      const porId = new Map(((facts ?? []) as { id: number; created_by: string | null; aprobada_por: string | null; proveedor_id: number }[]).map((f) => [f.id, f]))
+      const porId = new Map(((facts ?? []) as { id: number; clase: string; created_by: string | null; aprobada_por: string | null; proveedor_id: number }[]).map((f) => [f.id, f]))
       for (const fid of facturaIds.sort((a, b) => a - b)) {
         const f = porId.get(fid)
         if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE', { factura_id: fid })
+        if (f.clase === 'nota_credito') throw new PagosHttpError(409, 'NC_NO_SE_PAGA', { factura_id: fid })
         if (f.proveedor_id !== dto.proveedor_id) throw new PagosHttpError(409, 'FACTURA_OTRO_PROVEEDOR', { factura_id: fid })
         if (!esAdmin(perfil)) {
           if (f.created_by === userId) throw new PagosHttpError(403, 'NO_PUEDE_PAGAR_PROPIA', { factura_id: fid })
@@ -1058,13 +1215,11 @@ export const pagosService = {
           // que cae); lo que venga acá se ignora.
           fecha_cobro: dto.fecha_cobro ?? null,
           forma_pago: formaPago, referencia: dto.referencia ?? '', obs: dto.obs ?? '',
-          monto_pagado: montoPagado, monto_nc: montoNc,
+          monto_pagado: montoPagado, monto_nc: 0,
           cheques: dto.cheques ?? [],
         },
         p_lineas: dto.lineas.map((l) => ({
           tipo: l.tipo, factura_id: l.factura_id ?? null, monto: aCentavos(l.monto),
-          nc_numero: l.tipo === 'nota_credito' ? (l.nc_numero ?? null) : null,
-          nc_fecha:  l.tipo === 'nota_credito' ? (l.nc_fecha ?? null) : null,
         })),
         p_adjuntos: adjuntos,
         p_user_id:  userId,
@@ -1144,41 +1299,6 @@ export const pagosService = {
     }
     if (!upd) throw new PagosHttpError(409, 'ORDEN_YA_REGISTRADA')
     return upd
-  },
-
-  /**
-   * Devolución del proveedor (20260923g). Anula la OP y la rehace con la NC en
-   * UNA transacción (`pagos_devolucion_proveedor`). Pide lo mismo que anular
-   * cualquier OP: `anular_pagos` o admin — el atajo de «la propia del día» no
-   * aplica, porque esto corrige un pago ya hecho. El PDF de la NC es
-   * obligatorio; el comprobante de la plata que volvió va como `otro`.
-   */
-  async devolucionProveedor(id: number, dto: DevolucionProveedorDto, userId: string, perfil: Perfil | null) {
-    if (!esAdmin(perfil) && !flagPagos(perfil, 'anular_pagos')) {
-      throw new PagosHttpError(403, 'SIN_PERMISO', { flag: 'anular_pagos' })
-    }
-    if (dto.nc_fecha > hoyAR()) throw errorDeCampo('FECHA_FUTURA', 'nc_fecha', { hoy: hoyAR() })
-    if (!dto.adjuntos.some((a) => a.tipo === 'nota_credito')) {
-      throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { tipo: 'nota_credito' })
-    }
-    const adjuntos = await procesarPendientes(dto.adjuntos)
-    let res: { anulada: Record<string, unknown>; orden: Record<string, unknown>; facturas: unknown[] }
-    try {
-      res = rpcOk(await supabase.rpc('pagos_devolucion_proveedor', {
-        p_orden_id: id,
-        p_devuelto: dto.devoluciones.map((d) => ({ factura_id: d.factura_id, monto: aCentavos(d.monto) })),
-        p_nc:       { numero: dto.nc_numero, fecha: dto.nc_fecha },
-        p_motivo:   dto.motivo ?? '',
-        p_adjuntos: adjuntos,
-        p_user_id:  userId,
-      }))
-    } catch (err) {
-      await borrarDelBucket(adjuntos.map((a) => a.storage_path))
-      throw err
-    }
-    const ordenId = Number((res.orden as { id?: number }).id)
-    if (ordenId && adjuntos.length) await moverPendientesAOrden(ordenId, adjuntos)
-    return enmascararRespuesta(res, verPiiDe(perfil))
   },
 
   /** Deshacer el registro (número mal tipeado). No toca plata. */

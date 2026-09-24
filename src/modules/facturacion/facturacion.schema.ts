@@ -77,6 +77,36 @@ export type UpdateCuentaDto = z.infer<typeof UpdateCuentaSchema>
 
 export const ListCuentasQuerySchema = z.object({ incluir_inactivas: z.string().optional() })
 
+// ── Contactos del cliente (20260925e/f) ─────────────────────────────────────
+// La lista entera: la RPC `ventas_guardar_contactos` actualiza los que traen
+// id, agrega los nuevos y borra los que no vienen. Mismo formato que los
+// contactos de proveedores en Compras.
+export const ROLES_CONTACTO = ['administracion', 'vendedor', 'compras', 'pagos', 'otro'] as const
+export const ContactoSchema = z.object({
+  id: z.coerce.number().int().positive().optional(),
+  nombre: texto(120).optional().nullable(),
+  rol: z.enum(ROLES_CONTACTO).default('administracion'),
+  email: z.string().trim().toLowerCase().max(200)
+    .refine((v) => v === '' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), 'email con forma inválida')
+    .optional().nullable(),
+  telefono: texto(60).optional().nullable(),
+  recibe_avisos: z.boolean().default(true),
+  obs: texto(500).optional().nullable(),
+}).refine((c) => !!(c.nombre?.trim() || c.email?.trim() || c.telefono?.trim()), {
+  message: 'el contacto necesita al menos nombre, email o teléfono', path: ['nombre'],
+})
+export const ContactosSchema = z.object({ contactos: z.array(ContactoSchema).max(30) })
+  .superRefine((d, ctx) => {
+    const vistos = new Set<string>()
+    d.contactos.forEach((c, i) => {
+      const e = c.email?.trim()
+      if (!e) return
+      if (vistos.has(e)) ctx.addIssue({ code: 'custom', path: ['contactos', i, 'email'], message: `el email ${e} está repetido` })
+      vistos.add(e)
+    })
+  })
+export type ContactoDto = z.infer<typeof ContactoSchema>
+
 export const ObrasClienteSchema = z.object({
   obra_cods: z.array(z.string().trim().min(1).max(100)).max(500),
 })

@@ -35,6 +35,67 @@ import { fusionar, controlesDeContexto, type AvisoLectura, type Propuesta } from
 
 const MIME_SET = new Set<string>(MIME_PERMITIDOS)
 
+/** Una aplicación propuesta: la NC menciona esta factura y la factura tiene saldo pagable. */
+export interface AplicacionSugerida {
+  factura_id: number
+  monto: number
+  tipo_comprobante: string
+  numero: string | null
+  saldo_pagable: number
+}
+
+/**
+ * NC leída → a qué facturas abiertas del proveedor acredita (20260925a). Cruza
+ * los comprobantes asociados del papel contra `numero_norm` de las facturas
+ * (clase factura, no anuladas) del proveedor, y reparte el total de la NC en
+ * el orden del papel con tope en `saldo_pagable`. Es una SUGERENCIA: la
+ * persona la ve y la confirma en el formulario; lo que no se encuentra avisa.
+ */
+export async function sugerirAplicaA(proveedorId: number, p: Propuesta): Promise<{ aplica_a: AplicacionSugerida[]; avisos: AvisoLectura[] }> {
+  const asociados = p.comprobantes_asociados ?? []
+  const avisos: AvisoLectura[] = []
+  if (asociados.length === 0) {
+    avisos.push({ campo: 'aplica_a', severidad: 'info', codigo: 'NC_SIN_ASOCIADOS',
+      mensaje: 'La nota de crédito no dice a qué factura se refiere: elegila a mano o dejala como crédito a favor.' })
+    return { aplica_a: [], avisos }
+  }
+  const normas = [...new Set(asociados.map((a) => normNumeroFactura(`${a.punto_venta ?? ''}-${a.numero ?? ''}`)).filter((x): x is string => !!x))]
+  const { data } = await supabase.from('v_pagos_facturas')
+    .select('id, tipo_comprobante, numero, numero_norm, estado, saldo_pagable')
+    .eq('proveedor_id', proveedorId).eq('clase', 'factura').neq('estado', 'anulada')
+    .in('numero_norm', normas).limit(50)
+  const facturas = (data ?? []) as { id: number; tipo_comprobante: string; numero: string | null; numero_norm: string; estado: string; saldo_pagable: number | string | null }[]
+  let resto = Math.round(Number(p.total ?? 0) * 100)
+  const out: AplicacionSugerida[] = []
+  for (const a of asociados) {
+    const norm = normNumeroFactura(`${a.punto_venta ?? ''}-${a.numero ?? ''}`)
+    const etiqueta = `${a.letra ?? ''} ${a.punto_venta ?? ''}-${a.numero ?? ''}`.trim()
+    const candidatas = facturas.filter((f) => f.numero_norm === norm && (!a.letra || !['A', 'B', 'C'].includes(a.letra) || f.tipo_comprobante === a.letra))
+    const f = candidatas[0]
+    if (!f) {
+      avisos.push({ campo: 'aplica_a', severidad: 'advertencia', codigo: 'NC_ASOCIADO_NO_ENCONTRADO',
+        mensaje: `La NC menciona la factura ${etiqueta}, que no está cargada para este proveedor.` })
+      continue
+    }
+    if (out.some((x) => x.factura_id === f.id)) continue
+    const pagable = Math.round(Number(f.saldo_pagable ?? 0) * 100)
+    if (pagable <= 0) {
+      avisos.push({ campo: 'aplica_a', severidad: 'advertencia', codigo: 'NC_ASOCIADO_SIN_SALDO',
+        mensaje: `La factura ${etiqueta} (#${f.id}, ${f.estado}) no tiene saldo para acreditar: lo que corresponda queda como crédito a favor.` })
+      continue
+    }
+    if (resto <= 0) break
+    const monto = Math.min(resto, pagable)
+    resto -= monto
+    out.push({ factura_id: f.id, monto: monto / 100, tipo_comprobante: f.tipo_comprobante, numero: f.numero, saldo_pagable: pagable / 100 })
+  }
+  if (out.length && resto > 0) {
+    avisos.push({ campo: 'aplica_a', severidad: 'info', codigo: 'NC_SOBRANTE',
+      mensaje: `La NC supera el saldo de las facturas que menciona: $${(resto / 100).toFixed(2)} quedan como crédito a favor.` })
+  }
+  return { aplica_a: out, avisos }
+}
+
 export interface LecturaGuardada {
   id: number
   storage_path: string
@@ -125,12 +186,18 @@ export const lecturaService = {
     let duplicadas: { id: number; numero: string | null; estado: string }[] = []
     if (proveedor && p.tipo_comprobante && p.numero_comprobante) {
       const norm = normNumeroFactura(`${p.punto_venta ?? ''}-${p.numero_comprobante}`)
+      // Por clase, igual que el índice único (20260925a): la NC 0001-00000045
+      // no choca con la factura 0001-00000045 del mismo proveedor.
       const { data } = await supabase.from('pagos_facturas').select('id, numero, estado')
-        .eq('proveedor_id', proveedor.id).eq('tipo_comprobante', p.tipo_comprobante)
+        .eq('proveedor_id', proveedor.id).eq('clase', p.clase).eq('tipo_comprobante', p.tipo_comprobante)
         .eq('numero_norm', norm).neq('estado', 'anulada').limit(3)
       duplicadas = (data ?? []) as typeof duplicadas
     }
+    const sugerencia = proveedor && p.clase === 'nota_credito'
+      ? await sugerirAplicaA(proveedor.id, p)
+      : { aplica_a: [] as AplicacionSugerida[], avisos: [] as AvisoLectura[] }
     const avisos = [
+      ...sugerencia.avisos,
       ...controlesDeContexto(p, {
         proveedor, duplicadas,
         archivoRepetido: adjRep.data ? { factura_id: (adjRep.data as { factura_id: number }).factura_id } : null,
@@ -169,7 +236,10 @@ export const lecturaService = {
         // Alta propuesta: lo que se leyó, para precargar el alta rápida.
         proveedor_nuevo: !proveedor && p.emisor_cuit
           ? { razon_social: p.emisor_razon_social, cuit: p.emisor_cuit } : null,
+        aplica_a_sugerida: sugerencia.aplica_a,
       },
+      // También arriba, para quien no mire dentro de la propuesta.
+      aplica_a_sugerida: sugerencia.aplica_a,
       fuente_por_campo: fusion.fuente_por_campo,
       avisos: avisos.sort((a, b) => orden[a.severidad] - orden[b.severidad]),
     }

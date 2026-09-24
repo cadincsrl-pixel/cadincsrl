@@ -129,14 +129,37 @@ describe('armarLibroCompras', () => {
     expect(libro.resumen).toMatchObject({ comprobantes: 1, iva: 0, credito_fiscal: 0 })
   })
 
-  it('la NC resta y las NC de OP sin comprobante avisan', () => {
+  it('la NC resta del crédito fiscal', () => {
     const nc: FilaFacturaCompra = { ...CENCOSUD, id: 50, cbte_tipo_arca: 3, numero: '08837-00000010', total: '1210', neto: '1000', iva: '210',
       iva_detalle: [{ alicuota_id: 5, base_imp: 1000, importe: 210 }], tributos: [] }
-    const libro = armarLibroCompras('2026-09', [conFila(CENCOSUD), conFila(nc)],
-      [{ orden: 'OP-0007', proveedor: 'ABC', nc_numero: '0001-1', nc_fecha: '2026-09-10', monto: 500 }])
+    const libro = armarLibroCompras('2026-09', [conFila(CENCOSUD), conFila(nc)])
     expect(libro.resumen.credito_fiscal).toBe(24254.13)
-    expect(libro.validaciones.some(v => /órdenes de pago/.test(v.comprobante))).toBe(true)
-    expect(libro.resumen.nc_en_ordenes).toBe(1)
+    expect('nc_en_ordenes' in libro.resumen).toBe(false)
+  })
+
+  it('una NC A con percepción de IVA resta en crédito fiscal y en percepciones', () => {
+    // NC A 003 de Cencosud: neto 1000 + IVA 210 + percepción IVA 30 = 1240.
+    const nc: FilaFacturaCompra = { ...CENCOSUD, id: 51, cbte_tipo_arca: 3, numero: '08837-00000011', estado: 'aprobada',
+      neto: '1000', iva: '210', total: '1240',
+      iva_detalle: [{ alicuota_id: 5, base_imp: 1000, importe: 210 }], tributos: [{ tipo: 'percepcion_iva', importe: 30 }] }
+    const libro = armarLibroCompras('2026-09', [conFila(CENCOSUD), conFila(nc)])
+    expect(libro.resumen.comprobantes).toBe(2)
+    expect(libro.resumen.credito_fiscal).toBe(24254.13)          // 24464.13 − 210
+    expect(libro.resumen.perc_iva).toBe(3464.88)                 // 3494.88 − 30
+    expect(libro.resumen.total).toBe(151369.59)                  // 152609.59 − 1240
+    expect(libro.validaciones.filter(v => v.severidad === 'error')).toEqual([])
+    // En el archivo va en positivo, con su código 003: el signo lo pone el tipo.
+    const lnc = libro.archivos.cbte.split('\r\n').find(l => l.slice(8, 11) === '003')!
+    expect(lnc.slice(104, 119)).toBe('000000000124000')
+    expect(lnc.slice(149, 164)).toBe('000000000003000')
+  })
+
+  it('la NC sin aprobar avisa como NC, no como factura', () => {
+    const nc: FilaFacturaCompra = { ...CENCOSUD, id: 52, cbte_tipo_arca: 3, numero: '08837-00000012', estado: 'pendiente',
+      neto: '1000', iva: '210', total: '1210', iva_detalle: [{ alicuota_id: 5, base_imp: 1000, importe: 210 }], tributos: [] }
+    const libro = armarLibroCompras('2026-09', [conFila(nc)])
+    expect(libro.validaciones.some(v => /^La NC todavía no está aprobada/.test(v.mensaje))).toBe(true)
+    expect(libro.validaciones.some(v => /^La factura/.test(v.mensaje))).toBe(false)
   })
 })
 
@@ -150,10 +173,10 @@ describe('posicionIva', () => {
     expect(p).toMatchObject({ impuesto_determinado: -20000, saldo_tecnico_a_favor: 20000, a_pagar: 0, libre_disponibilidad: 3494.88 })
     expect(p.avisos.some(a => /COMPRAS/.test(a))).toBe(true)
   })
-  it('las NC en órdenes de pago avisan que el crédito real es menor', () => {
-    const p = posicionIva('2026-09', { debito: 1, credito: 1, percepciones: 0, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0, ncEnOrdenes: 2 })
-    expect(p.nc_en_ordenes).toBe(2)
-    expect(p.avisos.some(a => /MENOR/.test(a))).toBe(true)
+  it('ya no informa NC en órdenes de pago', () => {
+    const p = posicionIva('2026-09', { debito: 1, credito: 1, percepciones: 0, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0 })
+    expect('nc_en_ordenes' in p).toBe(false)
+    expect(p.avisos.some(a => /MENOR/.test(a))).toBe(false)
   })
   it('pagos a cuenta que superan el determinado: el sobrante es libre disponibilidad', () => {
     const p = posicionIva('2026-09', { debito: 10000, credito: 8000, percepciones: 3000, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0 })

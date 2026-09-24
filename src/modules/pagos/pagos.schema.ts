@@ -6,11 +6,20 @@
  * de pago, tipos de línea) son las mismas que el DDL: un test las compara.
  */
 import { z } from 'zod'
-import { ALICUOTA_IDS, CBTE_TIPOS_ARCA, TIPOS_TRIBUTO } from './lectura/arca.js'
+import { ALICUOTA_IDS, CBTE_TIPOS_ARCA, TIPOS_TRIBUTO, esCbteNotaCredito } from './lectura/arca.js'
 
 // ── Listas cerradas (espejo del DDL) ────────────────────────────────────────
 
 export const TIPOS_COMPROBANTE = ['A', 'B', 'C', 'recibo', 'ticket', 'otro'] as const
+/**
+ * Qué es el comprobante (20260925a). Una nota de crédito de proveedor es un
+ * comprobante más de `pagos_facturas`, con su desglose, su reparto por obra y
+ * a qué facturas acredita (`pagos_nc_aplicaciones`). Baja la deuda cuando se
+ * APRUEBA; mientras tanto lo que declara aplicar queda reservado.
+ */
+export const CLASES = ['factura', 'nota_credito'] as const
+/** Letras con que ARCA emite una NC (CHECK `pagos_facturas_nc_chk`). */
+export const TIPOS_COMPROBANTE_NC = ['A', 'B', 'C'] as const
 export const ESTADOS_FACTURA = ['pendiente', 'observada', 'aprobada', 'pagada_parcial', 'pagada', 'anulada'] as const
 /**
  * Cómo se sugiere el vencimiento de las facturas de un proveedor (20260921g).
@@ -24,14 +33,12 @@ export const VENCIMIENTO_MODOS = ['dias', 'cierre_mensual'] as const
 export const FORMAS_PREVISTAS = ['efectivo', 'transferencia', 'tarjeta', 'cheque', 'echeq', 'debito_automatico', 'cta_cte', 'otro'] as const
 /**
  * Forma REAL de una orden de pago que elige el contador. Sin `cta_cte` (quedar
- * en cuenta corriente es deuda, no pago) y, desde la decisión 7, sin
- * `aplicacion_anticipo` ni `nota_credito` como opción: la NC es una LÍNEA de
- * la OP, no una OP aparte. Una OP que solo aplica notas de crédito no mueve
- * plata y el backend le pone `forma_pago = 'nota_credito'` (CHECK
- * `pagos_ordenes_nc_chk`: es la única forma con `monto_pagado = 0`).
+ * en cuenta corriente es deuda, no pago), sin `aplicacion_anticipo` y sin
+ * `nota_credito`: desde el 2026-09-25 la NC es un comprobante propio y una OP
+ * siempre mueve plata.
  */
 export const FORMAS_PAGO_OP = ['efectivo', 'transferencia', 'cheque', 'echeq', 'tarjeta', 'debito_automatico', 'otro'] as const
-/** Lo que puede tener guardado una OP (el CHECK de la tabla): las de entrada + `nota_credito`, que solo pone el backend. */
+/** Lo que puede tener guardado una OP (el CHECK de la tabla): las de entrada + `nota_credito`, histórica (hoy 0 filas). */
 export const FORMAS_PAGO_OP_GUARDADAS = [...FORMAS_PAGO_OP, 'nota_credito'] as const
 /** Comprobante de pago obligatorio por forma, solo si `monto_pagado > 0`. */
 export const FORMAS_CON_COMPROBANTE_OBLIGATORIO = ['transferencia', 'echeq'] as const
@@ -39,9 +46,12 @@ export const FORMAS_CON_FECHA_COBRO = ['cheque', 'echeq'] as const
 /** La RPC copia `cbu`/`alias_cbu` del padrón a la OP para estas formas. */
 export const FORMAS_CON_CUENTA_DESTINO = ['transferencia', 'debito_automatico'] as const
 
+/** Tipos de línea que pueden estar GUARDADOS (lectura). `nota_credito` es histórico: 0 filas y CHECK `pagos_orden_lineas_sin_nc_chk`. */
 export const TIPOS_LINEA = ['factura', 'a_cuenta', 'nota_credito'] as const
+/** Lo que se acepta al registrar una OP (20260925a): la NC ya no es una línea. */
+export const TIPOS_LINEA_ENTRADA = ['factura', 'a_cuenta'] as const
 export const TIPOS_ADJ_FACTURA = ['factura', 'remito', 'orden_compra', 'otro'] as const
-/** Sin `retencion` (decisión 6). `nota_credito` es el PDF de la NC de una línea (decisión 7). */
+/** Sin `retencion` (decisión 6). `nota_credito` queda por los adjuntos viejos; la NC nueva lleva su PDF como adjunto de la NC. */
 export const TIPOS_ADJ_ORDEN = ['comprobante_pago', 'nota_credito', 'otro'] as const
 
 /** Con una línea de OP vigente, lo que mueve plata no se toca (409 FACTURA_CON_PAGOS { campos }). */
@@ -175,6 +185,23 @@ const CamposArca = {
   tributos:       TributosLista.nullable().optional(),
 }
 
+/** A qué factura acredita una NC y cuánto (`pagos_nc_aplicaciones`). */
+export const AplicacionNcSchema = z.object({
+  factura_id: Id,
+  monto:      Monto,
+}).strict()
+export type AplicacionNcDto = z.infer<typeof AplicacionNcSchema>
+const AplicaALista = z.array(AplicacionNcSchema).max(50).superRefine((xs, ctx) => {
+  const vistas = new Set<number>()
+  xs.forEach((x, i) => {
+    if (vistas.has(x.factura_id)) ctx.addIssue({ code: 'custom', path: [i, 'factura_id'], message: 'NC_APLICACION_INVALIDA' })
+    vistas.add(x.factura_id)
+  })
+})
+const centavos = (n: number) => Math.round(n * 100)
+export const sumaAplicaA = (xs: readonly { monto: number }[] | null | undefined) =>
+  (xs ?? []).reduce((s, x) => s + centavos(x.monto), 0) / 100
+
 export const CreateFacturaSchema = z.object({
   proveedor_id:        Id,
   tipo_comprobante:    z.enum(TIPOS_COMPROBANTE),
@@ -200,6 +227,25 @@ export const CreateFacturaSchema = z.object({
   ...CamposArca,
   /** La lectura del comprobante (POST /facturas/leer): el archivo se adjunta solo. */
   lectura_id:          Id.nullable().optional(),
+  /** 'factura' o 'nota_credito' (20260925a). */
+  clase:               z.enum(CLASES).default('factura'),
+  /** Sólo NC: a qué facturas acredita. Sin esto (o vacío), queda como crédito a favor. */
+  aplica_a:            AplicaALista.nullable().optional(),
+}).superRefine((f, ctx) => {
+  const err = (path: string, message = 'NC_TIPO_INVALIDO') => ctx.addIssue({ code: 'custom', path: [path], message })
+  if (f.clase === 'nota_credito') {
+    // Lo mismo que el CHECK `pagos_facturas_nc_chk`, adelantado al campo.
+    if (!(TIPOS_COMPROBANTE_NC as readonly string[]).includes(f.tipo_comprobante)) err('tipo_comprobante')
+    if (f.cbte_tipo_arca != null && !esCbteNotaCredito(f.cbte_tipo_arca)) err('cbte_tipo_arca')
+    if (f.orden) err('orden', 'NC_NO_SE_PAGA')
+    if (f.vence_el) err('vence_el')
+    if (f.plan_cheques) err('plan_cheques')
+    if (f.paga_cliente) err('paga_cliente')
+    if (f.aplica_a?.length && centavos(sumaAplicaA(f.aplica_a)) > centavos(f.total)) err('aplica_a', 'NC_SUPERA_TOTAL')
+  } else {
+    if (f.cbte_tipo_arca != null && esCbteNotaCredito(f.cbte_tipo_arca)) err('cbte_tipo_arca')
+    if (f.aplica_a?.length) err('aplica_a')
+  }
 })
 export type CreateFacturaDto = z.infer<typeof CreateFacturaSchema>
 
@@ -231,6 +277,12 @@ export const UpdateFacturaSchema = z.object({
   imputaciones:        z.array(ImputacionSchema).min(1).max(50).optional(),
   motivo:              z.string().trim().min(3).max(300).optional(),
   ...CamposArca,
+  /**
+   * Sólo NC pendiente u observada: reemplaza a qué facturas acredita (vacío =
+   * crédito a favor). Aprobada, se agrega con POST /facturas/:id/aplicar-nc.
+   * `clase` no se edita (no está en el schema: .strict la rebota).
+   */
+  aplica_a:            AplicaALista.optional(),
 }).strict()
 export type UpdateFacturaDto = z.infer<typeof UpdateFacturaSchema>
 
@@ -270,6 +322,11 @@ export const CorregidaSchema = z.object({
 export const AprobarLoteSchema = z.object({
   ids: z.array(Id).min(1).max(100),
 })
+/** Aplicar crédito de una NC aprobada a facturas del mismo proveedor (`pagos_aplicar_nc`: solo agrega). */
+export const AplicarNcSchema = z.object({
+  aplica_a: AplicaALista.min(1),
+}).strict()
+export type AplicarNcDto = z.infer<typeof AplicarNcSchema>
 
 export const FACTURAS_ORDEN = ['vencimiento', 'fecha', 'saldo'] as const
 export const FACTURAS_VENCIMIENTO = ['vencidas', '7', '30', 'todas'] as const
@@ -296,6 +353,10 @@ export const ListFacturasQuerySchema = z.object({
   es_interna:       BOOL_Q,
   anuladas:         BOOL_Q,
   archivadas:       BOOL_Q,
+  /** Factura o nota de crédito (20260925a). Sin filtro vienen las dos. */
+  clase:            z.enum(CLASES).optional(),
+  /** NC aprobadas con crédito sin aplicar (`nc_disponible > 0`). */
+  con_credito:      BOOL_Q,
   orden:            z.enum(FACTURAS_ORDEN).default('vencimiento'),
   limit:            z.coerce.number().int().min(1).max(500).default(50),
   offset:           z.coerce.number().int().min(0).default(0),
@@ -357,28 +418,21 @@ export const BorrarPendienteSchema = z.object({
 // ── Órdenes de pago ─────────────────────────────────────────────────────────
 
 /**
- * Línea de OP (decisión 7): `factura` (paga una factura aprobada), `a_cuenta`
- * (anticipo, sin factura) o `nota_credito` (acredita una factura aprobada:
- * baja el saldo sin que salga plata; lleva número y fecha de la NC).
+ * Línea de OP: `factura` (paga una factura aprobada) o `a_cuenta` (anticipo,
+ * sin factura). Desde el 2026-09-25 la nota de crédito NO es una línea: es un
+ * comprobante propio que se aplica a la factura (`pagos_nc_aplicaciones`). La
+ * RPC igual rechaza `nota_credito` con 400 NC_ES_COMPROBANTE.
  */
 export const LineaOrdenSchema = z.object({
-  tipo:       z.enum(TIPOS_LINEA).default('factura'),
+  tipo:       z.enum(TIPOS_LINEA_ENTRADA).default('factura'),
   factura_id: Id.nullable().optional(),
   monto:      Monto,
-  nc_numero:  z.string().trim().max(60).nullable().optional(),
-  nc_fecha:   FechaISO.nullable().optional(),
 }).superRefine((l, ctx) => {
   if (l.tipo === 'a_cuenta' && l.factura_id != null) {
     ctx.addIssue({ code: 'custom', path: ['factura_id'], message: 'Una línea a cuenta no lleva factura' })
   }
   if (l.tipo !== 'a_cuenta' && l.factura_id == null) {
     ctx.addIssue({ code: 'custom', path: ['factura_id'], message: 'La línea necesita factura_id' })
-  }
-  if (l.tipo !== 'nota_credito' && (l.nc_numero || l.nc_fecha)) {
-    ctx.addIssue({ code: 'custom', path: ['nc_numero'], message: 'nc_numero/nc_fecha solo en líneas nota_credito' })
-  }
-  if (l.tipo === 'nota_credito' && (!l.nc_numero || !l.nc_fecha)) {
-    ctx.addIssue({ code: 'custom', path: ['nc_numero'], message: 'NC_DATOS_REQUERIDOS' })
   }
 })
 export type LineaOrdenDto = z.infer<typeof LineaOrdenSchema>
@@ -387,13 +441,13 @@ export const CreateOrdenSchema = z.object({
   proveedor_id: Id,
   fecha:        FechaISO,
   fecha_cobro:  FechaISO.nullable().optional(),
-  // Con plata es obligatoria; sin plata (solo notas de crédito) el service la
-  // ignora y guarda 'nota_credito'.
+  // Obligatoria: una OP siempre mueve plata (la NC ya no es una línea). Se deja
+  // nullable para que el error salga en el campo (FORMA_PAGO_REQUERIDA).
   forma_pago:   z.enum(FORMAS_PAGO_OP).nullable().optional(),
   referencia:   z.string().trim().max(120).optional().default(''),
   obs:          z.string().trim().max(1000).optional().default(''),
   lineas:       z.array(LineaOrdenSchema).min(1).max(100),
-  // Comprobante de pago y/o PDF de la NC, ya subidos a `ordenes/pendientes/`.
+  // Comprobante de pago (u otro), ya subidos a `ordenes/pendientes/`.
   adjuntos:     z.array(AdjuntoPendienteSchema).max(10).optional().default([]),
   cheques:      z.array(ChequeSchema).max(50).optional().default([]),
 }).superRefine((o, ctx) => {
@@ -419,7 +473,15 @@ export type CreateOrdenDto = z.infer<typeof CreateOrdenSchema>
 export const AvisarPagoSchema = z.object({
   a_proveedor:     z.boolean().optional().default(false),
   a_contador:      z.boolean().optional().default(false),
+  /** Legacy (una sola dirección). Si viene `emails_proveedor`, se ignora. */
   email_proveedor: z.string().trim().email().max(254).optional(),
+  /**
+   * Las direcciones del proveedor para ESTE envío (20260925e: varios
+   * contactos). Sin esto van los contactos con `recibe_avisos`. Cada una
+   * recibe su propio mail y queda registrada aparte.
+   */
+  emails_proveedor: z.array(z.string().trim().toLowerCase().email().max(254)).min(1).max(10).optional(),
+  /** Las direcciones nuevas quedan como contacto del proveedor («recibe avisos»). */
   guardar_email:   z.boolean().optional().default(true),
 }).superRefine((o, ctx) => {
   if (!o.a_proveedor && !o.a_contador) {
@@ -428,25 +490,42 @@ export const AvisarPagoSchema = z.object({
 })
 export type AvisarPagoDto = z.infer<typeof AvisarPagoSchema>
 
+// ── Contactos del proveedor (20260925e/f) ───────────────────────────────────
+// La lista entera: la RPC `pagos_guardar_contactos` actualiza los que traen
+// id, agrega los nuevos y borra los que no vienen. Mismo formato que los
+// contactos de clientes en Ventas (cada módulo con su copia: son independientes).
+export const ROLES_CONTACTO = ['administracion', 'vendedor', 'compras', 'pagos', 'otro'] as const
+const textoOpc = (max: number) => z.string().trim().max(max).optional().nullable()
+export const ContactoProveedorSchema = z.object({
+  id: z.coerce.number().int().positive().optional(),
+  nombre: textoOpc(120),
+  rol: z.enum(ROLES_CONTACTO).default('administracion'),
+  email: z.string().trim().toLowerCase().max(200)
+    .refine((v) => v === '' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), 'email con forma inválida')
+    .optional().nullable(),
+  telefono: textoOpc(60),
+  recibe_avisos: z.boolean().default(true),
+  obs: textoOpc(500),
+}).refine((c) => !!(c.nombre?.trim() || c.email?.trim() || c.telefono?.trim()), {
+  message: 'el contacto necesita al menos nombre, email o teléfono', path: ['nombre'],
+})
+export const ContactosProveedorSchema = z.object({ contactos: z.array(ContactoProveedorSchema).max(30) })
+  .superRefine((d, ctx) => {
+    const vistos = new Set<string>()
+    d.contactos.forEach((c, i) => {
+      const e = c.email?.trim()
+      if (!e) return
+      if (vistos.has(e)) ctx.addIssue({ code: 'custom', path: ['contactos', i, 'email'], message: `el email ${e} está repetido` })
+      vistos.add(e)
+    })
+  })
+export type ContactoProveedorDto = z.infer<typeof ContactoProveedorSchema>
+
 export const UpdateOrdenSchema = z.object({
   referencia: z.string().trim().max(120).optional(),
   obs:        z.string().trim().max(1000).optional(),
 }).strict()
 export type UpdateOrdenDto = z.infer<typeof UpdateOrdenSchema>
-
-/**
- * Devolución del proveedor (20260923g): anula la OP y la rehace con la NC
- * (y la plata que quedó, si es parcial). `devoluciones` = lo que devuelven
- * por factura; el PDF de la NC viene en `adjuntos` (ya subido a pendientes).
- */
-export const DevolucionProveedorSchema = z.object({
-  devoluciones: z.array(z.object({ factura_id: Id, monto: Monto })).min(1).max(100),
-  nc_numero:    z.string().trim().min(1).max(40),
-  nc_fecha:     FechaISO,
-  motivo:       z.string().trim().max(500).optional().default(''),
-  adjuntos:     z.array(AdjuntoPendienteSchema).min(1).max(5),
-}).strict()
-export type DevolucionProveedorDto = z.infer<typeof DevolucionProveedorSchema>
 
 /** El contador marca la OP como registrada en Finnegans con su número (20260923c). */
 export const RegistrarFinnegansSchema = z.object({

@@ -22,7 +22,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import type { ZodType } from 'zod'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireFlag, requireTab, tieneFlag } from '../../middleware/permission.js'
+import { requirePermiso, requirePermisoOr, requireFlag, requireTab, tieneFlag } from '../../middleware/permission.js'
 import { perfilDe, esAdmin } from '../pagos/pagos.service.js'
 import { FacturacionHttpError, cuerpoError } from './facturacion.errors.js'
 import { dbDe } from './comun.js'
@@ -49,7 +49,7 @@ import {
   ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema, AdjuntoCobroSchema,
   PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
   CreateExternoSchema, UpdateExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
-  LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
+  ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
 
@@ -183,6 +183,12 @@ fact.get('/clientes/:id/fce', lectura, tabLeerClientes, valida('query', FceClien
   const q = c.req.valid('query')
   return fceService.info(idParam(c), { refrescar: esBoolQ(q.refrescar), fecha: q.fecha }, db(c))
 }))
+
+// Lista entera de contactos (nombre, rol, email, teléfono, recibe avisos).
+// Creación O actualización: quien da de alta un cliente también le carga sus contactos.
+const creacionOActualizacion = requirePermisoOr([{ modulo: MOD, accion: 'creacion' }, { modulo: MOD, accion: 'actualizacion' }])
+fact.put('/clientes/:id/contactos', creacionOActualizacion, tabClientes, valida('json', ContactosSchema), handler(async (c) =>
+  clientesService.setContactos(idParam(c), c.req.valid('json').contactos, uid(c), db(c))))
 
 fact.put('/clientes/:id/obras', actualizacion, tabClientes, valida('json', ObrasClienteSchema), handler(async (c) =>
   clientesService.setObras(idParam(c), c.req.valid('json').obra_cods, db(c))))

@@ -19,9 +19,9 @@
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
-import { PagosHttpError, errorDeCampo } from './pagos.errors.js'
+import { PagosHttpError, errorDeCampo, mapRpcError } from './pagos.errors.js'
 import { normCuit, cuitValido, normCbu, cbuValido, normAlias, aliasValido, enmascarar, enmascararTexto } from './pagos.util.js'
-import { esBoolQ, type CreateProveedorDto, type UpdateProveedorDto, type DatosPagoDto, type ListProveedoresQuery } from './pagos.schema.js'
+import { esBoolQ, type ContactoProveedorDto, type CreateProveedorDto, type UpdateProveedorDto, type DatosPagoDto, type ListProveedoresQuery } from './pagos.schema.js'
 
 const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by'
 
@@ -98,9 +98,13 @@ async function mapDuplicado(error: { code?: string; message?: string; details?: 
   })
 }
 
-/** Ids de facturas `aprobada` del proveedor: las que el trigger va a desaprobar si cambia la cuenta. */
+/**
+ * Ids de facturas `aprobada` del proveedor: las que el trigger va a desaprobar
+ * si cambia la cuenta. Solo `clase = 'factura'`: una NC no se paga, así que
+ * el cambio de CBU no le retira la aprobación (`fn_pagos_proveedor_cuenta_cambiada`, 20260925b).
+ */
 async function aprobadasDe(proveedorId: number): Promise<number[]> {
-  const { data } = await supabase.from('pagos_facturas').select('id').eq('proveedor_id', proveedorId).eq('estado', 'aprobada').order('id')
+  const { data } = await supabase.from('pagos_facturas').select('id').eq('proveedor_id', proveedorId).eq('clase', 'factura').eq('estado', 'aprobada').order('id')
   return ((data ?? []) as { id: number }[]).map((r) => r.id)
 }
 
@@ -169,16 +173,21 @@ export const proveedoresService = {
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!data) throw new PagosHttpError(404, 'PROVEEDOR_NO_EXISTE')
 
-    const [hist, abiertas] = await Promise.all([
+    const [hist, abiertas, contactos] = await Promise.all([
       supabase.from('audit_log')
         .select('id, created_at, user_id, user_nombre, detalle')
         .eq('modulo', 'pagos').eq('entidad', 'proveedor (pagos)').eq('entidad_id', String(id))
         .or('detalle.ilike.%cbu:%,detalle.ilike.%alias_cbu:%')
         .order('created_at', { ascending: false }).limit(50),
+      // Solo facturas: una NC tiene saldo 0 (no es deuda); su crédito sin
+      // aplicar está en `nc_disponible` de la fila del proveedor.
       sb.from('v_pagos_facturas')
-        .select('id, tipo_comprobante, numero, fecha, vence_el, total, saldo, estado, vencida, descripcion')
-        .eq('proveedor_id', id).in('estado', ['pendiente', 'observada', 'aprobada', 'pagada_parcial'])
+        .select('id, tipo_comprobante, numero, fecha, vence_el, total, saldo, saldo_pagable, nc_pendiente, acreditado, nc_txt, estado, vencida, descripcion')
+        .eq('proveedor_id', id).eq('clase', 'factura').in('estado', ['pendiente', 'observada', 'aprobada', 'pagada_parcial'])
         .order('vence_el', { ascending: true, nullsFirst: false }).order('id').limit(200),
+      sb.from('pagos_proveedor_contactos')
+        .select('id, nombre, rol, email, telefono, recibe_avisos, orden, obs')
+        .eq('proveedor_id', id).order('orden').order('id'),
     ])
     const historial_datos_pago = ((hist.data ?? []) as { id: number; created_at: string; user_id: string | null; user_nombre: string | null; detalle: string }[])
       .map((h) => ({ ...h, detalle: enmascararTexto(h.detalle ?? '', verPii) }))
@@ -186,7 +195,20 @@ export const proveedoresService = {
       ...enmascararProveedor(data as Record<string, unknown>, verPii),
       historial_datos_pago,
       facturas_abiertas: abiertas.data ?? [],
+      contactos: contactos.data ?? [],
     }
+  },
+
+  /** Reemplaza la lista de contactos (RPC transaccional, 20260925f). */
+  async setContactos(id: number, contactos: ContactoProveedorDto[], userId: string, token: string) {
+    const sb = createSupabaseClient(token)
+    const lista = contactos.map((k) => ({ ...k, email: k.email?.trim() || null }))
+    const { data, error } = await sb.rpc('pagos_guardar_contactos', { p_proveedor_id: id, p_contactos: lista, p_user_id: userId })
+    if (error) {
+      if (error.code === '23505') throw new PagosHttpError(409, 'CONTACTO_EMAIL_DUPLICADO', { dbMessage: error.message })
+      throw mapRpcError(error)
+    }
+    return { contactos: data ?? [] }
   },
 
   /**

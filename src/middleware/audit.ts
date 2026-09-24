@@ -70,7 +70,8 @@ export const VERBOS: Record<string, string> = {
   observar: 'observar', corregida: 'marcar corregida', anular: 'anular', reactivar: 'reactivar',
   'datos-pago': 'cargar datos de pago', 'comprobante-pendiente': 'descartar comprobante',
   reimputar: 'reimputar', 'aplicar-anticipo': 'aplicar anticipo',
-  devolucion: 'devolución del proveedor', 'registrar-finnegans': 'registrar en Finnegans', 'deshacer-registro': 'deshacer registro en Finnegans',
+  // `devolucion` quedó por las filas viejas de audit_log: la ruta se borró el 2026-09-25.
+  devolucion: 'devolución del proveedor', 'aplicar-nc': 'aplicar nota de crédito', 'registrar-finnegans': 'registrar en Finnegans', 'deshacer-registro': 'deshacer registro en Finnegans',
   // Facturación de venta (2026-09-24). `baja`, `registrar-finnegans` y
   // `deshacer-registro` ya están arriba.
   emitir: 'emitir en ARCA', reconciliar: 'reconciliar con ARCA', descartar: 'descartar',

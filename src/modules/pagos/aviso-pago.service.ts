@@ -28,8 +28,8 @@ import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import { enviarMail, esEmailValido, estaConfigurado, loQueFalta, type AdjuntoMail } from '../../lib/mail.js'
 import { BUCKET } from './adjuntos.service.js'
 import { PagosHttpError } from './pagos.errors.js'
-import { armarCuerpo, type Destinatario } from './aviso-pago.cuerpo.js'
-export { armarCuerpo } from './aviso-pago.cuerpo.js'
+import { armarCuerpo, destinatariosProveedor, type Destinatario } from './aviso-pago.cuerpo.js'
+export { armarCuerpo, destinatariosProveedor } from './aviso-pago.cuerpo.js'
 export type { Destinatario } from './aviso-pago.cuerpo.js'
 
 /** La casilla del contador: la del env, o la del usuario activo con rol contador. */
@@ -66,7 +66,7 @@ export const avisoPagoService = {
    */
   async avisar(
     ordenId: number,
-    dto: { a_proveedor: boolean; a_contador: boolean; email_proveedor?: string; guardar_email?: boolean },
+    dto: { a_proveedor: boolean; a_contador: boolean; email_proveedor?: string; emails_proveedor?: string[]; guardar_email?: boolean },
     userId: string,
     token: string,
   ): Promise<{ resultados: ResultadoAviso[] }> {
@@ -91,6 +91,29 @@ export const avisoPagoService = {
     ])
     if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
 
+    const facturaIds = [...new Set(((lineas.data ?? []) as any[])
+      .map((l) => l.factura_id).filter((x): x is number => typeof x === 'number'))]
+
+    // NC aprobadas y vigentes aplicadas a cada factura (20260925a): el mail
+    // dice «menos NC aplicadas $X» para que el proveedor entienda por qué se
+    // pagó menos que el total. Best-effort: si falla, el aviso sale sin eso.
+    const ncPorFactura = new Map<number, number>()
+    if (facturaIds.length > 0) {
+      const { data: aps } = await sb.from('pagos_nc_aplicaciones').select('nc_id, factura_id, monto').in('factura_id', facturaIds)
+      const filas = (aps ?? []) as { nc_id: number; factura_id: number; monto: number | string }[]
+      const ncIds = [...new Set(filas.map((a) => Number(a.nc_id)))]
+      if (ncIds.length > 0) {
+        const { data: ncs } = await sb.from('pagos_facturas').select('id, estado, aprobada_at').in('id', ncIds)
+        const ok = new Set(((ncs ?? []) as { id: number; estado: string; aprobada_at: string | null }[])
+          .filter((n) => n.estado !== 'anulada' && n.aprobada_at != null).map((n) => Number(n.id)))
+        for (const a of filas) {
+          if (!ok.has(Number(a.nc_id))) continue
+          const k = Number(a.factura_id)
+          ncPorFactura.set(k, Math.round(((ncPorFactura.get(k) ?? 0) + Number(a.monto)) * 100) / 100)
+        }
+      }
+    }
+
     const facturas = ((lineas.data ?? []) as any[])
       .filter((l) => l.tipo !== 'nota_credito' && l.factura_id != null)
       .map((l) => ({
@@ -98,10 +121,8 @@ export const avisoPagoService = {
         numero: l.factura?.numero ?? null,
         fecha: l.factura?.fecha ?? null,
         aplicado: Number(l.monto),
+        nc_aplicadas: ncPorFactura.get(Number(l.factura_id)) ?? 0,
       }))
-
-    const facturaIds = [...new Set(((lineas.data ?? []) as any[])
-      .map((l) => l.factura_id).filter((x): x is number => typeof x === 'number'))]
     const adjFactura = facturaIds.length === 0 ? { data: [] as any[] } : await sb
       .from('pagos_facturas_adjuntos')
       .select('id, tipo, storage_path, nombre_archivo, mime_type')
@@ -168,17 +189,35 @@ export const avisoPagoService = {
     }
 
     if (dto.a_proveedor) {
-      const delPadron = String(orden.proveedor_email ?? '').trim()
-      const email = (dto.email_proveedor ?? '').trim() || delPadron
-      // Si vino una dirección nueva y se pidió guardarla, queda en el padrón:
-      // así el próximo aviso no la vuelve a pedir.
-      if (dto.guardar_email && esEmailValido(dto.email_proveedor) && dto.email_proveedor !== delPadron) {
-        await supabase.from('pagos_proveedores')
-          .update({ email: dto.email_proveedor!.trim(), updated_by: userId })
-          .eq('id', Number(orden.proveedor_id))
+      const provId = Number(orden.proveedor_id)
+      // Contactos del proveedor (20260925e). Sin elegir, van los que tienen
+      // «recibe avisos»; si no hay ninguno, el email suelto viejo del padrón.
+      const { data: cont, error: eCont } = await sb.from('pagos_proveedor_contactos')
+        .select('email, recibe_avisos').eq('proveedor_id', provId).not('email', 'is', null)
+      const contactos = ((cont ?? []) as { email: string; recibe_avisos: boolean }[])
+      const { emails, pedidos, conocidos } = destinatariosProveedor({
+        pedidos: dto.emails_proveedor ?? (dto.email_proveedor ? [dto.email_proveedor] : []),
+        contactos, delPadron: String(orden.proveedor_email ?? ''),
+      })
+      // Las direcciones nuevas quedan como contacto: el próximo aviso ya las trae.
+      // Si no se pudo leer la lista, no se guarda nada: todas parecerían nuevas.
+      if (dto.guardar_email && !eCont) {
+        const nuevas = pedidos.filter((e) => esEmailValido(e) && !conocidos.has(e))
+        if (nuevas.length) {
+          const { count } = await supabase.from('pagos_proveedor_contactos')
+            .select('id', { count: 'exact', head: true }).eq('proveedor_id', provId)
+          const { error: eIns } = await supabase.from('pagos_proveedor_contactos').insert(nuevas.map((email, i) => ({
+            proveedor_id: provId, email, rol: 'administracion', recibe_avisos: true,
+            orden: (count ?? 0) + i + 1, created_by: userId, updated_by: userId,
+          })))
+          // Best-effort: el aviso sale igual; guardar la dirección es un extra.
+          if (eIns) console.warn('[aviso-pago] no se guardó el contacto nuevo:', eIns.message)
+        }
       }
       // El proveedor recibe SOLO el comprobante del pago: la factura ya es suya.
-      await mandarA('proveedor', email || null, comprobantes)
+      // Un mail por dirección: si una rebota, las otras salen igual y queda cada intento.
+      if (emails.length === 0) await mandarA('proveedor', null, comprobantes)
+      for (const email of emails) await mandarA('proveedor', email, comprobantes)
     }
 
     if (dto.a_contador) {

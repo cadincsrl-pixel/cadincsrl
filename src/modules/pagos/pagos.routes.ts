@@ -38,7 +38,7 @@ import {
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
   UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema,
   CompletarDesgloseSchema, LeerAdjuntoSchema,
-  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, DevolucionProveedorSchema,
+  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
 } from './pagos.schema.js'
 
@@ -150,6 +150,19 @@ pagos.post('/facturas/:id/aprobar', lectura, aprobarFacturas, tabFactura, handle
   return pagosService.aprobarFactura(idParam(c), userId, await perfilDe(userId))
 }))
 
+// Aplicar el crédito sobrante de una NC aprobada (20260925c). Lo puede hacer
+// quien aprueba facturas O quien registra pagos (decisión del dueño 24/09):
+// no hay un requireFlag de «uno u otro», así que se mira inline como en
+// /observar. Tabs: la ficha se abre desde facturas y desde pagos.
+pagos.post('/facturas/:id/aplicar-nc', lectura, tabPago, zValidator('json', AplicarNcSchema), handler(async (c) => {
+  const userId = c.get('user').id
+  const perfil = await perfilDe(userId)
+  if (!(esAdmin(perfil) || flagPagos(perfil, 'aprobar_facturas') || flagPagos(perfil, 'registrar_pagos'))) {
+    throw new PagosHttpError(403, 'SIN_PERMISO', { flag: 'aprobar_facturas|registrar_pagos' })
+  }
+  return pagosService.aplicarNc(idParam(c), c.req.valid('json'), userId, verPiiDe(perfil))
+}))
+
 // Marcar corregida: observada → pendiente (nunca a aprobada).
 pagos.post('/facturas/:id/corregida', actualizacion, tabFactura, zValidator('json', CorregidaSchema), handler(async (c) =>
   pagosService.marcarCorregida(idParam(c), c.req.valid('json').comentario, c.get('user').id, await verPii(c))))
@@ -216,7 +229,8 @@ pagos.get('/ordenes/:id', lectura, tabPago, handler(async (c) =>
   pagosService.detalleOrden(idParam(c), await verPii(c), c.get('accessToken'))))
 
 // Registrar pago (todo o nada). Solo sobre aprobadas (`_pagos_validar_pagable`
-// en la RPC); separación de funciones acá; NC como línea (decisión 7).
+// en la RPC); separación de funciones acá. Tope por factura = `saldo_pagable`
+// (lo reservado por NC sin aprobar no se paga). Una NC no es línea (20260925a).
 pagos.post('/ordenes', lectura, registrarPagos, tabPago, zValidator('json', CreateOrdenSchema), handler(async (c) => {
   const userId = c.get('user').id
   return pagosService.registrarOrden(c.req.valid('json'), userId, await perfilDe(userId))
@@ -232,13 +246,6 @@ pagos.post('/ordenes/:id/anular', lectura, tabPago, zValidator('json', MotivoSch
   return pagosService.anularOrden(idParam(c), c.req.valid('json').motivo, userId, await perfilDe(userId))
 }))
 
-// Devolución del proveedor (20260923g): anula la OP y la rehace con la NC.
-// El permiso (anular_pagos o admin) lo mira el service, como en /anular.
-pagos.post('/ordenes/:id/devolucion', lectura, tabPago, zValidator('json', DevolucionProveedorSchema), handler(async (c) => {
-  const userId = c.get('user').id
-  return pagosService.devolucionProveedor(idParam(c), c.req.valid('json'), userId, await perfilDe(userId))
-}))
-
 // Registro contable (20260923c): el contador marca la OP como pasada a
 // Finnegans con el número de allá. Mismo flag que emitir: lo tiene el
 // contador y quien paga; Compras no.
@@ -248,7 +255,7 @@ pagos.post('/ordenes/:id/registrar-finnegans', lectura, registrarPagos, tabPago,
 pagos.post('/ordenes/:id/deshacer-registro', lectura, registrarPagos, tabPago, handler(async (c) =>
   pagosService.deshacerRegistroFinnegans(idParam(c), c.get('user').id)))
 
-// Adjuntos de OP (comprobantes posteriores, PDF de NC, otro).
+// Adjuntos de OP (comprobantes posteriores u otro).
 // ── Aviso de pago por mail (20260921m) ─────────────────────────────────────
 // Con UN CLIC, no automático al emitir: de 9 proveedores 1 tiene mail cargado,
 // así que automático no saldría casi nunca y quien emitió creería que el
@@ -297,6 +304,10 @@ pagos.post('/proveedores', creacion, tabFacturaOProveedores, zValidator('json', 
   const r = await proveedoresService.crear(c.req.valid('json'), c.get('user').id, esBoolQ(c.req.query('forzar')), c.get('accessToken'))
   return { ...r, proveedor: enmascararProveedor(r.proveedor, await verPii(c)) }
 }))
+
+// Lista entera de contactos (nombre, rol, email, teléfono, recibe avisos de pago).
+pagos.put('/proveedores/:id/contactos', actualizacion, tabProveedores, zValidator('json', ContactosProveedorSchema), handler(async (c) =>
+  proveedoresService.setContactos(idParam(c), c.req.valid('json').contactos, c.get('user').id, c.get('accessToken'))))
 
 pagos.patch('/proveedores/:id', actualizacion, tabProveedores, zValidator('json', UpdateProveedorSchema), handler(async (c) => {
   const r = await proveedoresService.editar(idParam(c), c.req.valid('json'), c.get('user').id, c.get('accessToken'))

@@ -136,13 +136,23 @@ export type TipoComprobante = 'A' | 'B' | 'C' | 'recibo' | 'ticket' | 'otro'
 export const CBTE_TIPOS_ARCA = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 49, 51, 52, 53, 54, 81, 82, 83,
   201, 202, 203, 206, 207, 208, 211, 212, 213] as const
 
-const NOTAS_CREDITO = new Set([3, 8, 13, 53, 203, 208, 213])
+/**
+ * Notas de crédito (A, B, C, M y las MiPyME 203/208/213). Desde el 2026-09-25
+ * una NC de proveedor es un COMPROBANTE de `pagos_facturas` con
+ * `clase = 'nota_credito'` (CHECK `pagos_facturas_nc_chk`: sólo estos códigos).
+ */
+export const CBTE_TIPOS_NC = [3, 8, 13, 53, 203, 208, 213] as const
+const NOTAS_CREDITO = new Set<number>(CBTE_TIPOS_NC)
+export const esCbteNotaCredito = (codigo: number | null | undefined) => codigo != null && NOTAS_CREDITO.has(codigo)
+/** Una NC sin código de ARCA: la base lo deduce por letra (A→3, B→8, C→13). */
+export const CBTE_NC_POR_LETRA: Readonly<Record<string, number>> = { A: 3, B: 8, C: 13 }
 const RECIBOS = new Set([4, 9, 15, 54])
 
 /**
  * Código ARCA → tipo del módulo. La M (51-54) va como A: discrimina IVA igual.
- * Las notas de crédito se marcan aparte: en este módulo una NC no se carga
- * como factura, es una línea de la orden de pago (§5.18).
+ * Las notas de crédito se marcan aparte (`esNotaCredito`): se cargan como
+ * comprobante con `clase = 'nota_credito'`, con su desglose y a qué facturas
+ * acreditan (20260925a).
  */
 export function tipoDesdeArca(codigo: number | null | undefined): { tipo: TipoComprobante; esNotaCredito: boolean } | null {
   if (codigo == null) return null
@@ -178,7 +188,9 @@ export const NOMBRE_CBTE: Record<number, string> = {
   11: 'Factura C', 12: 'Nota de débito C', 13: 'Nota de crédito C', 15: 'Recibo C',
   51: 'Factura M', 52: 'Nota de débito M', 53: 'Nota de crédito M', 54: 'Recibo M',
   81: 'Tique factura A', 82: 'Tique factura B', 83: 'Tique',
-  201: 'Factura de crédito electrónica A', 206: 'Factura de crédito electrónica B', 211: 'Factura de crédito electrónica C',
+  201: 'Factura de crédito electrónica A', 202: 'Nota de débito electrónica MiPyME A', 203: 'Nota de crédito electrónica MiPyME A',
+  206: 'Factura de crédito electrónica B', 207: 'Nota de débito electrónica MiPyME B', 208: 'Nota de crédito electrónica MiPyME B',
+  211: 'Factura de crédito electrónica C', 212: 'Nota de débito electrónica MiPyME C', 213: 'Nota de crédito electrónica MiPyME C',
 }
 
 // ── Alícuotas de IVA ────────────────────────────────────────────────────────

@@ -18,10 +18,16 @@ import { normTxt } from '../../lib/norm-txt.js'
 import { cuitValido } from '../pagos/pagos.util.js'
 import { FacturacionHttpError, errorDeCampo, mapRpcError, type PgError } from './facturacion.errors.js'
 import { CONDICIONES_IVA_IDS, letraDe, normDoc, obrasNoVinculables, type ObraFacturable } from './reglas.js'
-import type { CreateClienteDto, UpdateClienteDto } from './facturacion.schema.js'
+import type { ContactoDto, CreateClienteDto, UpdateClienteDto } from './facturacion.schema.js'
 
 export interface ObraCliente { cod: string; nom: string }
-export type VentasCliente = Record<string, unknown> & { id: number; obras: ObraCliente[] }
+export interface ContactoCliente {
+  id: number; nombre: string | null; rol: string; email: string | null; telefono: string | null
+  recibe_avisos: boolean; orden: number; obs: string | null
+}
+export type VentasCliente = Record<string, unknown> & { id: number; obras: ObraCliente[]; contactos: ContactoCliente[] }
+
+const COLS_CONTACTO = 'id, cliente_id, nombre, rol, email, telefono, recibe_avisos, orden, obs'
 
 const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by, cuenta_fce_id, fce_obligado, fce_monto_desde, fce_consultado_at, padron_json, padron_consultado_at, plazo_pago_dias'
 
@@ -77,15 +83,28 @@ async function errorDuplicado(db: SupabaseClient, docTipo: number, docNro: strin
   return new FacturacionHttpError(409, 'CLIENTE_DUPLICADO', { campo: 'doc_nro', ...(otro ?? {}) })
 }
 
+/** Obras que se le facturan y contactos (20260925e) de cada cliente. */
 async function conObras(db: SupabaseClient, clientes: Array<Record<string, unknown> & { id: number }>): Promise<VentasCliente[]> {
   if (clientes.length === 0) return []
   const ids = clientes.map((c) => c.id)
   const obras: Array<ObraCliente & { cliente_id: number }> = []
+  const contactos: Array<ContactoCliente & { cliente_id: number }> = []
   for (let i = 0; i < ids.length; i += 200) {
     const lote = ids.slice(i, i + 200)
-    const filas = await todasLasFilas<ObraCliente & { cliente_id: number }>((d, h) =>
-      db.from('obras').select('cod, nom, cliente_id').in('cliente_id', lote).order('cod').range(d, h))
+    const [filas, cont] = await Promise.all([
+      todasLasFilas<ObraCliente & { cliente_id: number }>((d, h) =>
+        db.from('obras').select('cod, nom, cliente_id').in('cliente_id', lote).order('cod').range(d, h)),
+      todasLasFilas<ContactoCliente & { cliente_id: number }>((d, h) =>
+        db.from('ventas_cliente_contactos').select(COLS_CONTACTO).in('cliente_id', lote).order('orden').order('id').range(d, h)),
+    ])
     obras.push(...filas)
+    contactos.push(...cont)
+  }
+  const contPor = new Map<number, ContactoCliente[]>()
+  for (const { cliente_id, ...k } of contactos) {
+    const l = contPor.get(cliente_id) ?? []
+    l.push(k)
+    contPor.set(cliente_id, l)
   }
   const por = new Map<number, ObraCliente[]>()
   for (const o of obras) {
@@ -93,7 +112,7 @@ async function conObras(db: SupabaseClient, clientes: Array<Record<string, unkno
     l.push({ cod: o.cod, nom: o.nom })
     por.set(o.cliente_id, l)
   }
-  return clientes.map((c) => ({ ...c, obras: por.get(c.id) ?? [] }))
+  return clientes.map((c) => ({ ...c, obras: por.get(c.id) ?? [], contactos: contPor.get(c.id) ?? [] }))
 }
 
 export const clientesService = {
@@ -204,6 +223,14 @@ export const clientesService = {
       if ((error as PgError).code === '23505') throw await errorDuplicado(db, Number(actual.doc_tipo), String(actual.doc_nro), id)
       throw mapRpcError(error as PgError)
     }
+    return this.detalle(id, db)
+  },
+
+  /** Reemplaza la lista de contactos del cliente (RPC transaccional, 20260925f). */
+  async setContactos(id: number, contactos: ContactoDto[], userId: string, db: SupabaseClient = supabase): Promise<VentasCliente> {
+    const lista = contactos.map((k) => ({ ...k, email: k.email?.trim() || null }))
+    const { error } = await db.rpc('ventas_guardar_contactos', { p_cliente_id: id, p_contactos: lista, p_user_id: userId })
+    if (error) throw mapRpcError(error as PgError, { unicoComo: 'CONTACTO_EMAIL_DUPLICADO' })
     return this.detalle(id, db)
   },
 

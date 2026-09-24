@@ -84,8 +84,9 @@ describe('GET /lid-compras', () => {
     expect(b.archivos.cbte.split('\r\n')[0]).toHaveLength(325)
     expect(filtros).toEqual(expect.arrayContaining([
       ['pagos_facturas', 'gte:fecha', '2026-09-01'], ['pagos_facturas', 'lte:fecha', '2026-09-30'],
-      ['pagos_orden_lineas', 'eq:tipo', 'nota_credito'],
     ]))
+    // Las NC son comprobantes de pagos_facturas: ya no se leen las líneas de OP.
+    expect(filtros.some(f => f[0] === 'pagos_orden_lineas')).toBe(false)
   })
 
   it('la tab vieja finnegans también pasa; sin tab 403; período mal formado 400', async () => {

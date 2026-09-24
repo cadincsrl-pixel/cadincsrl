@@ -9,7 +9,8 @@
  *     + aprobar_facturas) aprueba pero no paga.
  *   - Tres separaciones de funciones, admin exento (decisiones 1 y 2).
  *   - «Ya está pagada» sin tope: compras solo tarjeta/efectivo, admin cualquier forma (decisión 3).
- *   - NC como línea: monto_pagado sin las NC, forma_pago = 'nota_credito' si no sale plata (decisión 7).
+ *   - La NC es un comprobante (20260925a): no es línea de OP, no se paga, se
+ *     aplica con /facturas/:id/aplicar-nc (aprobar_facturas O registrar_pagos).
  *   - Anular OP: propia del día con registrar_pagos; anular_pagos cualquiera (decisión 12).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -342,44 +343,40 @@ describe('importes y fechas de la factura', () => {
   })
 })
 
-// ── Órdenes: NC como línea (decisión 7) ─────────────────────────────────────
+// ── Órdenes: la NC ya no es una línea (20260925a) ───────────────────────────
 
 describe('registrar orden', () => {
-  it('con plata y NC: monto_pagado sin la NC; la RPC recibe las tres clases de línea', async () => {
+  it('una línea nota_credito ya no se acepta: 400 del schema, sin RPC', async () => {
     state.profile = CONTADOR
-    state.facturas = [{ id: 5, created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }, { id: 6, created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
-    // Sin comprobante de pago: efectivo no lo exige. La NC sí exige su PDF → lo mockeamos como ya subido.
-    fromMock.mockImplementation((t: string) => t === 'profiles' ? chain(state.profile) : t === 'pagos_facturas' ? chain(state.facturas) : chain([]))
+    state.facturas = [{ id: 5, created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const res = await post('/ordenes', {
-      proveedor_id: 1, fecha: HOY, forma_pago: 'efectivo', referencia: 'caja',
-      lineas: [{ factura_id: 5, monto: 100 }, { tipo: 'a_cuenta', monto: 50 }, { tipo: 'nota_credito', factura_id: 6, monto: 30, nc_numero: 'NC 0001-00000002', nc_fecha: HOY }],
+      proveedor_id: 1, fecha: HOY, forma_pago: 'efectivo',
+      lineas: [{ factura_id: 5, monto: 100 }, { tipo: 'nota_credito', factura_id: 5, monto: 30, nc_numero: 'NC 1', nc_fecha: HOY }],
     })
-    // Falta el PDF de la NC → 400 (no llegamos a storage).
     expect(res.status).toBe(400)
-    expect(await res.json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', detail: { tipo: 'nota_credito' } })
+    expect(llamada('pagos_registrar_orden')).toBeUndefined()
   })
 
-  it('solo NC: forma_pago = nota_credito, monto_pagado = 0 y no exige comprobante de pago', async () => {
+  it('una NC elegida como factura a pagar rebota NC_NO_SE_PAGA antes de la RPC', async () => {
     state.profile = CONTADOR
-    state.facturas = [{ id: 6, created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
-    // El adjunto de la NC se "descarga" del bucket: mockeamos storage.download.
-    const { supabase } = await import('../../../src/lib/supabase.js')
-    ;(supabase as any).storage.from = () => ({
-      download: async () => ({ data: new Blob(['pdf']), error: null }),
-      remove: async () => ({}), move: async () => ({ error: null }),
-    })
+    state.facturas = [{ id: 6, clase: 'nota_credito', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
+    const res = await post('/ordenes', { proveedor_id: 1, fecha: HOY, forma_pago: 'efectivo', lineas: [{ factura_id: 6, monto: 30 }] })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ error: 'NC_NO_SE_PAGA', detail: { factura_id: 6 } })
+    expect(llamada('pagos_registrar_orden')).toBeUndefined()
+  })
+
+  it('la RPC recibe monto_nc 0 y líneas sin datos de NC; a_cuenta suma a lo pagado', async () => {
+    state.profile = CONTADOR
+    state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const res = await post('/ordenes', {
-      proveedor_id: 1, fecha: HOY, forma_pago: 'transferencia',
-      lineas: [{ tipo: 'nota_credito', factura_id: 6, monto: 30, nc_numero: 'NC 2', nc_fecha: HOY }],
-      adjuntos: [{ tipo: 'nota_credito', storage_path: 'ordenes/pendientes/abc.pdf', nombre_archivo: 'nc.pdf', mime_type: 'application/pdf' }],
+      proveedor_id: 1, fecha: HOY, forma_pago: 'efectivo',
+      lineas: [{ factura_id: 5, monto: 100 }, { tipo: 'a_cuenta', monto: 50 }],
     })
     expect(res.status).toBe(200)
     const args = llamada('pagos_registrar_orden')!
-    expect(args.p_orden).toMatchObject({ proveedor_id: 1, forma_pago: 'nota_credito', monto_pagado: 0, monto_nc: 30 })
-    expect(args.p_lineas).toEqual([{ tipo: 'nota_credito', factura_id: 6, monto: 30, nc_numero: 'NC 2', nc_fecha: HOY }])
-    expect((args.p_adjuntos as Fila[])[0]).toMatchObject({ tipo: 'nota_credito', storage_path: 'ordenes/pendientes/abc.pdf', size_bytes: 3 })
-    expect(typeof (args.p_adjuntos as Fila[])[0]!.hash_sha256).toBe('string')
-    expect(args.p_user_id).toBe('u-1')
+    expect(args.p_orden).toMatchObject({ forma_pago: 'efectivo', monto_pagado: 150, monto_nc: 0 })
+    expect(args.p_lineas).toEqual([{ tipo: 'factura', factura_id: 5, monto: 100 }, { tipo: 'a_cuenta', factura_id: null, monto: 50 }])
   })
 
   it('con plata: forma obligatoria, cheque exige sus cheques, transferencia exige comprobante', async () => {
@@ -392,9 +389,6 @@ describe('registrar orden', () => {
     expect(await (await post('/ordenes', { ...base, forma_pago: 'efectivo', fecha: '2999-01-01' })).json()).toMatchObject({ error: 'FECHA_FUTURA' })
     const viejo = [{ numero: '1', fecha_cobro: '2020-01-01', monto: 100 }]
     expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque', cheques: viejo })).json()).toMatchObject({ error: 'FECHA_COBRO_INVALIDA' })
-    // Una NC sin fecha no pasa el schema (400 de zod, NC_DATOS_REQUERIDOS).
-    const nc = await post('/ordenes', { ...base, forma_pago: 'efectivo', lineas: [{ tipo: 'nota_credito', factura_id: 5, monto: 10, nc_numero: 'NC 1' }] })
-    expect(nc.status).toBe(400)
   })
 
   it('los cheques van uno por fila: suman el pago, llevan librador si son de tercero y viajan a la RPC', async () => {
@@ -480,57 +474,212 @@ describe('anular orden', () => {
 
 // ── Anular factura ──────────────────────────────────────────────────────────
 
-// ── Devolución del proveedor (20260923g) ────────────────────────────────────
+// ── Devolución del proveedor: retirada (20260925c) ──────────────────────────
 
-describe('devolución del proveedor', () => {
-  const NC_PDF = { tipo: 'nota_credito', storage_path: 'ordenes/pendientes/nc.pdf', nombre_archivo: 'nc.pdf', mime_type: 'application/pdf' }
-  const BODY = { devoluciones: [{ factura_id: 5, monto: 30 }], nc_numero: '0022-00000999', nc_fecha: HOY, motivo: 'soga de más', adjuntos: [NC_PDF] }
+describe('devolución del proveedor (retirada)', () => {
+  it('la ruta /ordenes/:id/devolucion ya no existe (404) y nada llama a la RPC borrada', async () => {
+    state.profile = ADMIN
+    const res = await post('/ordenes/20/devolucion', { devoluciones: [{ factura_id: 5, monto: 30 }], nc_numero: '1', nc_fecha: HOY, adjuntos: [] })
+    expect(res.status).toBe(404)
+    expect(llamada('pagos_devolucion_proveedor')).toBeUndefined()
+  })
+})
 
-  function conBucket() {
-    return import('../../../src/lib/supabase.js').then(({ supabase }) => {
-      ;(supabase as any).storage.from = () => ({
-        download: async () => ({ data: new Blob(['pdf']), error: null }),
-        remove: async () => ({}), move: async () => ({ error: null }),
-      })
-    })
+// ── Nota de crédito como comprobante (20260925a–d) ──────────────────────────
+
+describe('aplicar crédito de una NC (POST /facturas/:id/aplicar-nc)', () => {
+  const BODY = { aplica_a: [{ factura_id: 5, monto: 30.5 }] }
+  const CBU = '0170099220000123456788'
+  beforeEach(() => {
+    rpcMock.mockImplementation(async (name: string) => name === 'pagos_aplicar_nc'
+      ? { data: { nc: { id: 7, estado: 'pagada_parcial', proveedor_cbu: CBU }, facturas: [{ id: 5, estado: 'pagada_parcial', proveedor_cbu: CBU }] }, error: null }
+      : { data: null, error: null })
+  })
+
+  it('sin aprobar_facturas ni registrar_pagos: 403, sin RPC (lectura + tab no alcanzan)', async () => {
+    state.profile = COMPRAS
+    const res = await post('/facturas/7/aplicar-nc', BODY)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'SIN_PERMISO', detail: { flag: 'aprobar_facturas|registrar_pagos' } })
+    expect(llamada('pagos_aplicar_nc')).toBeUndefined()
+  })
+
+  it.each([
+    ['aprobar_facturas', APROBADOR],
+    ['registrar_pagos', CONTADOR_SIN_ANULAR],
+    ['admin', ADMIN],
+  ] as const)('con %s pasa y la RPC recibe centavos y el usuario', async (_n, prof) => {
+    state.profile = prof
+    const res = await post('/facturas/7/aplicar-nc', BODY)
+    expect(res.status).toBe(200)
+    expect(llamada('pagos_aplicar_nc')).toEqual({ p_nc_id: 7, p_aplica_a: [{ factura_id: 5, monto: 30.5 }], p_user_id: 'u-1' })
+    const b = await res.json() as any
+    expect(b.nc.id).toBe(7)
+    expect(b.facturas).toHaveLength(1)
+  })
+
+  it('sin ver_pii la respuesta enmascara la cuenta del proveedor', async () => {
+    state.profile = APROBADOR
+    const b = await (await post('/facturas/7/aplicar-nc', BODY)).json() as any
+    expect(b.nc.proveedor_cbu).not.toBe(CBU)
+    expect(b.facturas[0].proveedor_cbu).not.toBe(CBU)
+  })
+
+  it('pide el tab facturas o pagos', async () => {
+    state.profile = perfil({ lectura: true, registrar_pagos: true, tabs: ['proveedores'] })
+    const res = await post('/facturas/7/aplicar-nc', BODY)
+    expect(res.status).toBe(403)
+    expect(llamada('pagos_aplicar_nc')).toBeUndefined()
+  })
+
+  it('body: vacío, factura repetida o clave extra → 400', async () => {
+    state.profile = CONTADOR
+    expect((await post('/facturas/7/aplicar-nc', { aplica_a: [] })).status).toBe(400)
+    expect((await post('/facturas/7/aplicar-nc', { aplica_a: [{ factura_id: 5, monto: 1 }, { factura_id: 5, monto: 2 }] })).status).toBe(400)
+    expect((await post('/facturas/7/aplicar-nc', { ...BODY, nc_id: 7 })).status).toBe(400)
+    expect(llamada('pagos_aplicar_nc')).toBeUndefined()
+  })
+
+  it('los errores de la RPC salen con su status (NC_SIN_CREDITO 409, NC_SUPERA_TOTAL 400)', async () => {
+    state.profile = CONTADOR
+    rpcMock.mockImplementation(async () => ({ data: null, error: { message: 'NC_SIN_CREDITO', details: '{"nc_id":7,"nc_disponible":0}' } }))
+    const r1 = await post('/facturas/7/aplicar-nc', BODY)
+    expect(r1.status).toBe(409)
+    expect(await r1.json()).toEqual({ error: 'NC_SIN_CREDITO', detail: { nc_id: 7, nc_disponible: 0 } })
+    rpcMock.mockImplementation(async () => ({ data: null, error: { message: 'NC_SUPERA_TOTAL', details: '{"nc_id":7,"total":10,"aplicado":30.5}' } }))
+    expect((await post('/facturas/7/aplicar-nc', BODY)).status).toBe(400)
+  })
+})
+
+describe('alta y edición de una NC', () => {
+  const NC = {
+    ...FACTURA_BASE, clase: 'nota_credito', cbte_tipo_arca: 3, numero: '0001-00000012', total: 300, descripcion: 'Devolución de soga',
+    imputaciones: [{ obra_cod: 'CC 1', monto: 300 }],
   }
 
-  it('pide anular_pagos: con sólo registrar_pagos rebota, aunque la OP sea suya y del día', async () => {
-    state.profile = CONTADOR_SIN_ANULAR
-    const res = await post('/ordenes/20/devolucion', BODY)
-    expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'SIN_PERMISO', detail: { flag: 'anular_pagos' } })
-    expect(llamada('pagos_devolucion_proveedor')).toBeUndefined()
-  })
-
-  it('sin el PDF de la NC no llega a la RPC', async () => {
-    state.profile = CONTADOR
-    const res = await post('/ordenes/20/devolucion', { ...BODY, adjuntos: [{ ...NC_PDF, tipo: 'otro' }] })
-    expect(await res.json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', campo: 'adjuntos' })
-    expect(llamada('pagos_devolucion_proveedor')).toBeUndefined()
-  })
-
-  it('con anular_pagos: la RPC recibe lo devuelto en centavos, la NC y el PDF hasheado', async () => {
-    state.profile = CONTADOR
-    await conBucket()
-    rpcMock.mockImplementation(async (name: string) => name === 'pagos_devolucion_proveedor'
-      ? { data: { anulada: { id: 20, estado: 'anulada' }, orden: { id: 21 }, facturas: [] }, error: null }
-      : { data: null, error: null })
-    const res = await post('/ordenes/20/devolucion', BODY)
+  it('la RPC recibe clase y aplica_a en centavos; nace sin vencimiento', async () => {
+    state.profile = COMPRAS
+    const res = await post('/facturas', { ...NC, aplica_a: [{ factura_id: 5, monto: 120.1 }] })
     expect(res.status).toBe(200)
-    const args = llamada('pagos_devolucion_proveedor')!
-    expect(args).toMatchObject({
-      p_orden_id: 20, p_devuelto: [{ factura_id: 5, monto: 30 }],
-      p_nc: { numero: '0022-00000999', fecha: HOY }, p_motivo: 'soga de más', p_user_id: 'u-1',
-    })
-    expect((args.p_adjuntos as Fila[])[0]).toMatchObject({ tipo: 'nota_credito', storage_path: 'ordenes/pendientes/nc.pdf' })
-    expect(typeof (args.p_adjuntos as Fila[])[0]!.hash_sha256).toBe('string')
+    const pf = llamada('pagos_crear_factura')!.p_factura as Fila
+    expect(pf).toMatchObject({ clase: 'nota_credito', cbte_tipo_arca: 3, aplica_a: [{ factura_id: 5, monto: 120.1 }], vence_el: null })
   })
 
-  it('una NC con fecha futura rebota antes de subir nada', async () => {
-    state.profile = ADMIN
-    const res = await post('/ordenes/20/devolucion', { ...BODY, nc_fecha: '2999-01-01' })
-    expect(await res.json()).toMatchObject({ error: 'FECHA_FUTURA', campo: 'nc_fecha' })
+  it('sin aplica_a queda como crédito a favor (aplica_a vacío); una factura manda aplica_a null', async () => {
+    state.profile = COMPRAS
+    expect((await post('/facturas', NC)).status).toBe(200)
+    expect((llamada('pagos_crear_factura')!.p_factura as Fila).aplica_a).toEqual([])
+    rpcMock.mockClear()
+    expect((await post('/facturas', FACTURA_BASE)).status).toBe(200)
+    expect((llamada('pagos_crear_factura')!.p_factura as Fila)).toMatchObject({ clase: 'factura', aplica_a: null })
+  })
+
+  it('una NC con «ya está pagada» rebota antes de la RPC; una factura con aplica_a también', async () => {
+    state.profile = CARGA_Y_PAGA
+    expect((await post('/facturas', { ...NC, orden: { fecha: HOY, forma_pago: 'efectivo' } })).status).toBe(400)
+    expect((await post('/facturas', { ...FACTURA_BASE, aplica_a: [{ factura_id: 5, monto: 1 }] })).status).toBe(400)
+    expect(llamada('pagos_crear_factura')).toBeUndefined()
+  })
+
+  it('PATCH aplica_a: NC aprobada → NC_APLICACION_CONGELADA; factura → CAMPO_NO_EDITABLE; NC pendiente → RPC', async () => {
+    state.profile = COMPRAS
+    state.facturas = [{ id: 7, clase: 'nota_credito', estado: 'aprobada', aprobada_at: 'x', proveedor_id: 1, fecha: HOY, total: 300 }]
+    const r1 = await patch('/facturas/7', { aplica_a: [{ factura_id: 5, monto: 10 }] })
+    expect(r1.status).toBe(409)
+    expect((await r1.json()).error).toBe('NC_APLICACION_CONGELADA')
+
+    state.facturas = [{ id: 5, clase: 'factura', estado: 'pendiente', aprobada_at: null, proveedor_id: 1, fecha: HOY, total: 300 }]
+    const r2 = await patch('/facturas/5', { aplica_a: [] })
+    expect(r2.status).toBe(400)
+    expect((await r2.json()).error).toBe('CAMPO_NO_EDITABLE')
+
+    state.facturas = [{ id: 7, clase: 'nota_credito', estado: 'pendiente', aprobada_at: null, proveedor_id: 1, fecha: HOY, total: 300 }]
+    const r3 = await patch('/facturas/7', { aplica_a: [{ factura_id: 5, monto: 10.25 }] })
+    expect(r3.status).toBe(200)
+    expect((llamada('pagos_editar_factura')!.p_cambios as Fila).aplica_a).toEqual([{ factura_id: 5, monto: 10.25 }])
+
+    rpcMock.mockClear()
+    const r4 = await patch('/facturas/7', { aplica_a: [{ factura_id: 5, monto: 301 }] })
+    expect(await r4.json()).toMatchObject({ error: 'NC_SUPERA_TOTAL', campo: 'aplica_a' })
+    expect(llamada('pagos_editar_factura')).toBeUndefined()
+  })
+
+  it('anular una NC aplicada («pagada») va a la RPC (la deuda vuelve a la factura)', async () => {
+    state.profile = COMPRAS
+    state.facturas = [{ id: 7, clase: 'nota_credito', estado: 'pagada', pagada_al_cargar: false, aprobada_at: 'x', created_by: 'u-1', created_at: new Date().toISOString() }]
+    expect((await post('/facturas/7/anular', { motivo: 'mal cargada' })).status).toBe(200)
+    expect(llamada('pagos_anular_factura')).toEqual({ p_factura_id: 7, p_motivo: 'mal cargada', p_user_id: 'u-1' })
+  })
+})
+
+describe('lecturas con NC', () => {
+  it('GET /facturas?clase=nota_credito&con_credito=1 filtra por clase y nc_disponible > 0', async () => {
+    state.profile = CONTADOR
+    const llamadas: [string, unknown[]][] = []
+    fromMock.mockImplementation((t: string) => {
+      if (t === 'profiles') return chain(state.profile)
+      const c = chain([])
+      for (const m of ['gt', 'eq']) c[m] = (...args: unknown[]) => { llamadas.push([m, args]); return c }
+      return c
+    })
+    expect((await get('/facturas?clase=nota_credito&con_credito=1&proveedor_id=3')).status).toBe(200)
+    expect(llamadas).toContainEqual(['eq', ['clase', 'nota_credito']])
+    expect(llamadas).toContainEqual(['gt', ['nc_disponible', 0]])
+    expect((await get('/facturas?clase=otra')).status).toBe(400)
+  })
+
+  it('GET /facturas/resumen manda p_clase', async () => {
+    state.profile = CONTADOR
+    rpcMock.mockImplementation(async () => ({ data: [], error: null }))
+    await get('/facturas/resumen?grupo=proveedor&clase=factura')
+    expect(llamada('pagos_resumen')?.p_clase).toBe('factura')
+    rpcMock.mockClear()
+    await get('/facturas/resumen?grupo=proveedor')
+    expect(llamada('pagos_resumen')?.p_clase).toBeNull()
+  })
+
+  const APLICACIONES = [{ id: 1, nc_id: 7, factura_id: 5, monto: '30.00', created_at: '2026-09-25T12:00:00Z' }]
+  const COMPROBANTES = [
+    { id: 7, clase: 'nota_credito', tipo_comprobante: 'A', numero: '0001-00000012', fecha: HOY, total: 300, estado: 'pagada_parcial', aprobada_at: 'x', saldo: 0 },
+    { id: 5, clase: 'factura', tipo_comprobante: 'A', numero: '0001-00000045', fecha: HOY, total: 1000, estado: 'pagada_parcial', aprobada_at: 'x', saldo: 900 },
+  ]
+
+  it('GET /facturas/:id trae `aplicaciones` con los dos lados y si ya bajó la deuda', async () => {
+    state.profile = CONTADOR
+    fromMock.mockImplementation((t: string) => {
+      if (t === 'profiles') return chain(state.profile)
+      if (t === 'v_pagos_facturas') return chain(COMPROBANTES)
+      if (t === 'pagos_nc_aplicaciones') return chain(APLICACIONES)
+      return chain([])
+    })
+    const res = await get('/facturas/7')
+    expect(res.status).toBe(200)
+    const b = await res.json() as any
+    expect(b.aplicaciones).toHaveLength(1)
+    expect(b.aplicaciones[0]).toMatchObject({
+      id: 1, nc_id: 7, factura_id: 5, monto: 30, vigente: true, aprobada: true,
+      nc: { id: 7, numero: '0001-00000012' }, factura: { id: 5, numero: '0001-00000045' },
+    })
+  })
+
+  it('GET /ordenes/:id cuelga de cada factura las NC vigentes aplicadas, con su PDF', async () => {
+    state.profile = CONTADOR
+    fromMock.mockImplementation((t: string) => {
+      if (t === 'profiles') return chain(state.profile)
+      if (t === 'v_pagos_ordenes') return chain([{ id: 20, numero: 1, estado: 'emitida' }])
+      if (t === 'pagos_orden_lineas') return chain([{ id: 1, tipo: 'factura', factura_id: 5, monto: 700, factura: { id: 5, numero: '0001-00000045' } }])
+      if (t === 'v_pagos_facturas') return chain(COMPROBANTES)
+      if (t === 'pagos_nc_aplicaciones') return chain(APLICACIONES)
+      if (t === 'pagos_facturas_adjuntos') return chain([{ id: 9, factura_id: 7, tipo: 'factura', nombre_archivo: 'nc.pdf' }])
+      return chain([])
+    })
+    const res = await get('/ordenes/20')
+    expect(res.status).toBe(200)
+    const b = await res.json() as any
+    const nc = b.lineas[0].factura.notas_credito
+    expect(nc).toHaveLength(1)
+    expect(nc[0]).toMatchObject({ nc_id: 7, monto: 30, aprobada: true, nc: { numero: '0001-00000012' } })
+    expect(nc[0].adjuntos).toEqual([{ id: 9, factura_id: 7, tipo: 'factura', nombre_archivo: 'nc.pdf' }])
   })
 })
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { armarCuerpo } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
 import { esEmailValido } from '../../../src/lib/mail.js'
+import { destinatariosProveedor } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
 
 // El aviso de pago sale a TERCEROS (proveedor y estudio contable), así que lo
 // que dice el cuerpo se testea: es lo único del sistema que ve alguien de
@@ -16,6 +17,15 @@ const FACTURAS = [{ tipo_comprobante: 'A', numero: '00011-00000194', fecha: '202
 const CHEQUES = [{ numero: '3055', banco: 'Galicia', fecha_cobro: '2026-10-21', monto: 24995 }]
 
 describe('armarCuerpo', () => {
+  it('con NC aplicadas a la factura dice «menos NC aplicadas $X» sin tocar el importe; sin NC no dice nada', () => {
+    const c = armarCuerpo('proveedor', ORDEN, [{ ...FACTURAS[0]!, nc_aplicadas: 5005 }], CHEQUES, 'CADINC SRL')
+    expect(c.texto).toContain('menos NC aplicadas $5.005,00')
+    expect(c.html).toContain('menos NC aplicadas $5.005,00')
+    expect(c.texto).toContain('Importe: $24.995,00')
+    const sin = armarCuerpo('proveedor', ORDEN, FACTURAS, CHEQUES, 'CADINC SRL')
+    expect(sin.texto).not.toContain('NC aplicadas')
+  })
+
   it('el CBU NUNCA va en el cuerpo, ni al proveedor ni al contador', () => {
     // Poner la cuenta en un mail regala el dato que sirve para estafar
     // («cambió nuestro CBU, pagá acá»). El proveedor ya sabe su cuenta.
@@ -91,5 +101,27 @@ describe('esEmailValido', () => {
 
   it('no acepta punto y coma ni coma: son dos destinatarios disfrazados de uno', () => {
     expect(esEmailValido('a@x.com;b@y.com')).toBe(false)
+  })
+})
+
+describe('destinatariosProveedor (varios contactos, 20260925e)', () => {
+  const contactos = [
+    { email: 'Adm@Prov.com', recibe_avisos: true },
+    { email: 'vendedor@prov.com', recibe_avisos: false },
+    { email: 'pagos@prov.com', recibe_avisos: true },
+  ]
+  it('sin elegir: los que reciben avisos, en minúscula', () => {
+    expect(destinatariosProveedor({ pedidos: [], contactos, delPadron: '' }).emails).toEqual(['adm@prov.com', 'pagos@prov.com'])
+  })
+  it('lo elegido para este envío manda, sin repetir', () => {
+    const r = destinatariosProveedor({ pedidos: ['vendedor@prov.com', 'VENDEDOR@prov.com', 'nuevo@prov.com'], contactos, delPadron: '' })
+    expect(r.emails).toEqual(['vendedor@prov.com', 'nuevo@prov.com'])
+    expect(r.conocidos.has('nuevo@prov.com')).toBe(false)
+  })
+  it('sin contactos con aviso: el email viejo del padrón; sin nada: vacío', () => {
+    expect(destinatariosProveedor({ pedidos: [], contactos: [], delPadron: ' Viejo@Prov.com ' }).emails).toEqual(['viejo@prov.com'])
+    expect(destinatariosProveedor({ pedidos: [], contactos: [{ email: 'x@y.com', recibe_avisos: false }], delPadron: '' }).emails).toEqual([])
+    // Con contactos y todos destildados, NO cae al email viejo del padrón.
+    expect(destinatariosProveedor({ pedidos: [], contactos: [{ email: 'x@y.com', recibe_avisos: false }], delPadron: 'viejo@p.com' }).emails).toEqual([])
   })
 })

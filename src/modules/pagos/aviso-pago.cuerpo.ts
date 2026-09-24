@@ -20,6 +20,11 @@ export interface FacturaDelAviso {
   fecha:            string | null
   /** Lo que ESTA orden le aplicó. En un pago parcial es menos que el total. */
   aplicado:         number
+  /**
+   * NC aprobadas aplicadas a la factura (20260925a): informativo, para que el
+   * proveedor entienda por qué se pagó menos que el total. No suma al importe.
+   */
+  nc_aplicadas?:    number
 }
 
 export interface ChequeDelAviso {
@@ -43,8 +48,10 @@ const fmtF = (s: string | null | undefined) => {
 const FORMA_LABEL: Record<string, string> = {
   transferencia: 'Transferencia', efectivo: 'Efectivo', cheque: 'Cheque', echeq: 'E-cheq',
   tarjeta: 'Tarjeta', debito_automatico: 'Débito automático', otro: 'Otro',
-  nota_credito: 'Solo nota de crédito',
+  nota_credito: 'Solo nota de crédito', // OP histórica (antes del 2026-09-25)
 }
+
+const menosNc = (f: FacturaDelAviso) => (f.nc_aplicadas && f.nc_aplicadas > 0 ? ` (menos NC aplicadas ${fmtM(f.nc_aplicadas)})` : '')
 
 /** Escapa lo que va al HTML: los nombres vienen de la base y pueden traer `<`. */
 function esc(s: unknown): string {
@@ -74,7 +81,7 @@ export function armarCuerpo(
 
   const filasFacturas = facturas.map((f) =>
     `<tr><td style="padding:4px 10px 4px 0">${esc(`${f.tipo_comprobante ?? ''} ${f.numero ?? 's/n'}`.trim())}</td>`
-    + `<td style="padding:4px 10px 4px 0;color:#666">${esc(fmtF(f.fecha))}</td>`
+    + `<td style="padding:4px 10px 4px 0;color:#666">${esc(fmtF(f.fecha))}${menosNc(f) ? `<br><span style="font-size:12px">${esc(menosNc(f).trim())}</span>` : ''}</td>`
     + `<td style="padding:4px 0;text-align:right;font-variant-numeric:tabular-nums">${esc(fmtM(f.aplicado))}</td></tr>`).join('')
 
   const filasCheques = cheques.map((c) =>
@@ -123,7 +130,7 @@ export function armarCuerpo(
     '',
     ...(facturas.length > 0
       ? ['Comprobantes cubiertos:', ...facturas.map((f) =>
-          `  ${`${f.tipo_comprobante ?? ''} ${f.numero ?? 's/n'}`.trim()}  ${fmtF(f.fecha)}  ${fmtM(f.aplicado)}`), '']
+          `  ${`${f.tipo_comprobante ?? ''} ${f.numero ?? 's/n'}`.trim()}  ${fmtF(f.fecha)}  ${fmtM(f.aplicado)}${menosNc(f)}`), '']
       : []),
     ...(cheques.length > 0
       ? [cheques.length === 1 ? 'Cheque entregado:' : 'Cheques entregados:', ...cheques.map((c) =>
@@ -135,3 +142,23 @@ export function armarCuerpo(
   return { asunto, texto: lineas.join('\n'), html }
 }
 
+/**
+ * A qué direcciones del proveedor va el aviso: las elegidas para este envío;
+ * si no se eligió ninguna, los contactos con «recibe avisos»; si el proveedor
+ * no tiene ningún contacto con email, el email suelto viejo del padrón. En
+ * minúscula y sin repetir.
+ */
+export function destinatariosProveedor(x: {
+  pedidos: string[]; contactos: { email: string; recibe_avisos: boolean }[]; delPadron: string
+}): { emails: string[]; pedidos: string[]; conocidos: Set<string> } {
+  const norm = (e: string) => e.trim().toLowerCase()
+  const conocidos = new Set(x.contactos.map((k) => norm(k.email)))
+  const pedidos = [...new Set(x.pedidos.map(norm).filter(Boolean))]
+  const porDefecto = [...new Set(x.contactos.filter((k) => k.recibe_avisos).map((k) => norm(k.email)).filter(Boolean))]
+  const padron = norm(x.delPadron)
+  // El email viejo del padrón solo si el proveedor no tiene NINGÚN contacto con
+  // email: si los tiene y destildó todos, no se le manda a nadie.
+  const emails = pedidos.length ? pedidos : porDefecto.length ? porDefecto
+    : (x.contactos.length === 0 && padron) ? [padron] : []
+  return { emails, pedidos, conocidos }
+}

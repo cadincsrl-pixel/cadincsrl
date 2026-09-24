@@ -61,7 +61,13 @@ export interface Propuesta {
   total: number | null
   /** Qué se compró, en pocas palabras (sólo IA): precarga la descripción. */
   descripcion: string | null
+  /** 'nota_credito' si el código ARCA (o la letra + clase leídas) es de NC (20260925a). */
+  clase: 'factura' | 'nota_credito'
+  /** Sólo NC: las facturas que menciona el papel (sólo IA). El service las cruza con las abiertas del proveedor. */
+  comprobantes_asociados: ComprobanteAsociado[]
 }
+
+export interface ComprobanteAsociado { letra: string | null; punto_venta: string | null; numero: string | null }
 
 export interface ResultadoFusion {
   propuesta: Propuesta
@@ -141,6 +147,9 @@ function sanear(ia: LecturaIA) {
     clase: ia.clase,
     notas: ia.notas?.trim() || null,
     descripcion: ia.detalle_breve?.trim().slice(0, 120) || null,
+    asociados: (ia.comprobantes_asociados ?? [])
+      .map((x) => ({ letra: x.letra ?? null, punto_venta: fmtPuntoVenta(x.punto_venta), numero: fmtNumeroCbte(x.numero) }))
+      .filter((x) => x.numero != null),
     legible: ia.legible,
   }
 }
@@ -261,9 +270,12 @@ export function fusionar(qr: QrArca | null, ia: LecturaIA | null, opts: { hoy: s
     av('iva', 'advertencia', 'ALICUOTA_DESCONOCIDA', `Se leyó un IVA al ${p} %, que no es una alícuota vigente: cargalo a mano.`)
   }
 
-  if (tipoInfo?.esNotaCredito) {
-    av('tipo_comprobante', 'error', 'ES_NOTA_DE_CREDITO',
-      'Es una nota de crédito: acá no se carga como factura, va como línea de la orden de pago de la factura que acredita.')
+  // Desde el 2026-09-25 una NC se carga como comprobante (clase
+  // 'nota_credito'): el aviso es informativo, no un error.
+  const esNc = !!tipoInfo?.esNotaCredito
+  if (esNc) {
+    av('tipo_comprobante', 'info', 'ES_NOTA_DE_CREDITO',
+      'Es una nota de crédito: se carga como NC, con su desglose, y se indica a qué factura(s) acredita (o queda como crédito a favor).')
   }
   if (cbte_tipo_arca != null && !tipoInfo) {
     av('tipo_comprobante', 'advertencia', 'TIPO_DESCONOCIDO', `El comprobante es de un tipo que el módulo no reconoce (código ${cbte_tipo_arca}).`)
@@ -328,6 +340,8 @@ export function fusionar(qr: QrArca | null, ia: LecturaIA | null, opts: { hoy: s
       cae, cae_vto, moneda, cotizacion,
       neto: netoGravado, no_gravado, exento, iva, tributos, total,
       descripcion: (soloIa('descripcion', s?.descripcion) as string | null) ?? null,
+      clase: esNc ? 'nota_credito' : 'factura',
+      comprobantes_asociados: esNc ? (s?.asociados ?? []) : [],
     },
     fuente_por_campo: fuente,
     avisos,
@@ -340,7 +354,7 @@ export function fusionar(qr: QrArca | null, ia: LecturaIA | null, opts: { hoy: s
 export interface ContextoLectura {
   /** Proveedor del padrón de Compras con ese CUIT, si existe. */
   proveedor: { id: number; razon_social: string; activo: boolean } | null
-  /** Facturas no anuladas del mismo proveedor, tipo y número. */
+  /** Comprobantes no anulados del mismo proveedor, CLASE, tipo y número. */
   duplicadas: { id: number; numero: string | null; estado: string }[]
   /** El mismo archivo ya está adjunto como factura. */
   archivoRepetido: { factura_id: number } | null
@@ -355,7 +369,7 @@ export function controlesDeContexto(p: Propuesta, ctx: ContextoLectura): AvisoLe
   if (ctx.duplicadas.length) {
     const d = ctx.duplicadas[0]!
     out.push({ campo: 'numero_comprobante', severidad: 'error', codigo: 'FACTURA_YA_CARGADA',
-      mensaje: `Esta factura ya está cargada (#${d.id}, ${d.estado}).` })
+      mensaje: `${p.clase === 'nota_credito' ? 'Esta nota de crédito' : 'Esta factura'} ya está cargada (#${d.id}, ${d.estado}).` })
   }
   if (p.emisor_cuit && !ctx.proveedor) {
     out.push({ campo: 'proveedor', severidad: 'advertencia', codigo: 'PROVEEDOR_NUEVO',

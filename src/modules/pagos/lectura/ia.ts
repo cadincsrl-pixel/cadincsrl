@@ -62,6 +62,13 @@ export const LecturaIASchema = z.object({
     importe: z.number(),
   })),
   total: Num,
+  // Sólo en notas de crédito/débito: a qué factura(s) se refiere
+  // («Comprobante asociado», «s/ Fact. A 0001-00000045»). Claves en ASCII.
+  comprobantes_asociados: z.array(z.object({
+    letra: z.enum(['A', 'B', 'C', 'M', 'E', 'X']).nullable(),
+    punto_venta: Txt,
+    numero: Txt,
+  })),
   detalle_breve: Txt,
   notas: Txt,
 })
@@ -94,7 +101,10 @@ Importes (números con punto decimal, sin separador de miles: 24994.52)
 - tributos: cada percepción o impuesto que se suma al total, uno por fila:
   percepcion_iva (Percepción IVA, RG 2408/3337), percepcion_iibb (Percepción Ingresos Brutos, con la provincia en jurisdiccion: "Tucumán", "Buenos Aires", "CABA", "Córdoba"…), percepcion_ganancias, percepcion_municipal (tasas municipales, con el municipio en jurisdiccion), impuestos_internos, otro (cualquier otro tributo sumado al total). descripcion = el texto tal como figura. alicuota_pct y base_imponible si están impresas.
   No pongas en tributos el IVA común ni descuentos.
-- total: el IMPORTE TOTAL final del comprobante.
+- total: el IMPORTE TOTAL final del comprobante (en una nota de crédito, también en positivo).
+
+Comprobantes asociados (sólo notas de crédito o de débito)
+- comprobantes_asociados: cada factura a la que se refiere la nota, como figura en el papel («Comprobante asociado», «Cbte. Asoc.», «s/ Factura A 0001-00000045», «Ref. FC 00012-00004557»): letra, punto_venta y numero por separado, con los ceros impresos. Lista vacía si no menciona ninguno o si es una factura.
 - detalle_breve: qué se compró, en pocas palabras y en castellano, para que quien aprueba lo entienda (ej.: "silicona neutra y cinceles", "perfil perimetral PVC"). Máximo 80 caracteres.
 
 Controles que tenés que hacer antes de responder

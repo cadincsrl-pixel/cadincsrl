@@ -279,8 +279,9 @@ export function validarCompra(c: CompraLid): Validacion[] {
       `Es un comprobante ${NOMBRE_TIPO_COMPRA[c.cbte_tipo] ?? c.cbte_tipo} y tiene IVA cargado (${pesos(ce(c.iva))}): no da crédito fiscal, se informa solo el total.` })
   }
   if (c.estado === 'pendiente' || c.estado === 'observada') {
+    const la = TIPOS_NC_COMPRA.has(c.cbte_tipo) ? 'La NC' : 'La factura'
     v.push({ comprobante: id, severidad: 'advertencia', mensaje:
-      c.estado === 'observada' ? 'La factura está OBSERVADA: confirmá que el comprobante es correcto antes de computar el crédito.' : 'La factura todavía no está aprobada: se informa igual (el crédito nace con el comprobante).' })
+      c.estado === 'observada' ? `${la} está OBSERVADA: confirmá que el comprobante es correcto antes de computar el crédito.` : `${la} todavía no está aprobada: se informa igual (el crédito nace con el comprobante).` })
   }
   if (c.paga_cliente) {
     v.push({ comprobante: id, severidad: 'advertencia', mensaje:
@@ -313,17 +314,12 @@ export interface LibroCompras {
     por_tipo: Array<{ cbte_tipo: number; tipo: string; cantidad: number; neto: number; iva: number; total: number }>
     /** Quedaron FUERA por un problema a resolver: la posición está incompleta. No cuenta tickets ni duplicados. */
     excluidos: number
-    /** NC de proveedor del mes cargadas como línea de una OP: no están en el libro. */
-    nc_en_ordenes: number
     lineas_cbte: number; lineas_alicuotas: number
   }
   validaciones: Validacion[]
   detalle: FilaDetalleCompra[]
   archivos: { cbte: string; alicuotas: string }
 }
-
-/** Una NC de proveedor cargada como LÍNEA de una OP (sin comprobante ni desglose propio). */
-export interface NcSinComprobante { orden: string; proveedor: string; nc_numero: string | null; nc_fecha: string | null; monto: number }
 
 const r2 = (cents: number) => cents / 100
 
@@ -335,7 +331,6 @@ const r2 = (cents: number) => cents / 100
 export function armarLibroCompras(
   periodo: string,
   filas: Array<{ c: CompraLid | null; motivo: string | null; etiquetaCruda: string; fueraDelLibro?: boolean; fila: FilaFacturaCompra }>,
-  ncSinComprobante: NcSinComprobante[] = [],
 ): LibroCompras {
   const validaciones: Validacion[] = []
   const detalle: FilaDetalleCompra[] = []
@@ -424,14 +419,6 @@ export function armarLibroCompras(
     porTipo.set(c.cbte_tipo, pt)
   }
 
-  if (ncSinComprobante.length) {
-    const total = ncSinComprobante.reduce((s, n) => s + ce(n.monto), 0)
-    validaciones.unshift({ comprobante: `${ncSinComprobante.length} NC en órdenes de pago`, severidad: 'advertencia', mensaje:
-      `Hay ${ncSinComprobante.length} nota(s) de crédito de proveedor del mes cargadas como línea de una orden de pago ($ ${pesos(total)}), ` +
-      'sin comprobante ni desglose de IVA: NO están en el libro y bajan el crédito fiscal. Cargalas a mano en el LID: ' +
-      ncSinComprobante.map(n => `${n.proveedor} NC ${n.nc_numero ?? 's/n'} (${n.orden})`).join('; ') + '.' })
-  }
-
   const orden: Record<Severidad, number> = { error: 0, advertencia: 1, info: 2 }
   validaciones.sort((a, b) => orden[a.severidad] - orden[b.severidad])
 
@@ -449,7 +436,6 @@ export function armarLibroCompras(
         cbte_tipo, tipo: NOMBRE_TIPO_COMPRA[cbte_tipo] ?? `Tipo ${cbte_tipo}`, cantidad: x.cantidad, neto: r2(x.neto), iva: r2(x.iva), total: r2(x.total),
       })),
       excluidos,
-      nc_en_ordenes: ncSinComprobante.length,
       lineas_cbte: lineasC.length, lineas_alicuotas: lineasA.length,
     },
     validaciones,
@@ -481,8 +467,6 @@ export interface PosicionIva {
   /** Cuántos comprobantes quedaron FUERA de cada libro (la posición está incompleta si > 0). */
   excluidos_ventas: number
   excluidos_compras: number
-  /** NC de proveedor en órdenes de pago, fuera del libro: el crédito fiscal real es MENOR. */
-  nc_en_ordenes: number
   avisos: string[]
 }
 
@@ -492,7 +476,7 @@ export interface PosicionIva {
  * que sobra es libre disponibilidad. NO arrastra saldos de meses anteriores.
  */
 export function posicionIva(periodo: string, x: {
-  debito: number; credito: number; percepciones: number; retenciones: number; excluidosVentas: number; excluidosCompras: number; ncEnOrdenes?: number
+  debito: number; credito: number; percepciones: number; retenciones: number; excluidosVentas: number; excluidosCompras: number
 }): PosicionIva {
   const ce = aCentavos
   const deb = ce(x.debito), cred = ce(x.credito), perc = ce(x.percepciones), ret = ce(x.retenciones)
@@ -505,14 +489,13 @@ export function posicionIva(periodo: string, x: {
   ]
   if (x.excluidosVentas) avisos.push(`${x.excluidosVentas} comprobante(s) de VENTAS quedaron fuera del libro: la posición está incompleta hasta resolverlos.`)
   if (x.excluidosCompras) avisos.push(`${x.excluidosCompras} comprobante(s) de COMPRAS quedaron fuera del libro: la posición está incompleta hasta resolverlos.`)
-  if (x.ncEnOrdenes) avisos.push(`${x.ncEnOrdenes} nota(s) de crédito de proveedor están como línea de una orden de pago y no entran al libro: el crédito fiscal real es MENOR que el que se ve acá (ver el libro de compras).`)
   return {
     periodo,
     debito_fiscal: r2(deb), credito_fiscal: r2(cred),
     impuesto_determinado: r2(det), saldo_tecnico_a_favor: r2(det < 0 ? -det : 0),
     percepciones_iva: r2(perc), retenciones_iva: r2(ret),
     a_pagar: r2(aPagar), libre_disponibilidad: r2(libre),
-    excluidos_ventas: x.excluidosVentas, excluidos_compras: x.excluidosCompras, nc_en_ordenes: x.ncEnOrdenes ?? 0,
+    excluidos_ventas: x.excluidosVentas, excluidos_compras: x.excluidosCompras,
     avisos,
   }
 }
