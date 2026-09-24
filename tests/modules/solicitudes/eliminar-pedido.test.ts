@@ -34,11 +34,11 @@ vi.mock('../../../src/lib/obras-usuario.js', () => ({
   getObrasDelUsuarioCached: async () => null,
 }))
 
-// El guard de cobros lee materiales_a_cuenta_cliente con una cadena
-// select→eq→not→limit que termina en un thenable con { data: [] }.
+// El guard de cobros y certificados lee materiales_a_cuenta_cliente con una
+// cadena select→eq→or→limit que termina en un thenable con { data: [] }.
 function sinCobros() {
   const obj: any = {
-    select: () => obj, eq: () => obj, not: () => obj, limit: () => obj,
+    select: () => obj, eq: () => obj, not: () => obj, or: () => obj, limit: () => obj,
     then: (f: any) => Promise.resolve({ data: [], error: null }).then(f),
   }
   return obj

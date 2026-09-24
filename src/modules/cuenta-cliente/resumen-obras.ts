@@ -81,6 +81,13 @@ export interface DatosResumenObras {
   cobros:       { obra_cod: string; monto: number }[]
   /** Notas de crédito NO anuladas. */
   notas:        { obra_cod: string; monto: number }[]
+  /**
+   * Mano de obra de los certificados emitidos (20260911j). En presupuesto
+   * cerrado es la única forma en que la mano de obra entra en la cuenta: el
+   * cobro contra el certificado la incluye en su monto, así que si no se
+   * sumara a lo facturado el saldo bajaba de más (revisión 2026-09-23).
+   */
+  manoDeObraCert?: { obra_cod: string; mano_de_obra: number }[]
 }
 
 export interface PataResumen {
@@ -111,6 +118,8 @@ export interface ResumenObraFila {
   contratistas: PataResumen | null
   materiales:   { costo: number; facturable: number; sin_precio: number; pct: number | null }
   total:        number
+  /** Mano de obra certificada que entra en `total` (solo presupuesto cerrado). */
+  mano_de_obra_certificada: number
   pagado:       number
   notas:        number
   saldo:        number
@@ -152,6 +161,7 @@ export function armarResumenObras(d: DatosResumenObras, hoyISO: string, conTarja
   const matPor     = agrupar(d.materiales)
   const cobrosPor  = agrupar(d.cobros)
   const notasPor   = agrupar(d.notas)
+  const moCertPor  = agrupar(d.manoDeObraCert ?? [])
 
   const filas: ResumenObraFila[] = []
 
@@ -220,7 +230,13 @@ export function armarResumenObras(d: DatosResumenObras, hoyISO: string, conTarja
 
     // ── Total, pagado, saldo ──
     const enCuenta = (p: PataResumen | null) => (p && p.en_cuenta ? p.facturable : 0)
-    const total  = r2(enCuenta(jornales) + enCuenta(contratistas) + materiales.facturable)
+    // Por administración la mano de obra ya está en jornales/contratistas: la
+    // de un certificado se sumaría dos veces. En presupuesto cerrado es la
+    // única vía.
+    const moCert = regimen === 'presupuesto_cerrado'
+      ? r2((moCertPor.get(cod) ?? []).reduce((s, c) => s + Number(c.mano_de_obra ?? 0), 0))
+      : 0
+    const total  = r2(enCuenta(jornales) + enCuenta(contratistas) + materiales.facturable + moCert)
     const pagado = r2((cobrosPor.get(cod) ?? []).reduce((s, c) => s + Number(c.monto ?? 0), 0))
     const notas  = r2((notasPor.get(cod) ?? []).reduce((s, n) => s + Number(n.monto ?? 0), 0))
 
@@ -231,7 +247,7 @@ export function armarResumenObras(d: DatosResumenObras, hoyISO: string, conTarja
       centro_costo: (obra.cliente_nom ?? '').trim() || obra.nom,
       archivada: obra.archivada, regimen,
       jornales, contratistas, materiales,
-      total, pagado, notas, saldo: r2(total - pagado - notas),
+      total, mano_de_obra_certificada: moCert, pagado, notas, saldo: r2(total - pagado - notas),
       sin_pct: esAdmin && pcts.length === 0,
       parcial: esAdmin && !conTarja,
     })

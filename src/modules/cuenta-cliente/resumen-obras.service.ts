@@ -48,7 +48,7 @@ export async function cargarResumenObras(allowed: string[] | null, conTarja: boo
   if (codes.length === 0) return { filas: [], con_tarja: conTarja, generado_en: new Date().toISOString() }
 
   const vacio = Promise.resolve([] as never[])
-  const [horasSemLeg, hsExtras, personal, categorias, tarifas, catObra, pcts, certs, imputaciones, materiales, cobros, notas] = await Promise.all([
+  const [horasSemLeg, hsExtras, personal, categorias, tarifas, catObra, pcts, certs, imputaciones, materiales, cobros, notas, manoDeObraCert] = await Promise.all([
     conTarja
       ? todasLasFilas<{ obra_cod: string; sem_key: string; leg: string; horas: number }>((d, h) =>
           supabaseAdmin.rpc('horas_semana_leg', { p_obras: codes }).order('obra_cod').order('sem_key').order('leg').range(d, h))
@@ -69,6 +69,7 @@ export async function cargarResumenObras(allowed: string[] | null, conTarja: boo
         .in('estado', ['a_cobrar', 'cobrado']).in('obra_cod', codes).order('id').range(d, h)),
     supabaseAdmin.from('cuenta_cliente_cobros').select('obra_cod, monto').in('obra_cod', codes).then(ok),
     supabaseAdmin.from('cuenta_cliente_notas_credito').select('obra_cod, monto').eq('anulada', false).in('obra_cod', codes).then(ok),
+    supabaseAdmin.from('certificados_cliente').select('obra_cod, mano_de_obra').eq('estado', 'emitido').gt('mano_de_obra', 0).in('obra_cod', codes).then(ok),
   ])
 
   const datos: DatosResumenObras = {
@@ -76,7 +77,7 @@ export async function cargarResumenObras(allowed: string[] | null, conTarja: boo
     horasSemLeg: horasSemLeg.map(h => ({ ...h, sem_key: String(h.sem_key) })),
     hsExtras, personal: personal as never, categorias: categorias as never,
     tarifas, catObra, pcts: pcts as never, certs: certs as never, imputaciones: imputaciones as never,
-    materiales, cobros: cobros as never, notas: notas as never,
+    materiales, cobros: cobros as never, notas: notas as never, manoDeObraCert: manoDeObraCert as never,
   }
   return { filas: armarResumenObras(datos, hoyISO, conTarja), con_tarja: conTarja, generado_en: new Date().toISOString() }
 }

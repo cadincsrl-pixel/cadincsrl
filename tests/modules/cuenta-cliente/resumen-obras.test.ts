@@ -145,3 +145,28 @@ describe('armarResumenObras — varias obras', () => {
     expect(b.centro_costo).toBe(b.cliente)
   })
 })
+
+describe('armarResumenObras — mano de obra de los certificados (revisión 2026-09-23)', () => {
+  const cerrada = { cod: 'PC', nom: 'Presupuesto cerrado', cliente_id: 2, cliente_nom: 'BRADEL', archivada: false, por_administracion: false }
+
+  it('presupuesto cerrado: la mano de obra certificada entra en lo facturado', () => {
+    // Certificado de $4M de materiales + $6M de mano de obra, cobrado entero.
+    const [f] = armarResumenObras(base({
+      obras: [cerrada], horasSemLeg: [], certs: [], pcts: [],
+      materiales: [{ obra_cod: 'PC', fecha_resolucion: '2026-09-01', precio_total: 4_000_000, precio_unit: 1000 }],
+      cobros: [{ obra_cod: 'PC', monto: 10_000_000 }], notas: [],
+      manoDeObraCert: [{ obra_cod: 'PC', mano_de_obra: 6_000_000 }],
+    }), HOY, true)
+    expect(f!.mano_de_obra_certificada).toBe(6_000_000)
+    expect(f!.total).toBe(10_000_000)
+    // Antes daba −6M: "a favor del cliente" por la mano de obra cobrada.
+    expect(f!.saldo).toBe(0)
+  })
+
+  it('por administración no se suma: la mano de obra ya está en jornales', () => {
+    const sinMo = armarResumenObras(base(), HOY, true)[0]!
+    const conMo = armarResumenObras(base({ manoDeObraCert: [{ obra_cod: 'ADM', mano_de_obra: 999 }] }), HOY, true)[0]!
+    expect(conMo.mano_de_obra_certificada).toBe(0)
+    expect(conMo.total).toBe(sinMo.total)
+  })
+})

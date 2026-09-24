@@ -318,7 +318,11 @@ export const cuentaClienteService = {
 
     // Capacidad de cada pago = monto − materiales ya imputados − semanas ya congeladas.
     const [cobrosR, imputMat, imputSem] = await Promise.all([
-      supabaseAdmin.from('cuenta_cliente_cobros').select('id, fecha, monto').eq('obra_cod', obraCod).order('fecha').order('id'),
+      // Sin los cobros de certificados (20260924): esos pagan SU certificado —
+      // sus renglones se congelan al registrarlos— y el resto del monto es la
+      // mano de obra. Si entraran acá, esa mano de obra se usaba como plata
+      // libre para marcar Cobrado materiales que el cliente no pagó.
+      supabaseAdmin.from('cuenta_cliente_cobros').select('id, fecha, monto').eq('obra_cod', obraCod).is('certificado_id', null).order('fecha').order('id'),
       supabaseAdmin.from('materiales_a_cuenta_cliente').select('cobro_id, monto_cobrado').eq('obra_cod', obraCod).not('cobro_id', 'is', null),
       supabaseAdmin.from('cuenta_admin_imputaciones').select('sem_key, pata, cobro_id, monto').eq('obra_cod', obraCod),
     ])

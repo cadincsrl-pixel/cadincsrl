@@ -68,6 +68,11 @@ export function mapRpcError(error: PostgrestError): HttpError {
     /SOLICITUD_TIENE_REMITOS/.test(msg) ? 'SOLICITUD_TIENE_REMITOS' :
     /SOLICITUD_TIENE_ENVIOS/.test(msg)  ? 'SOLICITUD_TIENE_ENVIOS' :
     /SOLICITUD_TIENE_RETIROS/.test(msg) ? 'SOLICITUD_TIENE_RETIROS' :
+    /SOLICITUD_TIENE_COBROS/.test(msg)       ? 'SOLICITUD_TIENE_COBROS' :
+    /SOLICITUD_TIENE_CERTIFICADOS/.test(msg) ? 'SOLICITUD_TIENE_CERTIFICADOS' :
+    /SOLICITUD_TIENE_EN_PROVEEDOR/.test(msg) ? 'SOLICITUD_TIENE_EN_PROVEEDOR' :
+    /MCC_COBRADO/.test(msg)                  ? 'ITEM_COBRADO' :
+    /MCC_CERTIFICADO/.test(msg)              ? 'ITEM_CERTIFICADO' :
     /ELEGIR_DESTINO_COMPRAS/.test(msg)  ? 'ELEGIR_DESTINO_COMPRAS' :
     /COMPRA_SIN_FICHA/.test(msg)        ? 'COMPRA_SIN_FICHA' :
     /DESTINO_INVALIDO/.test(msg)        ? 'DESTINO_INVALIDO' :
@@ -97,6 +102,13 @@ export function mapRpcError(error: PostgrestError): HttpError {
     // las compras sin enviar exigen destino; una compra sin ficha no entra al depósito.
     case 'SOLICITUD_TIENE_ENVIOS':  return new HttpError(409, code)
     case 'SOLICITUD_TIENE_RETIROS': return new HttpError(409, code)
+    // Candados de la cuenta del cliente (20260924p): lo cobrado o certificado
+    // no se borra con el pedido, y lo que quedó en el proveedor tampoco.
+    case 'SOLICITUD_TIENE_COBROS':       return new HttpError(409, code)
+    case 'SOLICITUD_TIENE_CERTIFICADOS': return new HttpError(409, code)
+    case 'SOLICITUD_TIENE_EN_PROVEEDOR': return new HttpError(409, code)
+    case 'ITEM_COBRADO':                 return new HttpError(409, code, parseDetail(error.details))
+    case 'ITEM_CERTIFICADO':             return new HttpError(409, code, parseDetail(error.details))
     case 'ELEGIR_DESTINO_COMPRAS':  return new HttpError(409, code, parseDetail(error.details))
     case 'COMPRA_SIN_FICHA':        return new HttpError(409, code, parseDetail(error.details))
     case 'DESTINO_INVALIDO':        return new HttpError(400, code)
@@ -426,16 +438,19 @@ export const solicitudesService = {
     // filas MCC — si alguna ya fue cobrada al cliente, el pago quedaría
     // imputado a la nada y el saldo de la obra se correría en silencio.
     // Primero hay que eliminar el cobro (libera los items) en Cuenta del cliente.
-    const { data: cobrados, error: errCob } = await supabaseAdmin
+    // Lo certificado tampoco (20260924p): borrarlo dejaba el certificado con
+    // un total que ya no cuadraba con sus renglones. La RPC repite los dos
+    // chequeos adentro de la transacción; acá es para devolver el número.
+    const { data: congelados, error: errCob } = await supabaseAdmin
       .from('materiales_a_cuenta_cliente')
-      .select('cobro_id')
+      .select('cobro_id, certificado_id')
       .eq('solicitud_id', id)
-      .not('cobro_id', 'is', null)
+      .or('cobro_id.not.is.null,certificado_id.not.is.null')
       .limit(1)
     if (errCob) throw new Error(errCob.message)
-    if (cobrados && cobrados.length > 0) {
-      throw new HttpError(409, 'SOLICITUD_TIENE_COBROS', { cobro_id: cobrados[0]!.cobro_id })
-    }
+    const cong = congelados?.[0]
+    if (cong?.cobro_id != null) throw new HttpError(409, 'SOLICITUD_TIENE_COBROS', { cobro_id: cong.cobro_id })
+    if (cong?.certificado_id != null) throw new HttpError(409, 'SOLICITUD_TIENE_CERTIFICADOS', { certificado_id: cong.certificado_id })
 
     // RPC transaccional (20260424, reescrita en 20260917j): lo despachado de
     // depósito y sin enviar vuelve al estante; las compras sin enviar van a
@@ -1202,11 +1217,17 @@ export const solicitudesService = {
     // Un item cuyo MCC ya fue cobrado al cliente no se puede revertir: el
     // revert BORRA la fila MCC y dejaría el pago imputado a la nada. Primero
     // hay que eliminar el cobro (libera los items) desde Cuenta del cliente.
-    const { data: mccCobrado } = await supabase
+    // Lo certificado tampoco (20260924p): el revert borraba la fila y el
+    // certificado quedaba con un total que ya no cuadraba con sus renglones.
+    const { data: mccCong } = await supabase
       .from('materiales_a_cuenta_cliente')
-      .select('cobro_id').eq('item_id', itemId).not('cobro_id', 'is', null).maybeSingle()
-    if (mccCobrado) {
-      throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: mccCobrado.cobro_id })
+      .select('cobro_id, certificado_id').eq('item_id', itemId)
+      .or('cobro_id.not.is.null,certificado_id.not.is.null').maybeSingle()
+    if (mccCong?.cobro_id != null) {
+      throw new HttpError(409, 'ITEM_COBRADO', { cobro_id: mccCong.cobro_id })
+    }
+    if (mccCong?.certificado_id != null) {
+      throw new HttpError(409, 'ITEM_CERTIFICADO', { certificado_id: mccCong.certificado_id })
     }
     // Estado previo (entre comprado/de_deposito/rechazado) para la traza.
     const { data: prev } = await supabase
@@ -1424,7 +1445,11 @@ export const solicitudesService = {
     // unidad nueva; los envíos, la cantidad comprada y el stock descontado se
     // escalan en la misma proporción para que nada quede en la unidad vieja.
     let previo: { cantidad: number; unidad: string; cantidad_enviada: number; cantidad_comprada: number | null; material_id: number | null } | null = null
-    const patch: Record<string, unknown> = { ...dto }
+    // `actualizar_catalogo` es una instrucción, no una columna: mandarlo en el
+    // update hacía fallar el PATCH entero (PGRST204) cada vez que se tildaba
+    // "llevar al catálogo" en Cargar precios (revisión 2026-09-23).
+    const { actualizar_catalogo: _alCatalogo, ...campos } = dto
+    const patch: Record<string, unknown> = { ...campos }
     if (cambiaUnidad) {
       const { data: it, error: itErr } = await supabase
         .from('solicitud_compra_item')
