@@ -1,5 +1,5 @@
 /**
- * Facturas de venta: Factura A/B y NC A/B (fases 1 y 5). Lecturas sobre
+ * Facturas de venta: Factura A/B, NC A/B y FCE MiPyME A 201/203 (fases 1, 5 y 6). Lecturas sobre
  * `v_ventas_facturas` y escrituras SOLO por las RPC `ventas_*` (20260924c):
  * un UPDATE suelto rebota con VENTAS_SOLO_RPC. La emisión contra ARCA vive en
  * `emision.service.ts`.
@@ -15,9 +15,10 @@ import { normTxt } from '../../lib/norm-txt.js'
 import { FacturacionHttpError, mapRpcError, type PgError } from './facturacion.errors.js'
 import { ambienteProceso, leerFJ, rpc, talonarioProceso } from './comun.js'
 import {
-  TIPOS_HABILITADOS, TOPE_CF_IDENTIFICACION, calcularTotales, esNC, letraDe, letraDeTipo, requiereIdentificacion,
+  TIPOS_HABILITADOS, TOPE_CF_IDENTIFICACION, calcularTotales, esFce, esNC, letraDe, letraDeTipo, requiereIdentificacion,
   resumir, tipoPara, type FJ, type FacturaVista,
 } from './reglas.js'
+import { fceService } from './fce.service.js'
 import type { GuardarFacturaDto, ListFacturasQuery, ResumenQuery } from './facturacion.schema.js'
 
 export interface Evento {
@@ -40,15 +41,20 @@ function ambienteFiltro(q?: string): string | null {
 
 /**
  * El tipo de comprobante lo decide el sistema, no el usuario: la letra sale
- * del cliente (`letraDe`) y, en una NC, de la factura que corrige. Si el
- * pedido trae `cbte_tipo`, tiene que ser de esa misma letra. Rechaza ANTES
- * de la RPC (que vuelve a validar todo, igual que al emitir):
+ * del cliente (`letraDe`) y, en una NC, de la factura que corrige (una NC de
+ * una FCE 201 es 203; de una Factura A, 3). Lo único que el usuario elige es,
+ * con letra A, Factura A (1) o FCE MiPyME (201), y eso lo controla
+ * `fceService.exigirTipoFce` con WSFECRED. Rechaza ANTES de la RPC (que
+ * vuelve a validar todo, igual que al emitir):
  *   - LETRA_INCOMPATIBLE: el cliente no admite ninguna letra (RI o
  *     monotributo sin CUIT) o el tipo pedido es de la otra;
- *   - CF_REQUIERE_IDENTIFICACION: B sin documento (99) con total ≥ tope.
+ *   - NC_TIPO_NO_COINCIDE: la NC pedida no es la de su factura (3 ↔ 1, 203 ↔ 201);
+ *   - CF_REQUIERE_IDENTIFICACION: B sin documento (99) con total ≥ tope;
+ *   - CORRESPONDE_FCE / NO_CORRESPONDE_FCE (fase 6), salvo `forzar`.
  */
 export async function resolverTipo(
   f: GuardarFacturaDto['factura'], renglones: GuardarFacturaDto['renglones'], db: SupabaseClient,
+  opts: { forzar?: boolean } = {},
 ): Promise<number> {
   const { data: cli, error } = await db.from('ventas_clientes')
     .select('id, doc_tipo, condicion_iva_id').eq('id', f.cliente_id).maybeSingle()
@@ -59,10 +65,19 @@ export async function resolverTipo(
   const nc = f.asociada_id != null || (f.cbte_tipo != null && esNC(Number(f.cbte_tipo)))
 
   let letra = letraCliente
+  let fce = f.cbte_tipo != null && esFce(Number(f.cbte_tipo))
   if (nc && f.asociada_id != null) {
     const { data: a } = await db.from('ventas_facturas').select('cbte_tipo').eq('id', f.asociada_id).maybeSingle()
     // Si la asociada no existe, la RPC contesta NC_FACTURA_NO_EXISTE.
-    if (a) letra = letraDeTipo(Number((a as { cbte_tipo: number }).cbte_tipo)) ?? letra
+    if (a) {
+      const tipoAsoc = Number((a as { cbte_tipo: number }).cbte_tipo)
+      letra = letraDeTipo(tipoAsoc) ?? letra
+      const fceAsoc = esFce(tipoAsoc)
+      if (f.cbte_tipo != null && fceAsoc !== fce) {
+        throw new FacturacionHttpError(400, 'NC_TIPO_NO_COINCIDE', { campo: 'cbte_tipo', nc_tipo: Number(f.cbte_tipo), factura_tipo: tipoAsoc })
+      }
+      fce = fceAsoc
+    }
   }
   const pedida = f.cbte_tipo != null ? letraDeTipo(Number(f.cbte_tipo)) : null
   if (!letraCliente || letra !== letraCliente || (f.cbte_tipo != null && pedida !== letra)) {
@@ -71,7 +86,7 @@ export async function resolverTipo(
       doc_tipo: Number(c.doc_tipo), condicion_iva_id: Number(c.condicion_iva_id),
     })
   }
-  const tipo = tipoPara(letra, nc)
+  const tipo = tipoPara(letra, nc, fce)
   if (!(TIPOS_HABILITADOS as readonly number[]).includes(tipo)) {
     throw new FacturacionHttpError(400, 'TIPO_NO_HABILITADO', { campo: 'cbte_tipo', cbte_tipo: tipo, habilitados: [...TIPOS_HABILITADOS] })
   }
@@ -81,6 +96,7 @@ export async function resolverTipo(
       campo: 'cliente_id', tope: TOPE_CF_IDENTIFICACION, total, cliente_id: f.cliente_id,
     })
   }
+  if (!nc) await fceService.exigirTipoFce({ clienteId: f.cliente_id, tipo, total, fecha: f.fecha_cbte, forzar: opts.forzar }, db)
   return tipo
 }
 
@@ -178,7 +194,7 @@ export const facturasService = {
     }
 
     const f = dto.factura
-    const tipo = await resolverTipo(f, dto.renglones, db)
+    const tipo = await resolverTipo(f, dto.renglones, db, { forzar: !!dto.forzar })
     const pFactura: Record<string, unknown> = {
       ...(id != null ? { id } : {}),
       ambiente, pto_vta: ptoVta, cbte_tipo: tipo,
@@ -194,6 +210,12 @@ export const facturasService = {
       observaciones: f.observaciones ?? '',
       ...(f.obs_interna != null ? { obs_interna: f.obs_interna } : {}),
       asociada_id: f.asociada_id ?? null,
+      // FCE (fase 6): la RPC solo los usa en la 201 / 203.
+      fce_cuenta_id: f.fce_cuenta_id ?? null,
+      fch_vto_pago: f.fch_vto_pago || null,
+      fce_transmision: f.fce_transmision ?? null,
+      fce_referencia: f.fce_referencia?.trim() || null,
+      nc_anulacion: f.nc_anulacion ?? null,
     }
     const pRenglones = dto.renglones.map((r) => ({
       descripcion: r.descripcion,

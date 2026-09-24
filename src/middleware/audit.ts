@@ -150,6 +150,7 @@ export const ENTIDADES: Record<string, string> = {
   // Facturación de venta. PUT /facturacion/clientes/5/obras → «obras del cliente 5».
   facturacion: 'factura de venta', 'facturacion/facturas': 'factura de venta',
   'facturacion/clientes': 'cliente', 'facturacion/clientes/obras': 'obras del cliente',
+  'facturacion/cuentas': 'cuenta bancaria (FCE)',
 }
 
 /** Palabras que aparecen como segmentos de ruta: nunca son un id. */

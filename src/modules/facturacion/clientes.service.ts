@@ -21,7 +21,15 @@ import type { CreateClienteDto, UpdateClienteDto } from './facturacion.schema.js
 export interface ObraCliente { cod: string; nom: string; cc: string | null }
 export type VentasCliente = Record<string, unknown> & { id: number; obras: ObraCliente[] }
 
-const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by'
+const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by, cuenta_fce_id, fce_obligado, fce_monto_desde, fce_consultado_at'
+
+/** La cuenta preferida para la FCE tiene que existir y estar activa. */
+async function validarCuentaFce(db: SupabaseClient, id: number | null | undefined): Promise<void> {
+  if (id == null) return
+  const { data, error } = await db.from('ventas_cuentas_bancarias').select('id, activo').eq('id', id).maybeSingle()
+  if (error) throw mapRpcError(error as PgError)
+  if (!data || !(data as { activo: boolean }).activo) throw errorDeCampo('CUENTA_NO_EXISTE', 'cuenta_fce_id', { cuenta_id: id })
+}
 
 /** Valida y normaliza el documento según su tipo. */
 export function validarDocumento(docTipo: number, docNro: string | null | undefined): string {
@@ -118,6 +126,7 @@ export const clientesService = {
     validarCondicion(dto.condicion_iva_id)
     validarLetra(docTipo, dto.condicion_iva_id)
     if (await duplicado(db, docTipo, doc)) throw await errorDuplicado(db, docTipo, doc)
+    await validarCuentaFce(db, dto.cuenta_fce_id)
 
     const { data, error } = await db.from('ventas_clientes').insert({
       razon_social: dto.razon_social.trim(),
@@ -128,6 +137,7 @@ export const clientesService = {
       provincia: limpio(dto.provincia),
       email: limpio(dto.email),
       obs: limpio(dto.obs),
+      cuenta_fce_id: dto.cuenta_fce_id ?? null,
       created_by: userId,
       updated_by: userId,
     }).select('id').single()
@@ -159,6 +169,16 @@ export const clientesService = {
     }
     for (const k of ['domicilio', 'provincia', 'email', 'obs'] as const) {
       if (dto[k] !== undefined) upd[k] = limpio(dto[k])
+    }
+    if (dto.cuenta_fce_id !== undefined) {
+      await validarCuentaFce(db, dto.cuenta_fce_id)
+      upd.cuenta_fce_id = dto.cuenta_fce_id ?? null
+    }
+    // Cambió el CUIT: el dato de WSFECRED ya no vale.
+    if (upd.doc_nro !== undefined && upd.doc_nro !== actual.doc_nro) {
+      upd.fce_obligado = null
+      upd.fce_monto_desde = null
+      upd.fce_consultado_at = null
     }
     const { error } = await db.from('ventas_clientes').update(upd).eq('id', id)
     if (error) {

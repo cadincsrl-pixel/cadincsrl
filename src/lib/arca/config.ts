@@ -24,16 +24,20 @@ export type ArcaAmbiente = 'homo' | 'prod'
 export interface ArcaUrls {
   wsaa: string
   wsfe: string
+  /** WSFECRED (FCE MiPyME): consultarMontoObligadoRecepcion. URLs del WSDL (verificadas 2026-09-23). */
+  wsfecred: string
 }
 
 export const ARCA_URLS: Record<ArcaAmbiente, ArcaUrls> = {
   homo: {
     wsaa: 'https://wsaahomo.afip.gov.ar/ws/services/LoginCms',
     wsfe: 'https://wswhomo.afip.gov.ar/wsfev1/service.asmx',
+    wsfecred: 'https://fwshomo.afip.gov.ar/wsfecred/FECredService',
   },
   prod: {
     wsaa: 'https://wsaa.afip.gov.ar/ws/services/LoginCms',
     wsfe: 'https://servicios1.afip.gov.ar/wsfev1/service.asmx',
+    wsfecred: 'https://serviciosjava.afip.gob.ar/wsfecred/FECredService',
   },
 }
 

@@ -42,6 +42,20 @@ export interface ComprobanteAsociado {
   cbteFch?: string
 }
 
+/**
+ * Dato opcional de FECAESolicitar (`Opcionales/Opcional`). Los de la FCE
+ * MiPyME (manual WSFEv1): 2101 CBU del emisor, 2102 alias, 27 opción de
+ * transferencia (SCA | ADC), 23 referencia comercial, 22 «es anulación»
+ * (S | N) en las NC/ND FCE.
+ */
+export interface Opcional {
+  id: string
+  valor: string
+}
+
+/** Tipos FCE MiPyME que son nota de débito o crédito: NO llevan FchVtoPago ni CBU. */
+export const TIPOS_NC_ND_FCE = new Set([202, 203, 207, 208, 212, 213])
+
 export interface ComprobanteSolicitud {
   ptoVta: number
   cbteTipo: number
@@ -72,6 +86,7 @@ export interface ComprobanteSolicitud {
   condicionIvaReceptorId: number
   iva?: AlicuotaIva[]
   cbtesAsoc?: ComprobanteAsociado[]
+  opcionales?: Opcional[]
 }
 
 export interface ResultadoCAE {
@@ -122,6 +137,7 @@ export interface ComprobanteConsultado {
   fchProceso: string
   iva: AlicuotaIva[]
   cbtesAsoc: ComprobanteAsociado[]
+  opcionales: Opcional[]
   observaciones: ErrArca[]
 }
 
@@ -227,11 +243,16 @@ export function sobreFECAESolicitar(ta: TicketAcceso, cuit: string, c: Comproban
   if (!docNro) {
     throw new ArcaError({ tipo: 'config', codigo: 'ARCA_COMPROBANTE_INVALIDO', mensaje: 'DocNro vacío' })
   }
-  if (c.concepto !== 1 && (!c.fchServDesde || !c.fchServHasta || !c.fchVtoPago)) {
+  // Las NC/ND de FCE no llevan vencimiento de pago (manual WSFEv1).
+  const ncFce = TIPOS_NC_ND_FCE.has(c.cbteTipo)
+  if (c.concepto !== 1 && (!c.fchServDesde || !c.fchServHasta || (!c.fchVtoPago && !ncFce))) {
     throw new ArcaError({
       tipo: 'config', codigo: 'ARCA_COMPROBANTE_INVALIDO',
       mensaje: 'Con concepto 2 o 3 ARCA exige FchServDesde, FchServHasta y FchVtoPago',
     })
+  }
+  if (c.cbteTipo === 201 && !c.fchVtoPago) {
+    throw new ArcaError({ tipo: 'config', codigo: 'ARCA_COMPROBANTE_INVALIDO', mensaje: 'La FCE (201) exige FchVtoPago' })
   }
   const cotiz = c.monCotiz ?? 1
   if (!Number.isFinite(cotiz) || cotiz <= 0) {
@@ -254,7 +275,14 @@ export function sobreFECAESolicitar(ta: TicketAcceso, cuit: string, c: Comproban
     el('Importe', importe(a.importe, `Iva[${i}].Importe`)) +
     '</ar:AlicIva>').join('')
 
-  // Orden de FEDetRequest en el WSDL.
+  const opcionales = (c.opcionales ?? []).map((o, i) => {
+    if (!o.id || !String(o.valor ?? '').trim()) {
+      throw new ArcaError({ tipo: 'config', codigo: 'ARCA_COMPROBANTE_INVALIDO', mensaje: `Opcionales[${i}]: Id y Valor obligatorios` })
+    }
+    return `<ar:Opcional>${el('Id', xmlEsc(o.id))}${el('Valor', xmlEsc(String(o.valor).trim()))}</ar:Opcional>`
+  }).join('')
+
+  // Orden de FEDetRequest en el WSDL (Iva va antes que Opcionales).
   const det =
     el('Concepto', entero(c.concepto, 'Concepto')) +
     el('DocTipo', entero(c.docTipo, 'DocTipo')) +
@@ -275,7 +303,8 @@ export function sobreFECAESolicitar(ta: TicketAcceso, cuit: string, c: Comproban
     el('MonCotiz', String(cotiz)) +
     el('CondicionIVAReceptorId', entero(c.condicionIvaReceptorId, 'CondicionIVAReceptorId')) +
     (asoc ? `<ar:CbtesAsoc>${asoc}</ar:CbtesAsoc>` : '') +
-    (iva ? `<ar:Iva>${iva}</ar:Iva>` : '')
+    (iva ? `<ar:Iva>${iva}</ar:Iva>` : '') +
+    (opcionales ? `<ar:Opcionales>${opcionales}</ar:Opcionales>` : '')
 
   return sobre(
     '<ar:FECAESolicitar>' +
@@ -403,6 +432,7 @@ export function parsearFECompConsultar(xml: string, httpStatus?: number): Compro
       tipo: num(a.Tipo), ptoVta: num(a.PtoVta), nro: num(a.Nro),
       cuit: texto(a.Cuit) || undefined, cbteFch: texto(a.CbteFch) || undefined,
     })),
+    opcionales: lista(nodo(g.Opcionales)?.Opcional).map((o) => ({ id: texto(o.Id), valor: texto(o.Valor) })),
     observaciones: erroresDe(g, 'Observaciones', 'Obs'),
   }
 }

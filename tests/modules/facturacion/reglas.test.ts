@@ -187,7 +187,7 @@ describe('Factura B (fase 5)', () => {
     expect(letraDeTipo(6)).toBe('B')
     expect(letraDeTipo(8)).toBe('B')
     expect(letraDeTipo(11)).toBeNull()
-    expect([...TIPOS_HABILITADOS]).toEqual([1, 3, 6, 8])
+    expect([...TIPOS_HABILITADOS]).toEqual([1, 3, 6, 8, 201, 203])
   })
 
   it('consumidor final sin identificar: desde $ 10.000.000 inclusive (RG 5700/2025)', () => {

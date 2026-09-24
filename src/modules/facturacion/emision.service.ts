@@ -40,6 +40,7 @@ import {
 import { FacturacionHttpError, errorArca, mapRpcError, type PgError } from './facturacion.errors.js'
 import { ambienteProceso, leerFJ, rpc, talonarioProceso } from './comun.js'
 import { armarComprobante, coincideConsultado, pResDeCAE, pResDeConsultado, type FJ, type PRes } from './reglas.js'
+import { fceService } from './fce.service.js'
 
 // ── Traza: cada intercambio con WSFE a ventas_facturas_arca_log ─────────────
 
@@ -171,6 +172,20 @@ export const emisionService = {
       await obtenerTA('wsfe', { config: cfg })
     } catch (e) {
       throw await aHttp(db, e, cfg.ambiente)
+    }
+
+    // FCE (fase 6): ¿Factura A o FCE? Con el dato de WSFECRED (cache de 30
+    // días). Antes de tocar la factura, igual que el ticket.
+    {
+      const { data: cab, error: eCab } = await db.from('ventas_facturas')
+        .select('cliente_id, cbte_tipo, imp_total, fecha_cbte, estado').eq('id', id).maybeSingle()
+      if (eCab) throw mapRpcError(eCab as PgError)
+      const c = cab as { cliente_id: number; cbte_tipo: number; imp_total: number; fecha_cbte: string; estado: string } | null
+      if (c && c.estado === 'borrador') {
+        await fceService.exigirTipoFce({
+          clienteId: Number(c.cliente_id), tipo: Number(c.cbte_tipo), total: Number(c.imp_total), fecha: c.fecha_cbte, forzar,
+        }, db)
+      }
     }
 
     const fj = await rpc<FJ & { ultimo_local: number | null }>(db, 'ventas_iniciar_emision', {
@@ -344,7 +359,7 @@ export const emisionService = {
     if (falta.length) return { ...base, dummy: null, ultimo: null, error: null }
     const cfg = arcaConfig()
     let dummy: { appServer: string; dbServer: string; authServer: string } | null = null
-    let ultimo: { '1': number; '3': number; '6': number; '8': number } | null = null
+    let ultimo: Record<'1' | '3' | '6' | '8' | '201' | '203', number> | null = null
     const errores: string[] = []
     try {
       dummy = await feDummy({ config: cfg })
@@ -352,8 +367,8 @@ export const emisionService = {
       errores.push(`FEDummy: ${mensajeDe(e)}`)
     }
     try {
-      const [a, nca, b, ncb] = await Promise.all([1, 3, 6, 8].map((t) => ultimoAutorizado(cfg.ptoVta, t, { config: cfg })))
-      ultimo = { '1': a!.numero, '3': nca!.numero, '6': b!.numero, '8': ncb!.numero }
+      const [a, nca, b, ncb, fce, ncfce] = await Promise.all([1, 3, 6, 8, 201, 203].map((t) => ultimoAutorizado(cfg.ptoVta, t, { config: cfg })))
+      ultimo = { '1': a!.numero, '3': nca!.numero, '6': b!.numero, '8': ncb!.numero, '201': fce!.numero, '203': ncfce!.numero }
     } catch (e) {
       errores.push(`Último autorizado: ${mensajeDe(e)}`)
     }

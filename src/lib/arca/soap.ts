@@ -56,7 +56,9 @@ function postHttps(url: string, headers: Record<string, string>, body: string, s
 /** Tags que ARCA puede devolver una o N veces: siempre como array. */
 const TAGS_ARRAY = new Set([
   'Err', 'Obs', 'Evt', 'AlicIva', 'CbteAsoc', 'Tributo',
-  'FECAEDetResponse', 'CondicionIvaReceptor', 'IvaTipo',
+  'FECAEDetResponse', 'CondicionIvaReceptor', 'IvaTipo', 'Opcional',
+  // WSFECRED
+  'codigoDescripcion', 'codigoDescripcionString',
 ])
 
 const parser = new XMLParser({

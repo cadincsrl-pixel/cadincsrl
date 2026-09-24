@@ -11,13 +11,31 @@
  *   IVA por alícuota        = round(Σ bases del grupo × tasa, 2)   ← NO renglón por renglón
  *   total                   = neto + IVA
  */
-import type { ComprobanteSolicitud, ComprobanteConsultado, ResultadoCAE, ErrArca } from '../../lib/arca/index.js'
+import type { ComprobanteSolicitud, ComprobanteConsultado, ResultadoCAE, ErrArca, Opcional } from '../../lib/arca/index.js'
 
 // ── Catálogos fijos ─────────────────────────────────────────────────────────
 
-/** Tipos habilitados: Factura A/B y Nota de Crédito A/B (fase 5). FCE (201/203) todavía no. */
-export const TIPOS_HABILITADOS = [1, 3, 6, 8] as const
+/** Tipos habilitados: Factura A/B, NC A/B (fase 5) y FCE MiPyME A + su NC (fase 6). */
+export const TIPOS_HABILITADOS = [1, 3, 6, 8, 201, 203] as const
 export const TIPOS_NC = new Set([3, 8, 203])
+export const TIPOS_FCE = new Set([201, 203])
+
+/**
+ * Monto mínimo de la Factura de Crédito Electrónica MiPyME: $ 5.549.862.
+ * Fuente: Registro de FCE MiPyMEs de ARCA, vigente desde el 14/04/2026
+ * (consultado el 23/09/2026). WSFECRED (`consultarMontoObligadoRecepcion`)
+ * devuelve el monto de cada receptor y es el que manda; este es el piso
+ * general. Espejo de `_ventas_monto_minimo_fce()` (20260924e) y de
+ * MONTO_MINIMO_FCE del frontend.
+ */
+export const MONTO_MINIMO_FCE = 5_549_862
+
+/** Opción de transferencia de la FCE (opcional 27). */
+export type TransmisionFce = 'SCA' | 'ADC'
+export const TRANSMISIONES_FCE: ReadonlyArray<{ id: TransmisionFce; descripcion: string }> = [
+  { id: 'SCA', descripcion: 'Sistema de Circulación Abierta' },
+  { id: 'ADC', descripcion: 'Agente de Depósito Colectivo' },
+]
 
 /** Tasa por Id de alícuota de ARCA (FEParamGetTiposIva). Espejo de `ventas_tasa_iva`. */
 export const TASA_IVA: Readonly<Record<number, number>> = {
@@ -135,6 +153,22 @@ export function calcularTotales(renglones: RenglonCalculo[]): Totales {
   return { neto: deCentavos(neto), iva: deCentavos(iva), total: deCentavos(neto + iva), alicuotas }
 }
 
+// ── Cache de WSFECRED ────────────────────────────────────────────────────
+
+/** Días que vale el dato de WSFECRED guardado en el cliente. */
+export const DIAS_CACHE_FCE = 30
+
+/** Hoy en Argentina (UTC−3), YYYY-MM-DD. */
+export function hoyAr(ahora = Date.now()): string {
+  return new Date(ahora - 3 * 3600_000).toISOString().slice(0, 10)
+}
+
+export function cacheVigente(consultadoAt: string | null | undefined, ahora = Date.now()): boolean {
+  if (!consultadoAt) return false
+  const t = new Date(consultadoAt).getTime()
+  return Number.isFinite(t) && ahora - t < DIAS_CACHE_FCE * 86_400_000
+}
+
 // ── Fechas ──────────────────────────────────────────────────────────────────
 
 /** 'YYYY-MM-DD' (o timestamp ISO) → 'yyyymmdd'. */
@@ -189,10 +223,31 @@ export function letraDeTipo(cbteTipo: number): Letra | null {
   return null
 }
 
-/** El tipo que corresponde: factura o NC de esa letra. */
-export function tipoPara(letra: Letra, nc: boolean): 1 | 3 | 6 | 8 {
-  if (letra === 'A') return nc ? 3 : 1
+/** El tipo que corresponde: factura o NC de esa letra (con `fce`, la FCE MiPyME A: 201 / 203). */
+export function tipoPara(letra: Letra, nc: boolean, fce = false): 1 | 3 | 6 | 8 | 201 | 203 {
+  if (letra === 'A') return fce ? (nc ? 203 : 201) : (nc ? 3 : 1)
   return nc ? 8 : 6
+}
+
+export function esFce(cbteTipo: number): boolean {
+  return TIPOS_FCE.has(cbteTipo)
+}
+
+/**
+ * ¿La factura a este receptor tiene que ser FCE? Con el dato de WSFECRED
+ * (obligado y monto desde). `null` = no se sabe (WSFECRED no respondió o
+ * nunca se consultó): no se bloquea nada.
+ *   - obligado y total ≥ max(monto del receptor, mínimo general) → FCE.
+ *   - no obligado, o total < monto → Factura A común.
+ */
+export function correspondeFce(
+  info: { obligado: boolean | null; montoDesde: number | null } | null,
+  total: number,
+): boolean | null {
+  if (!info || info.obligado === null) return null
+  if (!info.obligado) return false
+  const piso = Math.max(info.montoDesde ?? MONTO_MINIMO_FCE, 0)
+  return Math.round(total * 100) >= Math.round(piso * 100)
 }
 
 /** ¿Hay que identificar al receptor? Comprobante B, sin documento (99) y total ≥ tope. */
@@ -239,6 +294,11 @@ export interface FacturaVista {
   updated_at: string
   emitida_por: string | null
   created_by: string | null
+  fce_cbu?: string | null
+  fce_alias?: string | null
+  fce_transmision?: string | null
+  fce_referencia?: string | null
+  nc_anulacion?: string | null
   [k: string]: unknown
 }
 
@@ -276,6 +336,15 @@ export function armarComprobante(fj: FJ, numero: number): ComprobanteSolicitud {
     c.fchServHasta = cbteFch
     c.fchVtoPago = cbteFch
   }
+  const opcionales = opcionalesFce(f)
+  if (c.cbteTipo === 201) {
+    // La FCE lleva SIEMPRE vencimiento de pago: el que eligió el usuario.
+    c.fchVtoPago = aYyyymmdd(f.fch_vto_pago ?? f.fecha_cbte)
+  } else if (c.cbteTipo === 203) {
+    // NC FCE: sin vencimiento de pago (manual WSFEv1).
+    delete c.fchVtoPago
+  }
+  if (opcionales.length) c.opcionales = opcionales
   if (esNC(c.cbteTipo)) {
     c.cbtesAsoc = fj.asociados.map((a) => ({
       tipo: Number(a.cbte_tipo),
@@ -286,6 +355,25 @@ export function armarComprobante(fj: FJ, numero: number): ComprobanteSolicitud {
     }))
   }
   return c
+}
+
+/**
+ * Opcionales de WSFE para la FCE:
+ *   201 → 2101 CBU, 2102 alias (si hay), 23 referencia comercial (si hay),
+ *         27 opción de transferencia (SCA | ADC).
+ *   203 → 22 «es anulación» (S | N). Sin CBU.
+ */
+export function opcionalesFce(f: Pick<FacturaVista, 'cbte_tipo' | 'fce_cbu' | 'fce_alias' | 'fce_transmision' | 'fce_referencia' | 'nc_anulacion'>): Opcional[] {
+  const tipo = Number(f.cbte_tipo)
+  if (tipo === 201) {
+    const ops: Opcional[] = [{ id: '2101', valor: String(f.fce_cbu ?? '') }]
+    if (f.fce_alias) ops.push({ id: '2102', valor: String(f.fce_alias) })
+    if (f.fce_referencia) ops.push({ id: '23', valor: String(f.fce_referencia) })
+    ops.push({ id: '27', valor: String(f.fce_transmision || 'SCA') })
+    return ops
+  }
+  if (tipo === 203) return [{ id: '22', valor: f.nc_anulacion === 'S' ? 'S' : 'N' }]
+  return []
 }
 
 // ── De la respuesta de ARCA al p_res de `ventas_confirmar_emision` ──────────

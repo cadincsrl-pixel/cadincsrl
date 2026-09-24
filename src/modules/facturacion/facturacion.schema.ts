@@ -30,6 +30,7 @@ export const CreateClienteSchema = z.object({
   provincia: texto(100).optional().nullable(),
   email: texto(200).optional().nullable(),
   obs: texto(2000).optional().nullable(),
+  cuenta_fce_id: z.coerce.number().int().positive().optional().nullable(),
 })
 export type CreateClienteDto = z.infer<typeof CreateClienteSchema>
 
@@ -42,8 +43,36 @@ export const UpdateClienteSchema = z.object({
   provincia: texto(100).optional().nullable(),
   email: texto(200).optional().nullable(),
   obs: texto(2000).optional().nullable(),
+  cuenta_fce_id: z.coerce.number().int().positive().optional().nullable(),
 })
 export type UpdateClienteDto = z.infer<typeof UpdateClienteSchema>
+
+export const FceClienteQuerySchema = z.object({
+  refrescar: z.string().optional(),
+  fecha: fechaIso.optional(),
+})
+
+// ── Cuentas bancarias (FCE) ─────────────────────────────────────────────────
+
+export const CuentaSchema = z.object({
+  banco: z.string().trim().min(2, 'banco: al menos 2 letras').max(100),
+  cbu: z.string().max(40),
+  alias: texto(40).optional().nullable(),
+  es_default: z.boolean().optional().default(false),
+  obs: texto(1000).optional().nullable(),
+})
+export type CuentaDto = z.infer<typeof CuentaSchema>
+
+export const UpdateCuentaSchema = z.object({
+  banco: z.string().trim().min(2).max(100).optional(),
+  cbu: z.string().max(40).optional(),
+  alias: texto(40).optional().nullable(),
+  es_default: z.boolean().optional(),
+  obs: texto(1000).optional().nullable(),
+})
+export type UpdateCuentaDto = z.infer<typeof UpdateCuentaSchema>
+
+export const ListCuentasQuerySchema = z.object({ incluir_inactivas: z.string().optional() })
 
 export const ObrasClienteSchema = z.object({
   obra_cods: z.array(z.string().trim().min(1).max(100)).max(500),
@@ -75,6 +104,13 @@ export const FacturaCabeceraSchema = z.object({
   observaciones: texto(4000).optional().nullable(),
   obs_interna: texto(4000).optional().nullable(),
   asociada_id: z.coerce.number().int().positive().optional().nullable(),
+  // FCE MiPyME (fase 6). Solo cuentan en la 201 (cuenta, vencimiento,
+  // transmisión, referencia) y en la 203 (anulación); en otro tipo se ignoran.
+  fce_cuenta_id: z.coerce.number().int().positive().optional().nullable(),
+  fch_vto_pago: fechaIso.optional().nullable(),
+  fce_transmision: z.enum(['SCA', 'ADC']).optional().nullable(),
+  fce_referencia: texto(50).optional().nullable(),
+  nc_anulacion: z.enum(['S', 'N']).optional().nullable(),
 })
 
 export const GuardarFacturaSchema = z.object({

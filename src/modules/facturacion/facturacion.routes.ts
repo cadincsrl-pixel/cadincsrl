@@ -1,6 +1,7 @@
 /**
- * Rutas del módulo Facturación (montado en `/api/facturacion`). Fases 1 y 5:
- * Factura A/B y NC A/B contra ARCA (la letra la decide el cliente). Contrato de la API: scratchpad
+ * Rutas del módulo Facturación (montado en `/api/facturacion`). Fases 1, 5 y 6:
+ * Factura A/B, NC A/B y FCE MiPyME A (201/203) contra ARCA (la letra la
+ * decide el cliente; Factura A vs FCE, WSFECRED). Contrato de la API: scratchpad
  * `facturacion-api-contrato.md` (2026-09-24), espejado en el frontend.
  *
  * Permisos: `permisos.facturacion = { lectura, creacion, actualizacion,
@@ -28,11 +29,14 @@ import { dbDe } from './comun.js'
 import { clientesService } from './clientes.service.js'
 import { facturasService } from './facturas.service.js'
 import { emisionService } from './emision.service.js'
+import { cuentasService } from './cuentas.service.js'
+import { fceService } from './fce.service.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
   ListClientesQuerySchema, CreateClienteSchema, UpdateClienteSchema, ObrasClienteSchema,
   GuardarFacturaSchema, ListFacturasQuerySchema, ResumenQuerySchema,
   EmitirSchema, MotivoSchema, RegistrarFinnegansSchema,
+  FceClienteQuerySchema, CuentaSchema, UpdateCuentaSchema, ListCuentasQuerySchema, esBoolQ,
 } from './facturacion.schema.js'
 
 const MOD = 'facturacion'
@@ -133,8 +137,35 @@ fact.post('/clientes/:id/baja', actualizacion, tabClientes, handler(async (c) =>
 fact.post('/clientes/:id/alta', actualizacion, tabClientes, handler(async (c) =>
   clientesService.setActivo(idParam(c), true, uid(c), db(c))))
 
+// FCE MiPyME (fase 6): ¿el cliente está obligado a recibir FCE y desde qué
+// monto? Cache de 30 días; `?refrescar=1` vuelve a preguntarle a WSFECRED.
+// Nunca falla por ARCA: si WSFECRED no responde vuelve con `error`.
+fact.get('/clientes/:id/fce', lectura, tabLeerClientes, valida('query', FceClienteQuerySchema), handler(async (c) => {
+  const q = c.req.valid('query')
+  return fceService.info(idParam(c), { refrescar: esBoolQ(q.refrescar), fecha: q.fecha }, db(c))
+}))
+
 fact.put('/clientes/:id/obras', actualizacion, tabClientes, valida('json', ObrasClienteSchema), handler(async (c) =>
   clientesService.setObras(idParam(c), c.req.valid('json').obra_cods, db(c))))
+
+// ═══════════════════════════════════ Cuentas bancarias (FCE) ════════════════
+// Las lee el formulario de la factura (tab facturas) y la pestaña Clientes;
+// se editan desde Clientes con `actualizacion`.
+
+fact.get('/cuentas', lectura, tabLeerClientes, valida('query', ListCuentasQuerySchema), handler(async (c) =>
+  cuentasService.listar(esBoolQ(c.req.valid('query').incluir_inactivas), db(c))))
+
+fact.post('/cuentas', actualizacion, tabClientes, valida('json', CuentaSchema), handler(async (c) =>
+  cuentasService.crear(c.req.valid('json'), uid(c), db(c))))
+
+fact.patch('/cuentas/:id', actualizacion, tabClientes, valida('json', UpdateCuentaSchema), handler(async (c) =>
+  cuentasService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+fact.post('/cuentas/:id/baja', actualizacion, tabClientes, handler(async (c) =>
+  cuentasService.setActivo(idParam(c), false, uid(c), db(c))))
+
+fact.post('/cuentas/:id/alta', actualizacion, tabClientes, handler(async (c) =>
+  cuentasService.setActivo(idParam(c), true, uid(c), db(c))))
 
 // ═══════════════════════════════════ Facturas ═══════════════════════════════
 
