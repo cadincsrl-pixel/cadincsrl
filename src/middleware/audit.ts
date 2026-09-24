@@ -75,6 +75,7 @@ export const VERBOS: Record<string, string> = {
   // `deshacer-registro` ya están arriba.
   emitir: 'emitir en ARCA', reconciliar: 'reconciliar con ARCA', descartar: 'descartar',
   'volver-a-borrador': 'volver a borrador', alta: 'dar de alta',
+  'actualizar-desde-arca': 'actualizar desde el padrón de ARCA',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */

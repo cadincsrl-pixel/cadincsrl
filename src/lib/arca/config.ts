@@ -26,6 +26,8 @@ export interface ArcaUrls {
   wsfe: string
   /** WSFECRED (FCE MiPyME): consultarMontoObligadoRecepcion. URLs del WSDL (verificadas 2026-09-23). */
   wsfecred: string
+  /** Padrón A5 (ws_sr_constancia_inscripcion): getPersona_v2. URLs del WSDL (verificadas 2026-09-23). */
+  padron: string
 }
 
 export const ARCA_URLS: Record<ArcaAmbiente, ArcaUrls> = {
@@ -33,11 +35,13 @@ export const ARCA_URLS: Record<ArcaAmbiente, ArcaUrls> = {
     wsaa: 'https://wsaahomo.afip.gov.ar/ws/services/LoginCms',
     wsfe: 'https://wswhomo.afip.gov.ar/wsfev1/service.asmx',
     wsfecred: 'https://fwshomo.afip.gov.ar/wsfecred/FECredService',
+    padron: 'https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA5',
   },
   prod: {
     wsaa: 'https://wsaa.afip.gov.ar/ws/services/LoginCms',
     wsfe: 'https://servicios1.afip.gov.ar/wsfev1/service.asmx',
     wsfecred: 'https://serviciosjava.afip.gob.ar/wsfecred/FECredService',
+    padron: 'https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5',
   },
 }
 

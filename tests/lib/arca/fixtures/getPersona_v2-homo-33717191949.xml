@@ -1,0 +1,1 @@
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><soap:Fault><faultcode>soap:Server</faultcode><faultstring>No existe persona con ese Id</faultstring><detail><ns1:SRValidationException xmlns:ns1="http://a5.soap.ws.server.puc.sr/"/></detail></soap:Fault></soap:Body></soap:Envelope>

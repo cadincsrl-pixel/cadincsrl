@@ -23,7 +23,7 @@ import type { CreateClienteDto, UpdateClienteDto } from './facturacion.schema.js
 export interface ObraCliente { cod: string; nom: string }
 export type VentasCliente = Record<string, unknown> & { id: number; obras: ObraCliente[] }
 
-const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by, cuenta_fce_id, fce_obligado, fce_monto_desde, fce_consultado_at'
+const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by, cuenta_fce_id, fce_obligado, fce_monto_desde, fce_consultado_at, padron_json, padron_consultado_at'
 
 /** La cuenta preferida para la FCE tiene que existir y estar activa. */
 async function validarCuentaFce(db: SupabaseClient, id: number | null | undefined): Promise<void> {

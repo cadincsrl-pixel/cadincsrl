@@ -31,6 +31,7 @@ import { facturasService } from './facturas.service.js'
 import { emisionService } from './emision.service.js'
 import { cuentasService } from './cuentas.service.js'
 import { fceService } from './fce.service.js'
+import { padronService } from './padron.service.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
   ListClientesQuerySchema, CreateClienteSchema, UpdateClienteSchema, ObrasClienteSchema,
@@ -120,6 +121,11 @@ fact.get('/obras', lectura, tabCatalogos, handler(async (c) => clientesService.o
 fact.get('/clientes', lectura, tabLeerClientes, valida('query', ListClientesQuerySchema), handler(async (c) =>
   clientesService.listar(c.req.valid('query'), db(c))))
 
+// Padrón de ARCA (fase 7): los datos de un CUIT para precargar el alta. NO
+// guarda nada. Pide `creacion` porque es parte de cargar un cliente.
+fact.get('/clientes/padron/:cuit', creacion, tabClientes, handler(async (c) =>
+  padronService.consultar(c.req.param('cuit'))))
+
 fact.get('/clientes/:id', lectura, tabLeerClientes, handler(async (c) =>
   clientesService.detalle(idParam(c), db(c))))
 
@@ -128,6 +134,11 @@ fact.post('/clientes', creacion, tabClientes, valida('json', CreateClienteSchema
 
 fact.patch('/clientes/:id', actualizacion, tabClientes, valida('json', UpdateClienteSchema), handler(async (c) =>
   clientesService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+// Pisa domicilio y provincia con los del padrón; razón social y condición de
+// IVA solo si están vacías o con `?todo=1`. Devuelve { cliente, diferencias, padron }.
+fact.post('/clientes/:id/actualizar-desde-arca', actualizacion, tabClientes, handler(async (c) =>
+  padronService.actualizarCliente(idParam(c), { todo: esBoolQ(c.req.query('todo')) }, uid(c), db(c))))
 
 fact.post('/clientes/:id/baja', actualizacion, tabClientes, handler(async (c) =>
   clientesService.setActivo(idParam(c), false, uid(c), db(c))))
