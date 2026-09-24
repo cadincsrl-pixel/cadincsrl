@@ -2,7 +2,9 @@ import { HTTPException } from 'hono/http-exception'
 import { createSupabaseClient } from '../../lib/supabase.js'
 import type {
   CreateCategoriaDto, UpdateCategoriaDto, CreateEntregaDto, CreateEntregasLoteDto,
+  CreateEntregasTandaDto,
 } from './ropa.schema.js'
+import { filasDeEntrega } from './ropa.filas.js'
 
 /** Hoy en hora Argentina (UTC−3). Mismo helper que usa gastos de logística. */
 function hoyAR(): string {
@@ -84,6 +86,8 @@ export const ropaService = {
         categoria_id:  dto.categoria_id,
         fecha_entrega: dto.fecha_entrega,
         obs:           dto.obs ?? null,
+        cantidad:      dto.cantidad ?? 1,
+        talle:         (dto.talle ?? '').trim(),
         created_by:    userId,
       })
       .select()
@@ -95,13 +99,27 @@ export const ropaService = {
   async createEntregasLote(dto: CreateEntregasLoteDto, token: string, userId: string) {
     exigirFechaNoFutura(dto.fecha_entrega)
     const supabase = createSupabaseClient(token)
-    const filas = [...new Set(dto.categoria_ids)].map(categoria_id => ({
-      leg:           dto.leg,
-      categoria_id,
-      fecha_entrega: dto.fecha_entrega,
-      obs:           dto.obs ?? null,
-      created_by:    userId,
-    }))
+    const items = dto.items ?? (dto.categoria_ids ?? []).map(categoria_id => ({ categoria_id }))
+    const filas = filasDeEntrega(dto.leg, items, dto.fecha_entrega, dto.obs, userId)
+    const { data, error } = await supabase.from('ropa_entregas').insert(filas).select()
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
+  /** Entrega por obra: toda la tanda en un INSERT (todo o nada). */
+  async createEntregasTanda(dto: CreateEntregasTandaDto, token: string, userId: string) {
+    exigirFechaNoFutura(dto.fecha_entrega)
+    const legs = dto.entregas.map(e => e.leg)
+    if (new Set(legs).size !== legs.length) {
+      throw new HTTPException(400, { message: 'Un trabajador aparece dos veces en la tanda' })
+    }
+    const supabase = createSupabaseClient(token)
+    const { data: existen, error: e1 } = await supabase.from('personal').select('leg').in('leg', legs)
+    if (e1) throw new Error(e1.message)
+    const faltan = legs.filter(l => !(existen ?? []).some(p => p.leg === l))
+    if (faltan.length) throw new HTTPException(400, { message: `Legajo inexistente: ${faltan.join(', ')}` })
+
+    const filas = dto.entregas.flatMap(e => filasDeEntrega(e.leg, e.items, dto.fecha_entrega, dto.obs, userId))
     const { data, error } = await supabase.from('ropa_entregas').insert(filas).select()
     if (error) throw new Error(error.message)
     return data ?? []

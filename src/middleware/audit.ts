@@ -62,7 +62,7 @@ export const VERBOS: Record<string, string> = {
   traspaso: 'traspasar', fusionar: 'fusionar', retirar: 'retirar de proveedor',
   'sync-todos': 'sincronizar GPS', 'id-vehiculo': 'vincular GPS',
   'upload-url': 'subir adjunto', 'upload-comprobante': 'subir adjunto', 'comprobante-upload-url': 'subir adjunto',
-  remito: 'adjuntar remito', orden: 'reordenar', bulk: 'confirmar en bloque', lote: 'cargar en lote',
+  remito: 'adjuntar remito', orden: 'reordenar', bulk: 'confirmar en bloque', lote: 'cargar en lote', tanda: 'entregar por obra',
   aumento: 'aumento general', chat: 'consultar', entrada: 'entrada', salida: 'salida',
   aplicar: 'aplicar a sus usuarios',
   // Pagos (2026-09-18). `aprobar`, `baja`, `upload-url` y `upload-comprobante`
