@@ -32,12 +32,13 @@ import { pagosAdjuntosService } from './adjuntos.service.js'
 import { lecturaService } from './lectura.service.js'
 import { desgloseService } from './desglose.service.js'
 import { conceptosService } from './conceptos.service.js'
+import { chequesService } from './cheques.service.js'
 import {
   TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, esBoolQ,
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
-  UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema,
+  UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema, LeerChequeSchema,
   CompletarDesgloseSchema, LeerAdjuntoSchema,
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
@@ -227,6 +228,13 @@ pagos.post('/ordenes/upload-comprobante', lectura, registrarPagos, tabPago, zVal
 pagos.delete('/ordenes/comprobante-pendiente', lectura, registrarPagos, tabPago, zValidator('json', BorrarPendienteSchema), handler(async (c) =>
   pagosAdjuntosService.borrarPendiente(c.req.valid('json').storage_path)))
 
+// Foto del cheque (20260925p): se sube con /ordenes/upload-comprobante
+// (tipo 'cheque') y se lee acá. NO crea nada; 422 CHEQUE_ILEGIBLE si la IA no
+// puede. Mismas guardias que subir el comprobante: quien registra pagos, desde
+// pagos o desde «Ya está pagada» en facturas.
+pagos.post('/cheques/leer', lectura, registrarPagos, tabPago, zValidator('json', LeerChequeSchema), handler(async (c) =>
+  chequesService.leer(c.req.valid('json'))))
+
 pagos.get('/ordenes/:id', lectura, tabPago, handler(async (c) =>
   pagosService.detalleOrden(idParam(c), await verPii(c), c.get('accessToken'))))
 
@@ -298,6 +306,15 @@ pagos.get('/proveedores/saldos', lectura, tabProvLect, handler(async (c) =>
 pagos.get('/proveedores/export', lectura, tabProveedores, handler(async (c) =>
   proveedoresService.exportar(await verPii(c), c.get('accessToken'))))
 
+// Padrón de ARCA (20260925o). Consultar NO guarda: precarga el alta (tab
+// Proveedores o «alta rápida» del modal de factura). Literal antes de /:id.
+pagos.get('/proveedores/padron/:cuit', creacion, tabFacturaOProveedores, handler(async (c) =>
+  proveedoresService.padron(c.req.param('cuit'))))
+
+// Masivo: todos los activos con CUIT, de a uno. No pisa razón social.
+pagos.post('/proveedores/actualizar-desde-arca', actualizacion, tabProveedores, handler(async (c) =>
+  proveedoresService.actualizarTodosDesdeArca(c.get('user').id, c.get('accessToken'))))
+
 pagos.get('/proveedores/:id', lectura, tabProvLect, handler(async (c) =>
   proveedoresService.detalle(idParam(c), await verPii(c), c.get('accessToken'))))
 
@@ -319,6 +336,13 @@ pagos.patch('/proveedores/:id', actualizacion, tabProveedores, zValidator('json'
 // La puerta del contador: `registrar_pagos` + `ver_pii`; razón social y CUIT no pasan por acá.
 pagos.patch('/proveedores/:id/datos-pago', lectura, registrarPagos, verPiiFlag, tabProvLect, zValidator('json', DatosPagoSchema), handler(async (c) =>
   proveedoresService.datosPago(idParam(c), c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
+
+// Uno: pisa domicilio, provincia, condición, tipo y actividad; `?todo=1`
+// también la razón social. Devuelve { proveedor, diferencias }.
+pagos.post('/proveedores/:id/actualizar-desde-arca', actualizacion, tabProveedores, handler(async (c) => {
+  const r = await proveedoresService.actualizarDesdeArca(idParam(c), { todo: esBoolQ(c.req.query('todo')) }, c.get('user').id, c.get('accessToken'))
+  return { ...r, proveedor: enmascararProveedor(r.proveedor, await verPii(c)) }
+}))
 
 pagos.post('/proveedores/:id/baja', actualizacion, tabProveedores, zValidator('json', MotivoSchema), handler(async (c) =>
   proveedoresService.baja(idParam(c), c.req.valid('json').motivo, c.get('user').id, c.get('accessToken'))))

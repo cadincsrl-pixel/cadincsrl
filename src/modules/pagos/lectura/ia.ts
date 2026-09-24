@@ -135,7 +135,7 @@ Controles que tenés que hacer antes de responder
 - En notas, en una o dos frases, cualquier cosa rara (manuscrito, borroso, varias páginas, moneda extranjera, no es una factura). null si no hay nada que decir.
 - legible: false si el comprobante no se puede leer con confianza.`
 
-function bloqueDelArchivo(base64: string, mime: string): Anthropic.Beta.BetaContentBlockParam | null {
+export function bloqueDelArchivo(base64: string, mime: string): Anthropic.Beta.BetaContentBlockParam | null {
   if (mime === 'application/pdf') {
     return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
   }

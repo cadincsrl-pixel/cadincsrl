@@ -53,6 +53,8 @@ import { ultimoControl, recompararControl, controlDesdeLectura, controlarFactura
 import { lecturaService, camposEditados, type LecturaGuardada } from './lectura.service.js'
 import { esPercepcion } from './lectura/arca.js'
 import type { Aviso } from './proveedores.service.js'
+import { adjuntosDeCheques, chequesParaRpc } from './cheques.service.js'
+import { avisoLetraCondicion } from './condicion-iva.js'
 
 // ── Perfil del usuario (rol + permisos) ─────────────────────────────────────
 // Se lee una vez por request en el handler y se pasa al service: las reglas
@@ -278,6 +280,8 @@ function aplicarFiltrosOrdenes(q: any, f: Omit<ListOrdenesQuery, 'limit' | 'offs
   if (f.desde) q = q.gte('fecha', f.desde)
   if (f.hasta) q = q.lte('fecha', f.hasta)
   if (esBoolQ(f.sin_comprobante)) q = q.eq('tiene_comprobante', false)
+  // Emitidas sin recibo del proveedor (20260925q): una anulada no espera recibo.
+  if (esBoolQ(f.sin_recibo)) q = q.eq('tiene_recibo', false).eq('estado', 'emitida')
   if (esBoolQ(f.en_cartera)) q = q.eq('en_cartera', true)
   for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
   return q
@@ -600,12 +604,14 @@ export const pagosService = {
       if ((FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(o.forma_pago) && !o.comprobante) {
         throw errorDeCampo('COMPROBANTE_REQUERIDO', 'orden.comprobante', { forma_pago: o.forma_pago })
       }
-      if (o.comprobante) adjuntosOrden = await procesarPendientes([{ ...o.comprobante, tipo: 'comprobante_pago' }])
+      const comprobantes = o.comprobante ? [{ ...o.comprobante, tipo: 'comprobante_pago' as const }] : []
+      const fotos = adjuntosDeCheques(o.cheques, comprobantes)
+      if (comprobantes.length || fotos.length) adjuntosOrden = await procesarPendientes([...comprobantes, ...fotos])
       pOrden = {
         fecha: o.fecha, forma_pago: o.forma_pago, fecha_cobro: o.fecha_cobro ?? null,
         referencia: o.referencia ?? '', obs: o.obs ?? '',
         monto_pagado: aCentavos(dto.total), monto_nc: 0,
-        cheques: o.cheques ?? [],
+        cheques: chequesParaRpc(o.cheques),
         adjuntos: adjuntosOrden,
       }
     }
@@ -692,6 +698,16 @@ export const pagosService = {
       .eq('proveedor_id', dto.proveedor_id).eq('clase', dto.clase).eq('total', aCentavos(dto.total)).eq('fecha', dto.fecha)
       .neq('estado', 'anulada').neq('id', facturaId).limit(5)
     if (parecidas && parecidas.length > 0) avisos.push({ code: 'FACTURA_POSIBLE_DUPLICADA', facturas: parecidas })
+
+    // Letra vs condición frente al IVA del proveedor (20260925o). NO bloquea
+    // y es best-effort como la auto-aprobación: la factura ya está guardada.
+    try {
+      const { data: prov } = await supabase.from('pagos_proveedores').select('condicion_iva_id').eq('id', dto.proveedor_id).maybeSingle()
+      const letra = avisoLetraCondicion((prov as { condicion_iva_id?: number | null } | null)?.condicion_iva_id, dto.tipo_comprobante)
+      if (letra) avisos.push({ ...letra })
+    } catch {
+      // Sin aviso: no es motivo para devolver error sobre una carga hecha.
+    }
 
     return { ...enmascararRespuesta(res, verPiiDe(perfil)), avisos }
   },
@@ -1051,6 +1067,9 @@ export const pagosService = {
           fecha: fila.fecha, forma_pago: fila.forma_pago, estado: fila.estado,
           monto_pagado: fila.monto_pagado, monto_nc: fila.monto_nc,
           proveedor_nom: fila.proveedor_nom, proveedor_cuit: fila.proveedor_cuit,
+          // Los archivos de la OP incluyen el recibo del proveedor y las fotos
+          // de los cheques (20260925p/q): cada uno con su `tipo`.
+          tiene_recibo: fila.tiene_recibo === true,
           archivos: (adjDeOrden.get(id) ?? []).map((a) => archivo(a, 'pago')),
           facturas: [...porFactura.entries()].map(([fid, aplicado]) => {
             const fx = facturaPorId.get(fid) ?? {}
@@ -1197,7 +1216,9 @@ export const pagosService = {
       }
     }
 
-    const adjuntos = await procesarPendientes(dto.adjuntos)
+    // Las fotos de los cheques (20260925p) van como adjuntos tipo `cheque`.
+    // No cuentan como comprobante_pago: la transferencia/echeq lo sigue pidiendo.
+    const adjuntos = await procesarPendientes([...dto.adjuntos, ...adjuntosDeCheques(dto.cheques, dto.adjuntos)])
     const avisos: Aviso[] = []
     const yaUsados = await ordenesConHash(adjuntos.filter((a) => a.tipo === 'comprobante_pago').map((a) => a.hash_sha256))
     if (yaUsados.length > 0) avisos.push({ code: 'COMPROBANTE_YA_USADO', orden_ids: yaUsados })
@@ -1212,7 +1233,7 @@ export const pagosService = {
           fecha_cobro: dto.fecha_cobro ?? null,
           forma_pago: formaPago, referencia: dto.referencia ?? '', obs: dto.obs ?? '',
           monto_pagado: montoPagado, monto_nc: 0,
-          cheques: dto.cheques ?? [],
+          cheques: chequesParaRpc(dto.cheques),
         },
         p_lineas: dto.lineas.map((l) => ({
           tipo: l.tipo, factura_id: l.factura_id ?? null, monto: aCentavos(l.monto),

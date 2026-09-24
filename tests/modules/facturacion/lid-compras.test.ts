@@ -42,7 +42,7 @@ describe('LIBRO_IVA_DIGITAL_COMPRAS_CBTE', () => {
     expect(campo(l, 9, 11)).toBe('001')
     expect(campo(l, 12, 16)).toBe('08837')
     expect(campo(l, 17, 36)).toBe('00000000000000004557')
-    expect(campo(l, 37, 52)).toBe('0'.repeat(16))
+    expect(campo(l, 37, 52)).toBe(' '.repeat(16))
     expect(campo(l, 53, 54)).toBe('80')
     expect(campo(l, 55, 74)).toBe('00000000030590360763')
     expect(campo(l, 75, 104)).toBe('Cencosud S.A'.padEnd(30))
@@ -52,7 +52,7 @@ describe('LIBRO_IVA_DIGITAL_COMPRAS_CBTE', () => {
     expect(campo(l, 225, 227)).toBe('PES')
     expect(campo(l, 228, 237)).toBe('0001000000')
     expect(campo(l, 238, 238)).toBe('1')
-    expect(campo(l, 239, 239)).toBe('0')
+    expect(campo(l, 239, 239)).toBe(' ')
     expect(campo(l, 240, 254)).toBe('000000002446413') // crédito fiscal = IVA liquidado
     expect(campo(l, 270, 280)).toBe('0'.repeat(11))
     expect(campo(l, 281, 310)).toBe(' '.repeat(30))
@@ -74,6 +74,8 @@ describe('LIBRO_IVA_DIGITAL_COMPRAS_CBTE', () => {
     const fc = desdeFacturaCompra({ ...CENCOSUD, tipo_comprobante: 'C', cbte_tipo_arca: 11, neto: null, iva: null, total: '5000', iva_detalle: [], tributos: [] }).c!
     const lc = lineaCbteCompra(fc)
     expect(campo(lc, 238, 238)).toBe('0')
+    // Código de operación «N», como el COMPRAS_CBTE ago-2026 v5 del contador.
+    expect(campo(lc, 239, 239)).toBe('N')
     expect(campo(lc, 240, 254)).toBe('0'.repeat(15))
     expect(lineasAlicuotasCompra(fc)).toEqual([])
   })

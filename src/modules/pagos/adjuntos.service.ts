@@ -74,14 +74,21 @@ export interface AdjuntoProcesado {
   mime_type: string
   size_bytes: number
   hash_sha256: string
+  /** «Cheque N° X» en la foto de un cheque (20260925p). La RPC lo guarda en `obs`. */
+  obs?: string
 }
 
 /**
  * Valida el prefijo `ordenes/pendientes/` y hashea cada archivo. Si uno falla,
  * se borran TODOS los que ya estaban subidos (el form reintenta subiendo de
  * nuevo) y se relanza.
+ *
+ * El mismo archivo dos veces en la misma OP (mismo hash: la foto de dos
+ * cheques subida dos veces, o el comprobante repetido como foto) queda UNA
+ * vez —el índice `(orden_id, hash)` lo rebotaría con ADJ_DUPLICADO—: se
+ * conserva el primero, se le suman las obs y se borra la copia del bucket.
  */
-export async function procesarPendientes(adjuntos: AdjuntoPendienteDto[]): Promise<AdjuntoProcesado[]> {
+export async function procesarPendientes(adjuntos: (AdjuntoPendienteDto & { obs?: string })[]): Promise<AdjuntoProcesado[]> {
   const out: AdjuntoProcesado[] = []
   for (const a of adjuntos) {
     if (!a.storage_path.startsWith(PREFIJO_COMPROBANTE_PENDIENTE) || a.storage_path.includes('..')) {
@@ -91,13 +98,25 @@ export async function procesarPendientes(adjuntos: AdjuntoPendienteDto[]): Promi
   try {
     for (const a of adjuntos) {
       const { hash, size } = await hashDelBucket(a.storage_path)
-      out.push({ tipo: a.tipo, storage_path: a.storage_path, nombre_archivo: a.nombre_archivo, mime_type: a.mime_type, size_bytes: size, hash_sha256: hash })
+      out.push({
+        tipo: a.tipo, storage_path: a.storage_path, nombre_archivo: a.nombre_archivo, mime_type: a.mime_type, size_bytes: size, hash_sha256: hash,
+        ...(a.obs ? { obs: a.obs } : {}),
+      })
     }
   } catch (err) {
     await borrarDelBucket(adjuntos.map((a) => a.storage_path))
     throw err
   }
-  return out
+  const unicos: AdjuntoProcesado[] = []
+  const copias: string[] = []
+  for (const a of out) {
+    const previo = unicos.find((u) => u.hash_sha256 === a.hash_sha256)
+    if (!previo) { unicos.push(a); continue }
+    if (a.storage_path !== previo.storage_path) copias.push(a.storage_path)
+    if (a.obs && a.obs !== previo.obs) previo.obs = [previo.obs, a.obs].filter(Boolean).join(' · ')
+  }
+  await borrarDelBucket(copias)
+  return unicos
 }
 
 /**

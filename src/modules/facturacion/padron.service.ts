@@ -12,19 +12,17 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase.js'
-import { ArcaError, consultarPersona, domicilioEnLinea, nombrePropio, type PersonaPadron } from '../../lib/arca/index.js'
+import { ArcaError, consultarPersona, type PersonaPadron } from '../../lib/arca/index.js'
+import {
+  domicilioDePadron, errorDePadron, padronJson, precargaPadron, provinciaDePadron, type PrecargaPadron,
+} from '../../lib/arca/padron-datos.js'
 import { cuitValido } from '../pagos/pagos.util.js'
 import { FacturacionHttpError, errorArca, mapRpcError, type PgError } from './facturacion.errors.js'
 import { CONDICIONES_IVA_IDS, letraDe } from './reglas.js'
 import { clientesService, type VentasCliente } from './clientes.service.js'
 
-/** Lo que el alta del cliente precarga. */
-export interface PrecargaPadron {
-  razon_social: string
-  domicilio: string
-  provincia: string
-  condicion_iva_id: number
-}
+export type { PrecargaPadron }
+export { provinciaDePadron, domicilioDePadron, padronJson }
 
 export interface ResultadoPadron {
   cuit: string
@@ -33,19 +31,10 @@ export interface ResultadoPadron {
   consultado_at: string
 }
 
-/** Códigos del padrón → error del módulo (status y código que entiende el front). */
-const ERRORES_PADRON: Record<string, [number, string]> = {
-  ARCA_PADRON_CUIT_INEXISTENTE: [404, 'PADRON_CUIT_INEXISTENTE'],
-  ARCA_PADRON_NO_ALCANZADO: [422, 'PADRON_NO_ALCANZADO'],
-  ARCA_PADRON_CLAVE_INACTIVA: [422, 'PADRON_CLAVE_INACTIVA'],
-  ARCA_PADRON_SIN_DATOS: [422, 'PADRON_SIN_DATOS'],
-  ARCA_PADRON_SIN_AUTORIZACION: [503, 'PADRON_SIN_AUTORIZACION'],
-  ARCA_PADRON_CUIT_INVALIDO: [400, 'CUIT_INVALIDO'],
-}
-
 export function errorPadron(e: unknown, cuit: string): FacturacionHttpError {
-  if (e instanceof ArcaError && ERRORES_PADRON[e.codigo]) {
-    const [status, code] = ERRORES_PADRON[e.codigo]!
+  const m = errorDePadron(e)
+  if (m && e instanceof ArcaError) {
+    const [status, code] = m
     return new FacturacionHttpError(status, code, {
       campo: 'doc_nro', cuit, mensaje: e.message, ...(e.errores.length ? { errores: e.errores.map((x) => x.msg) } : {}),
     })
@@ -53,45 +42,8 @@ export function errorPadron(e: unknown, cuit: string): FacturacionHttpError {
   return errorArca(e, { cuit })
 }
 
-/**
- * Las provincias como las lista el selector del frontend (`PROVINCIAS` en
- * facturacion.utils.ts): sin tildes y CABA como «Capital Federal». ARCA las
- * manda en mayúsculas y a CABA como «CIUDAD AUTONOMA BUENOS AIRES».
- */
-const PROVINCIAS = [
-  'Buenos Aires', 'Capital Federal', 'Catamarca', 'Chaco', 'Chubut', 'Cordoba', 'Corrientes', 'Entre Rios',
-  'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones', 'Neuquen', 'Rio Negro', 'Salta',
-  'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero', 'Tierra del Fuego', 'Tucuman',
-]
-const sinTildes = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
-
-export function provinciaDePadron(desc: string | null | undefined): string {
-  const n = sinTildes(desc ?? '')
-  if (!n) return ''
-  if (n.includes('ciudad autonoma') || n === 'caba' || n.includes('capital federal')) return 'Capital Federal'
-  if (n.startsWith('tierra del fuego')) return 'Tierra del Fuego'
-  return PROVINCIAS.find((p) => sinTildes(p) === n) ?? nombrePropio(desc ?? '')
-}
-
-/** Domicilio y provincia como los guarda `ventas_clientes`. */
-export function domicilioDePadron(p: PersonaPadron): { domicilio: string; provincia: string } {
-  return {
-    domicilio: domicilioEnLinea(p.domicilio_fiscal),
-    provincia: provinciaDePadron(p.domicilio_fiscal?.provincia),
-  }
-}
-
 export function precargaDe(p: PersonaPadron): PrecargaPadron {
-  return {
-    razon_social: p.razon_social,
-    ...domicilioDePadron(p),
-    condicion_iva_id: CONDICIONES_IVA_IDS.has(p.condicion_iva_id) ? p.condicion_iva_id : 5,
-  }
-}
-
-/** El padrón a guardar en `padron_json`: todo lo resumido, con la fecha. */
-export function padronJson(p: PersonaPadron, consultadoAt: string): Record<string, unknown> {
-  return { ...p, consultado_at: consultadoAt }
+  return precargaPadron(p, CONDICIONES_IVA_IDS)
 }
 
 /**

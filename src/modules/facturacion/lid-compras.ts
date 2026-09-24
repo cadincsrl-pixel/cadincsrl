@@ -148,14 +148,18 @@ export function alicuotasCompraParaArchivo(c: Pick<CompraLid, 'cbte_tipo' | 'ali
   return gravadas.length ? gravadas : [{ codigo: 3, neto: 0, iva: 0 }]
 }
 
-/** Campo 20: E / N solo si no hay nada gravado en un comprobante que discrimina; si no, '0'. */
+/**
+ * Campo 20, con la convención del archivo que ARCA le aceptó al contador
+ * (COMPRAS_CBTE ago-2026 v5): blanco si hay algo gravado, «N» en los que no
+ * discriminan (B/C) y E / N en los A/M sin nada gravado.
+ */
 export function codigoOperacionCompra(c: Pick<CompraLid, 'cbte_tipo' | 'alicuotas' | 'exento' | 'no_gravado'>): string {
-  if (!discriminaIva(c)) return '0'
+  if (!discriminaIva(c)) return 'N'
   const hayGravado = c.alicuotas.some(a => a.codigo !== 3 && (aCentavos(a.neto) !== 0 || aCentavos(a.iva) !== 0))
-  if (hayGravado) return '0'
+  if (hayGravado) return ' '
   if (aCentavos(c.exento) !== 0) return 'E'
   if (aCentavos(c.no_gravado) !== 0) return 'N'
-  return '0'
+  return ' '
 }
 
 /** Campo 21, sin prorrateo: el IVA liquidado del comprobante. B/C no dan crédito. */
@@ -178,7 +182,7 @@ export function lineaCbteCompra(c: CompraLid): string {
     campoNum(c.cbte_tipo, 3),                         // 2  tipo                       9-11
     campoNum(c.pto_vta, 5),                           // 3  punto de venta             12-16
     campoNum(c.numero, 20),                           // 4  número                     17-36
-    '0'.repeat(16),                                   // 5  despacho de importación    37-52
+    ' '.repeat(16),                                   // 5  despacho de importación    37-52 (blanco, como el v5 del contador)
     campoNum(80, 2),                                  // 6  código doc. vendedor       53-54
     campoNum(c.cuit || '0', 20),                      // 7  nro. identificación        55-74
     campoTexto(c.nombre, 30),                         // 8  denominación vendedor      75-104

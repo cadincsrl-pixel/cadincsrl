@@ -19,11 +19,14 @@
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
-import { PagosHttpError, errorDeCampo, mapRpcError } from './pagos.errors.js'
+import { PagosHttpError, errorDeCampo, errorPadronPagos, mapRpcError } from './pagos.errors.js'
 import { normCuit, cuitValido, normCbu, cbuValido, normAlias, aliasValido, enmascarar, enmascararTexto } from './pagos.util.js'
+import { consultarPersona, type PersonaPadron } from '../../lib/arca/index.js'
+import { padronJson, precargaPadron, type PrecargaPadron } from '../../lib/arca/padron-datos.js'
+import { CONDICIONES_IVA_IDS } from './condicion-iva.js'
 import { esBoolQ, type ContactoProveedorDto, type CreateProveedorDto, type UpdateProveedorDto, type DatosPagoDto, type ListProveedoresQuery } from './pagos.schema.js'
 
-const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by'
+const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by, domicilio, provincia, condicion_iva_id, tipo_persona, actividad_principal, padron_consultado_at'
 
 export interface Aviso { code: string; [k: string]: unknown }
 
@@ -65,6 +68,16 @@ function normalizar(dto: Partial<CreateProveedorDto>): Record<string, unknown> {
   }
   for (const k of ['banco', 'plazo_pago_dias', 'vencimiento_modo', 'contacto', 'telefono', 'email', 'obs'] as const) {
     if (dto[k] !== undefined) out[k] = dto[k]
+  }
+  // Datos fiscales (20260925o): vacío = null (no se sabe), no ''.
+  for (const k of ['domicilio', 'provincia'] as const) {
+    if (dto[k] !== undefined) out[k] = dto[k]?.trim() || null
+  }
+  if (dto.condicion_iva_id !== undefined) {
+    if (dto.condicion_iva_id !== null && !CONDICIONES_IVA_IDS.has(dto.condicion_iva_id)) {
+      throw errorDeCampo('CONDICION_IVA_INVALIDA', 'condicion_iva_id', { condicion_iva_id: dto.condicion_iva_id })
+    }
+    out.condicion_iva_id = dto.condicion_iva_id
   }
   // `cierre_dia` va aparte porque el CHECK de la tabla lo ata al modo: sólo
   // se admite con `cierre_mensual`. Al volver a 'dias' hay que limpiarlo en el
@@ -134,6 +147,97 @@ async function actualizar(id: number, dto: Partial<CreateProveedorDto>, userId: 
   if (cambiaCuenta && factura_ids.length > 0) avisos.push({ code: 'APROBACION_RETIRADA', factura_ids })
   return { proveedor: data as Record<string, unknown>, avisos }
 }
+
+// ── Padrón de ARCA (20260925o) ─────────────────────────────────────────────
+
+/** El padrón como lo muestra Compras: el de Ventas + domicilio y provincia en una línea. */
+export type PadronProveedor = PersonaPadron & { domicilio: string; provincia: string }
+
+export interface ResultadoPadronProveedor {
+  cuit: string
+  precarga: PrecargaPadron
+  padron: PadronProveedor
+  consultado_at: string
+}
+
+export interface DiferenciaPadron { campo: string; actual: unknown; arca: unknown; aplicado: boolean }
+
+/** La actividad que se guarda: la primera por orden (el padrón ya las trae ordenadas). */
+export function actividadPrincipal(p: PersonaPadron): string | null {
+  const a = p.actividades.find((x) => x.descripcion?.trim())
+  return a ? a.descripcion.trim() : null
+}
+
+/**
+ * Qué cambia en el proveedor con lo que dice ARCA. Domicilio, provincia,
+ * tipo de persona y actividad se pisan siempre (si ARCA los trae). La
+ * condición de IVA también, SALVO que ARCA la marque dudosa y el proveedor ya
+ * tenga una cargada: ahí sólo se informa (con `todo` se pisa igual). La razón
+ * social sólo con `todo`. Pura, para testear sin ARCA.
+ */
+export function cambiosProveedorDesdePadron(
+  actual: Record<string, unknown>,
+  p: PersonaPadron,
+  todo: boolean,
+): { upd: Record<string, unknown>; diferencias: DiferenciaPadron[] } {
+  const pre = precargaPadron(p, CONDICIONES_IVA_IDS)
+  const upd: Record<string, unknown> = {}
+  const diferencias: DiferenciaPadron[] = []
+  const str = (v: unknown) => (v == null ? '' : String(v).trim())
+
+  const siempre: Array<[string, string]> = [
+    ['domicilio', pre.domicilio], ['provincia', pre.provincia],
+    ['tipo_persona', str(p.tipo_persona)], ['actividad_principal', actividadPrincipal(p) ?? ''],
+  ]
+  for (const [k, v] of siempre) {
+    if (v && v !== str(actual[k])) {
+      upd[k] = v
+      diferencias.push({ campo: k, actual: str(actual[k]) || null, arca: v, aplicado: true })
+    }
+  }
+  if (pre.razon_social && pre.razon_social !== str(actual.razon_social)) {
+    const aplicar = todo || !str(actual.razon_social)
+    if (aplicar) {
+      upd.razon_social = pre.razon_social
+      upd.razon_social_norm = normTxt(pre.razon_social)
+    }
+    diferencias.push({ campo: 'razon_social', actual: str(actual.razon_social), arca: pre.razon_social, aplicado: aplicar })
+  }
+  const condActual = actual.condicion_iva_id == null ? null : Number(actual.condicion_iva_id)
+  if (pre.condicion_iva_id !== condActual) {
+    const aplicar = todo || condActual == null || !p.condicion_iva_dudosa
+    if (aplicar) upd.condicion_iva_id = pre.condicion_iva_id
+    diferencias.push({ campo: 'condicion_iva_id', actual: condActual, arca: pre.condicion_iva_id, aplicado: aplicar })
+  }
+  return { upd, diferencias }
+}
+
+/** CUIT de 11 dígitos con verificador, o null. */
+function cuitConsultable(v: unknown): string | null {
+  const c = normCuit(v == null ? null : String(v))
+  return c && /^\d{11}$/.test(c) && cuitValido(c) ? c : null
+}
+
+async function consultarPadron(cuitCrudo: string): Promise<ResultadoPadronProveedor> {
+  const cuit = cuitConsultable(cuitCrudo)
+  if (!cuit) throw errorDeCampo('CUIT_INVALIDO', 'cuit', { cuit: String(cuitCrudo ?? '') })
+  let p: PersonaPadron
+  try {
+    p = await consultarPersona(cuit)
+  } catch (e) {
+    throw errorPadronPagos(e, cuit)
+  }
+  const precarga = precargaPadron(p, CONDICIONES_IVA_IDS)
+  return {
+    cuit, precarga,
+    padron: { ...p, domicilio: precarga.domicilio, provincia: precarga.provincia },
+    consultado_at: new Date().toISOString(),
+  }
+}
+
+/** Pausa entre consultas del masivo: ARCA limita y no hay apuro. */
+export const PAUSA_MASIVO_MS = 300
+const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export const proveedoresService = {
 
@@ -280,5 +384,80 @@ export const proveedoresService = {
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!data) throw new PagosHttpError(404, 'PROVEEDOR_NO_EXISTE')
     return { success: true, id, activo: true }
+  },
+
+  /** Lo que dice ARCA de un CUIT, para precargar el alta. NO guarda nada. */
+  async padron(cuit: string): Promise<ResultadoPadronProveedor> {
+    return consultarPadron(cuit)
+  },
+
+  /**
+   * Pisa los datos fiscales del proveedor con los de ARCA (ver
+   * `cambiosProveedorDesdePadron`) y guarda el padrón entero en
+   * `padron_json` / `padron_consultado_at`. Por el cliente per-request: el
+   * trigger de auditoría ve al usuario.
+   */
+  async actualizarDesdeArca(id: number, opts: { todo?: boolean }, userId: string, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data: actual, error: e0 } = await sb.from('pagos_proveedores')
+      .select('id, razon_social, cuit, domicilio, provincia, condicion_iva_id, tipo_persona, actividad_principal')
+      .eq('id', id).maybeSingle()
+    if (e0) throw new PagosHttpError(500, 'DB_ERROR', e0.message)
+    if (!actual) throw new PagosHttpError(404, 'PROVEEDOR_NO_EXISTE')
+    const a = actual as Record<string, unknown>
+    if (!a.cuit) throw errorDeCampo('PROVEEDOR_SIN_CUIT', 'cuit', { proveedor_id: id })
+
+    const r = await consultarPadron(String(a.cuit))
+    const { upd, diferencias } = cambiosProveedorDesdePadron(a, r.padron, !!opts.todo)
+    const { data, error } = await sb.from('pagos_proveedores').update({
+      ...upd,
+      padron_json: padronJson(r.padron, r.consultado_at),
+      padron_consultado_at: r.consultado_at,
+      updated_by: userId,
+    }).eq('id', id).select(COLS_PADRON).single()
+    if (error) {
+      if (error.code === '23514') throw new PagosHttpError(400, 'PROVEEDOR_INVALIDO', { dbMessage: error.message })
+      const dup = await mapDuplicado(error, upd)
+      if (dup) throw dup
+      throw new PagosHttpError(500, 'DB_ERROR', error.message)
+    }
+    return { proveedor: data as Record<string, unknown>, diferencias }
+  },
+
+  /**
+   * Todos los activos con CUIT válido, DE A UNO y con una pausa corta: ARCA
+   * limita las consultas y un error de un proveedor no frena a los demás.
+   * Nunca pisa la razón social. Si ARCA no está disponible o el certificado
+   * no está autorizado (503), se corta: seguir sería sumar el mismo error N
+   * veces; lo que faltó sale en `pendientes`.
+   */
+  async actualizarTodosDesdeArca(userId: string, token: string, pausaMs = PAUSA_MASIVO_MS) {
+    const sb = createSupabaseClient(token)
+    const activos = await todasLasFilas<{ id: number; razon_social: string; cuit: string | null }>((d, h) =>
+      sb.from('pagos_proveedores').select('id, razon_social, cuit').eq('activo', true).order('id').range(d, h))
+    const conCuit = activos.filter((p) => cuitConsultable(p.cuit))
+    const sin_cuit = activos.length - conCuit.length
+    let actualizados = 0
+    const errores: { proveedor_id: number; razon_social: string; error: string }[] = []
+    let interrumpido = false
+    let pendientes = 0
+    for (let i = 0; i < conCuit.length; i++) {
+      const p = conCuit[i]!
+      if (i > 0 && pausaMs > 0) await dormir(pausaMs)
+      try {
+        await this.actualizarDesdeArca(p.id, { todo: false }, userId, token)
+        actualizados++
+      } catch (e) {
+        const code = e instanceof PagosHttpError ? e.code : 'ERROR'
+        errores.push({ proveedor_id: p.id, razon_social: p.razon_social, error: code })
+        if (e instanceof PagosHttpError && e.status === 503) {
+          interrumpido = true
+          pendientes = conCuit.length - i - 1
+          break
+        }
+      }
+    }
+    console.log(`[pagos] padrón ARCA masivo: ${actualizados} actualizados, ${errores.length} con error, ${sin_cuit} sin CUIT${interrumpido ? `, cortado con ${pendientes} pendientes` : ''}`)
+    return { actualizados, sin_cuit, errores, total: activos.length, interrumpido, pendientes }
   },
 }

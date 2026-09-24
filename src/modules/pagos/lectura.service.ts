@@ -31,6 +31,7 @@ import { MAX_ADJUNTO_BYTES, MIME_PERMITIDOS, PREFIJO_LECTURA, type LeerFacturaDt
 import { hoyAR, normNumeroFactura } from './pagos.util.js'
 import { parsearQrArca, type QrArca } from './lectura/arca.js'
 import { leerFacturaConIA, type ConceptoOfrecido, type ResultadoIA } from './lectura/ia.js'
+import { avisoLetraCondicion } from './condicion-iva.js'
 import { fusionar, controlesDeContexto, type AvisoLectura, type Propuesta } from './lectura/fusion.js'
 
 const MIME_SET = new Set<string>(MIME_PERMITIDOS)
@@ -199,12 +200,12 @@ export const lecturaService = {
     // Contexto: proveedor por CUIT, factura repetida, archivo repetido.
     const [prov, adjRep] = await Promise.all([
       p.emisor_cuit
-        ? supabase.from('pagos_proveedores').select('id, razon_social, activo').eq('cuit', p.emisor_cuit).maybeSingle()
+        ? supabase.from('pagos_proveedores').select('id, razon_social, activo, condicion_iva_id').eq('cuit', p.emisor_cuit).maybeSingle()
         : Promise.resolve({ data: null }),
       supabase.from('pagos_facturas_adjuntos').select('factura_id')
         .eq('hash_sha256', hash).eq('tipo', 'factura').is('deleted_at', null).limit(1).maybeSingle(),
     ])
-    const proveedor = (prov.data as { id: number; razon_social: string; activo: boolean } | null) ?? null
+    const proveedor = (prov.data as { id: number; razon_social: string; activo: boolean; condicion_iva_id?: number | null } | null) ?? null
     let duplicadas: { id: number; numero: string | null; estado: string }[] = []
     if (proveedor && p.tipo_comprobante && p.numero_comprobante) {
       const norm = normNumeroFactura(`${p.punto_venta ?? ''}-${p.numero_comprobante}`)
@@ -226,6 +227,14 @@ export const lecturaService = {
       }),
       ...fusion.avisos,
     ]
+    // Letra vs condición frente al IVA del proveedor (20260925o). NO bloquea.
+    const letra = proveedor ? avisoLetraCondicion(proveedor.condicion_iva_id, p.tipo_comprobante) : null
+    if (letra) {
+      avisos.push({
+        campo: 'tipo_comprobante', severidad: 'advertencia', codigo: letra.code, mensaje: letra.mensaje,
+        code: letra.code, condicion: letra.condicion, condicion_nombre: letra.condicion_nombre, letra: letra.letra,
+      })
+    }
 
     const fila = {
       storage_path: dto.storage_path,

@@ -52,7 +52,7 @@ export const TIPOS_LINEA = ['factura', 'a_cuenta', 'nota_credito'] as const
 export const TIPOS_LINEA_ENTRADA = ['factura', 'a_cuenta'] as const
 export const TIPOS_ADJ_FACTURA = ['factura', 'remito', 'orden_compra', 'otro'] as const
 /** Sin `retencion` (decisión 6). `nota_credito` queda por los adjuntos viejos; la NC nueva lleva su PDF como adjunto de la NC. */
-export const TIPOS_ADJ_ORDEN = ['comprobante_pago', 'nota_credito', 'otro'] as const
+export const TIPOS_ADJ_ORDEN = ['comprobante_pago', 'nota_credito', 'otro', 'recibo_proveedor', 'cheque'] as const
 
 /** Con una línea de OP vigente, lo que mueve plata no se toca (409 FACTURA_CON_PAGOS { campos }). */
 export const CAMPOS_CONGELADOS = ['proveedor_id', 'fecha', 'neto', 'iva', 'percepciones', 'otros', 'no_gravado', 'exento', 'total'] as const
@@ -121,6 +121,13 @@ export const ChequeSchema = z.object({
   es_propio:   z.boolean().optional().default(true),
   librador:    z.string().trim().max(120).optional().default(''),
   obs:         z.string().trim().max(200).optional().default(''),
+  /**
+   * La foto del cheque (20260925p): el path PENDIENTE que devolvió
+   * `POST /cheques/leer` (`ordenes/pendientes/<uuid>.<ext>`). Al emitir la OP
+   * se adjunta como tipo `cheque` con obs «Cheque N° X». No va a la RPC como
+   * campo del cheque.
+   */
+  foto_path:   z.string().min(1).max(500).nullable().optional(),
 }).superRefine((c, ctx) => {
   if (!c.es_propio && !c.librador) {
     ctx.addIssue({ code: 'custom', path: ['librador'], message: 'CHEQUE_SIN_LIBRADOR' })
@@ -424,6 +431,17 @@ export const LeerFacturaSchema = z.object({
 })
 export type LeerFacturaDto = z.infer<typeof LeerFacturaSchema>
 
+/**
+ * Leer la foto de un cheque (20260925p). El archivo se sube antes con
+ * `POST /ordenes/upload-comprobante` (tipo `cheque`) a `ordenes/pendientes/`.
+ */
+export const LeerChequeSchema = z.object({
+  storage_path:   z.string().min(1).max(500),
+  nombre_archivo: z.string().trim().min(1).max(255).optional(),
+  mime_type:      z.enum(MIME_PERMITIDOS),
+})
+export type LeerChequeDto = z.infer<typeof LeerChequeSchema>
+
 /** Comprobante ANTES de la fila de la OP: va a `ordenes/pendientes/`. */
 export const UploadComprobantePendienteSchema = z.object({
   tipo:           z.enum(TIPOS_ADJ_ORDEN).default('comprobante_pago'),
@@ -561,6 +579,8 @@ export const ListOrdenesQuerySchema = z.object({
   desde:             FechaISO.optional(),
   hasta:             FechaISO.optional(),
   sin_comprobante:   BOOL_Q,
+  /** Emitidas sin recibo del proveedor (`v_pagos_ordenes.tiene_recibo`, 20260925q). */
+  sin_recibo:        BOOL_Q,
   en_cartera:        BOOL_Q,
   limit:             z.coerce.number().int().min(1).max(500).default(50),
   offset:            z.coerce.number().int().min(0).default(0),
@@ -582,6 +602,18 @@ export type OrdenesResumenQuery = z.infer<typeof OrdenesResumenQuerySchema>
 
 const Texto = (max: number) => z.string().trim().max(max)
 
+/**
+ * Datos fiscales cargables a mano (20260925o); los mismos que trae
+ * «Buscar en ARCA». Nada obligatorio: hay proveedores sin CUIT o del
+ * exterior. `condicion_iva_id` = ids de ARCA (los valida el service contra
+ * `CONDICIONES_IVA`; la base, 1..16).
+ */
+const DatosFiscales = {
+  domicilio:        Texto(300).nullable().optional(),
+  provincia:        Texto(80).nullable().optional(),
+  condicion_iva_id: z.number().int().min(1).max(16).nullable().optional(),
+}
+
 export const CreateProveedorSchema = z.object({
   razon_social:    Texto(200).min(3),
   cuit:            Texto(20).nullable().optional(),
@@ -595,6 +627,7 @@ export const CreateProveedorSchema = z.object({
   telefono:        Texto(40).optional().default(''),
   email:           Texto(120).optional().default(''),
   obs:             Texto(1000).optional().default(''),
+  ...DatosFiscales,
 })
 export type CreateProveedorDto = z.infer<typeof CreateProveedorSchema>
 
@@ -612,11 +645,14 @@ export const UpdateProveedorSchema = z.object({
   telefono:        Texto(40).optional(),
   email:           Texto(120).optional(),
   obs:             Texto(1000).optional(),
+  ...DatosFiscales,
 }).strict()
 export type UpdateProveedorDto = z.infer<typeof UpdateProveedorSchema>
 
 /** La puerta del contador: solo datos de pago, ni razón social ni CUIT. */
-export const DatosPagoSchema = UpdateProveedorSchema.omit({ razon_social: true, cuit: true, obs: true }).strict()
+export const DatosPagoSchema = UpdateProveedorSchema.omit({
+  razon_social: true, cuit: true, obs: true, domicilio: true, provincia: true, condicion_iva_id: true,
+}).strict()
 export type DatosPagoDto = z.infer<typeof DatosPagoSchema>
 
 // ── Conceptos de compra (20260925i) ─────────────────────────────────────────

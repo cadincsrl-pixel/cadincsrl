@@ -30,6 +30,15 @@ export interface AvisoLectura {
   codigo: string
   /** Cuando QR y papel no coinciden: lo que dice el papel, para usarlo con un clic. */
   alternativa?: string | number | null
+  /**
+   * LETRA_NO_COINCIDE_CONDICION (20260925o): el mismo aviso que devuelve el
+   * alta de la factura, con `code` (como los `avisos` del alta), la condición
+   * del proveedor y la letra leída.
+   */
+  code?: string
+  condicion?: number
+  condicion_nombre?: string
+  letra?: string
 }
 export type Fuente = 'qr' | 'ia' | 'qr+ia'
 

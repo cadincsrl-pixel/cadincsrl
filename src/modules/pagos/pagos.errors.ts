@@ -3,6 +3,8 @@
  * status HTTP estable, para que el frontend traduzca cada código a un mensaje
  * en castellano. Los códigos vienen del diseño v3 §3.
  */
+import { ArcaError } from '../../lib/arca/errores.js'
+import { errorDePadron } from '../../lib/arca/padron-datos.js'
 
 export class PagosHttpError extends Error {
   constructor(public status: number, public code: string, public detail?: unknown) {
@@ -14,6 +16,30 @@ export class PagosHttpError extends Error {
 /** 400 de validación con el campo que falló: el modal lo muestra bajo el input. */
 export function errorDeCampo(code: string, campo: string, extra?: Record<string, unknown>): PagosHttpError {
   return new PagosHttpError(400, code, { campo, ...(extra ?? {}) })
+}
+
+/**
+ * Error del padrón de ARCA → PagosHttpError, con los mismos códigos y status
+ * que Ventas: 404 PADRON_CUIT_INEXISTENTE, 422 PADRON_NO_ALCANZADO /
+ * PADRON_CLAVE_INACTIVA / PADRON_SIN_DATOS, 503 PADRON_SIN_AUTORIZACION /
+ * ARCA_NO_CONFIGURADO / ARCA_NO_DISPONIBLE (ARCA caída o cualquier otra cosa).
+ */
+export function errorPadronPagos(e: unknown, cuit: string): PagosHttpError {
+  if (e instanceof PagosHttpError) return e
+  const m = errorDePadron(e)
+  if (m && e instanceof ArcaError) {
+    return new PagosHttpError(m[0], m[1], {
+      campo: 'cuit', cuit, mensaje: e.message, ...(e.errores.length ? { errores: e.errores.map((x) => x.msg) } : {}),
+    })
+  }
+  if (e instanceof ArcaError && e.codigo === 'ARCA_NO_CONFIGURADO') {
+    return new PagosHttpError(503, 'ARCA_NO_CONFIGURADO', { cuit, arca_codigo: e.codigo, mensaje: e.message })
+  }
+  return new PagosHttpError(503, 'ARCA_NO_DISPONIBLE', {
+    cuit,
+    ...(e instanceof ArcaError ? { arca_codigo: e.codigo } : {}),
+    mensaje: e instanceof Error ? e.message : String(e),
+  })
 }
 
 /**
@@ -59,6 +85,13 @@ const STATUS_POR_CODIGO: Record<string, number> = {
   // Concepto de la factura y código de proveedor (20260925i–n)
   CONCEPTO_INVALIDO: 400, CONCEPTO_REQUERIDO: 400, CONCEPTO_NO_EXISTE: 404,
   CONCEPTO_DUPLICADO: 409, CONCEPTO_ULTIMO_ACTIVO: 409, CODIGO_NO_EDITABLE: 409,
+  // Padrón de ARCA para proveedores (20260925o). Mismos códigos y status que
+  // Ventas (lib/arca/padron-datos.ts → ERRORES_PADRON).
+  PADRON_CUIT_INEXISTENTE: 404, PADRON_NO_ALCANZADO: 422, PADRON_CLAVE_INACTIVA: 422, PADRON_SIN_DATOS: 422,
+  PADRON_SIN_AUTORIZACION: 503, ARCA_NO_DISPONIBLE: 503, ARCA_NO_CONFIGURADO: 503,
+  PROVEEDOR_SIN_CUIT: 400, CONDICION_IVA_INVALIDA: 400, PROVEEDOR_INVALIDO: 400,
+  // Foto del cheque (20260925p)
+  CHEQUE_ILEGIBLE: 422,
   // 500: nunca deberían llegar al front (guards de la base contra escrituras a mano)
   APROBACION_SOLO_RPC: 500,
 }
