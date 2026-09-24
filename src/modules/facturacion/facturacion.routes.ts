@@ -35,6 +35,8 @@ import { padronService } from './padron.service.js'
 import { cobrosService } from './cobros.service.js'
 import { externosService } from './externos.service.js'
 import { deudoresService } from './deudores.service.js'
+import { lidVentasService } from './lid-ventas.service.js'
+import { aAnsi, nombreArchivo } from './lid-ventas.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
   ListClientesQuerySchema, CreateClienteSchema, UpdateClienteSchema, ObrasClienteSchema,
@@ -45,6 +47,7 @@ import {
   ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema, AdjuntoCobroSchema,
   PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
   CreateExternoSchema, UpdateExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
+  LidVentasQuerySchema, LidVentasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
 
@@ -358,6 +361,30 @@ fact.patch('/externos/:id', actualizacion, tabSaldos, valida('json', UpdateExter
 fact.delete('/externos/:id', eliminacion, tabSaldos, handler(async (c) => {
   await externosService.borrar(idParam(c), db(c))
   return c.body(null, 204)
+}))
+
+// ═══════════════════════════════════ Libro IVA Digital — Ventas ═════════════
+// Es trabajo del contador: lectura + tab `finnegans` (la suya). Lo emitido por
+// el ERP (prod, autorizadas) + lo importado de ARCA del período. Diseño de
+// registro y fuentes en lid-ventas.ts.
+
+fact.get('/lid-ventas', lectura, tabFinnegans, valida('query', LidVentasQuerySchema), handler(async (c) => {
+  const q = c.req.valid('query')
+  return lidVentasService.libro(q.periodo, esBoolQ(q.incluir_cvlp), db(c))
+}))
+
+// El .txt tal cual se importa en el LID: ANSI (Latin-1 / Windows-1252), CRLF.
+fact.get('/lid-ventas/descargar', lectura, tabFinnegans, valida('query', LidVentasDescargarQuerySchema), handler(async (c) => {
+  const q = c.req.valid('query')
+  const libro = await lidVentasService.libro(q.periodo, esBoolQ(q.incluir_cvlp), db(c))
+  const bytes = aAnsi(q.archivo === 'cbte' ? libro.archivos.cbte : libro.archivos.alicuotas)
+  return new Response(bytes.buffer as ArrayBuffer, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/plain; charset=windows-1252',
+      'Content-Disposition': `attachment; filename="${nombreArchivo(q.periodo, q.archivo)}"`,
+    },
+  })
 }))
 
 export default fact

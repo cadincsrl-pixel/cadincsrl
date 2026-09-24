@@ -396,3 +396,12 @@ export const MarcarExternosSchema = z.object({
   fecha: fechaIso.optional().nullable(),
 })
 export type MarcarExternosDto = z.infer<typeof MarcarExternosSchema>
+
+// ── Libro IVA Digital de Ventas (RG 4597) ───────────────────────────────────
+export const LidVentasQuerySchema = z.object({
+  periodo: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'período AAAA-MM'),
+  incluir_cvlp: z.enum(['0', '1', 'true', 'false']).optional(),
+})
+export const LidVentasDescargarQuerySchema = LidVentasQuerySchema.extend({
+  archivo: z.enum(['cbte', 'alicuotas']),
+})
