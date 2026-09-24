@@ -122,6 +122,17 @@ export const OrdenAlCargarSchema = z.object({
 })
 export type OrdenAlCargarDto = z.infer<typeof OrdenAlCargarSchema>
 
+/**
+ * Cómo se piensa pagar con cheques / e-cheqs (20260923n): cuántos, la fecha
+ * del primero y cada cuántos días los siguientes. No es plata: precarga el
+ * Excel del Galicia y el modal de pago.
+ */
+export const PlanChequesSchema = z.object({
+  cantidad:     z.number().int().min(1).max(24),
+  primer_cobro: FechaISO,
+  cada_dias:    z.number().int().min(1).max(365),
+}).strict()
+
 export const CreateFacturaSchema = z.object({
   proveedor_id:        Id,
   tipo_comprobante:    z.enum(TIPOS_COMPROBANTE),
@@ -141,6 +152,7 @@ export const CreateFacturaSchema = z.object({
   descripcion:         z.string().trim().min(3).max(300),
   obs:                 z.string().trim().max(2000).optional().default(''),
   paga_cliente:        z.boolean().default(false),
+  plan_cheques:        PlanChequesSchema.nullable().optional(),
   imputaciones:        z.array(ImputacionSchema).min(1).max(50),
   orden:               OrdenAlCargarSchema.nullable().optional(),
 })
@@ -170,6 +182,7 @@ export const UpdateFacturaSchema = z.object({
   descripcion:         z.string().trim().min(3).max(300).optional(),
   obs:                 z.string().trim().max(2000).optional(),
   paga_cliente:        z.boolean().optional(),
+  plan_cheques:        PlanChequesSchema.nullable().optional(),
   imputaciones:        z.array(ImputacionSchema).min(1).max(50).optional(),
   motivo:              z.string().trim().min(3).max(300).optional(),
 }).strict()

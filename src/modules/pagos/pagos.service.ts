@@ -428,6 +428,7 @@ export const pagosService = {
       neto: dto.neto ?? null, iva: dto.iva ?? null, percepciones: dto.percepciones ?? null, otros: dto.otros ?? null,
       total: aCentavos(dto.total), forma_pago_prevista: dto.forma_pago_prevista,
       descripcion: dto.descripcion, obs: dto.obs ?? '', paga_cliente: dto.paga_cliente,
+      plan_cheques: dto.plan_cheques ?? null,
     }
 
     let res: { factura: Record<string, unknown>; orden?: Record<string, unknown> | null }

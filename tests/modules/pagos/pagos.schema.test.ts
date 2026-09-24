@@ -68,6 +68,17 @@ describe('CreateFacturaSchema', () => {
     fecha: '2026-09-18', total: 1210, descripcion: 'Hierro 8 mm',
     imputaciones: [{ obra_cod: 'CC 1', monto: 1210 }],
   }
+  it('plan de cheques (20260923n): cantidad 1–24, primer cobro fecha, cada 1–365; null lo borra', () => {
+    const ok = { cantidad: 6, primer_cobro: '2026-10-23', cada_dias: 30 }
+    expect(CreateFacturaSchema.safeParse({ ...base, plan_cheques: ok }).success).toBe(true)
+    expect(CreateFacturaSchema.safeParse({ ...base, plan_cheques: null }).success).toBe(true)
+    expect(CreateFacturaSchema.safeParse({ ...base, plan_cheques: { ...ok, cantidad: 0 } }).success).toBe(false)
+    expect(CreateFacturaSchema.safeParse({ ...base, plan_cheques: { ...ok, cantidad: 25 } }).success).toBe(false)
+    expect(CreateFacturaSchema.safeParse({ ...base, plan_cheques: { ...ok, primer_cobro: '23/10/2026' } }).success).toBe(false)
+    expect(CreateFacturaSchema.safeParse({ ...base, plan_cheques: { ...ok, extra: 1 } }).success).toBe(false)
+    expect(UpdateFacturaSchema.safeParse({ plan_cheques: ok }).success).toBe(true)
+  })
+
   it('mínimo: proveedor, tipo, NÚMERO, fecha, total, descripción e imputaciones', () => {
     const r = CreateFacturaSchema.safeParse(base)
     expect(r.success).toBe(true)
