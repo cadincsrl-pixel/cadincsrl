@@ -42,7 +42,7 @@ import {
   EmitirSchema, MotivoSchema, RegistrarFinnegansSchema,
   FceClienteQuerySchema, CuentaSchema, UpdateCuentaSchema, ListCuentasQuerySchema, esBoolQ,
   RegistrarCobroSchema, ImputarSchema, CompensarSchema, AnularCobroSchema, AnularImputacionSchema,
-  ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema,
+  ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema, AdjuntoCobroSchema,
   PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
   CreateExternoSchema, UpdateExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
 } from './facturacion.schema.js'
@@ -273,6 +273,31 @@ fact.get('/retenciones/:id/url', lectura, tabLeerCobros, urlRetencion)
 
 fact.post('/cobros/retenciones/:id/adjunto', lectura, registrarCobros, tabCobranzas, valida('json', AdjuntoRetencionSchema), handler(async (c) =>
   cobrosService.adjuntarRetencion(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+// Documentación del cliente en el cobro (20260924q): comprobante de pago,
+// orden de pago del cliente u otro. Literales ANTES de /cobros/:id.
+fact.post('/cobros/adjuntos/upload-url', lectura, registrarCobros, tabCobranzas, valida('json', UploadRetencionSchema), handler(async (c) =>
+  cobrosService.uploadUrlAdjunto(c.req.valid('json'))))
+
+fact.post('/cobros/adjuntos/descartar-pendiente', lectura, registrarCobros, tabCobranzas,
+  valida('json', z.object({ storage_path: z.string().min(1).max(300) })), handler(async (c) =>
+    cobrosService.descartarAdjuntoPendiente(c.req.valid('json').storage_path)))
+
+fact.get('/cobros/adjuntos/:id/url', lectura, tabLeerCobros, handler(async (c) =>
+  cobrosService.urlAdjunto(idParam(c), db(c))))
+
+// Borrar: quien registra o quien anula cobros. De un cobro anulado, no (COBRO_ANULADO).
+fact.delete('/cobros/adjuntos/:id', lectura, tabCobranzas, handler(async (c) => {
+  const puede = (await tieneFlag(uid(c), MOD, 'registrar_cobros', false)) || (await tieneFlag(uid(c), MOD, 'anular_cobros', false))
+  if (!puede) throw new FacturacionHttpError(403, 'SIN_PERMISO', { flag: 'registrar_cobros|anular_cobros' })
+  return cobrosService.borrarAdjunto(idParam(c), uid(c), db(c))
+}))
+
+fact.get('/cobros/:id/adjuntos', lectura, tabLeerCobros, handler(async (c) =>
+  cobrosService.listarAdjuntos(idParam(c), db(c))))
+
+fact.post('/cobros/:id/adjuntos', lectura, registrarCobros, tabCobranzas, valida('json', AdjuntoCobroSchema), handler(async (c) =>
+  cobrosService.adjuntar(idParam(c), c.req.valid('json'), uid(c), db(c))))
 
 fact.get('/cobros/:id', lectura, tabLeerCobros, handler(async (c) =>
   cobrosService.detalle(idParam(c), db(c))))

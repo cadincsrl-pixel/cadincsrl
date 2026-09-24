@@ -158,6 +158,7 @@ export const ENTIDADES: Record<string, string> = {
   // Cobranzas: POST /facturacion/cobros/5/imputar → «imputar cobro 5»;
   // una compensación con NC crea imputaciones.
   'facturacion/cobros': 'cobro', 'facturacion/cobros/retenciones': 'certificado de retención',
+  'facturacion/cobros/adjuntos': 'adjunto del cobro',
   'facturacion/imputaciones': 'imputación', 'facturacion/compensaciones': 'imputación',
   'facturacion/externos': 'comprobante externo',
 }

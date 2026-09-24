@@ -204,6 +204,18 @@ export const ItemImputacionSchema = z.object({
 }).refine((i) => (i.factura_id != null) !== (i.externo_id != null), { message: 'factura_id o externo_id (uno solo)', path: ['factura_id'] })
 export type ItemImputacionDto = z.infer<typeof ItemImputacionSchema>
 
+/** Documentación del cliente en el cobro (20260924q): comprobante de pago, orden de pago del cliente u otro. */
+export const TIPOS_ADJUNTO_COBRO = ['comprobante_pago', 'orden_pago', 'otro'] as const
+export const AdjuntoCobroSchema = z.object({
+  tipo: z.enum(TIPOS_ADJUNTO_COBRO),
+  /** Subido antes con POST /cobros/adjuntos/upload-url (cobros/pendientes/…). */
+  storage_path: z.string().min(1).max(300),
+  nombre_archivo: z.string().trim().min(1).max(255),
+  mime: textoOpc(100),
+  obs: textoOpc(1000),
+})
+export type AdjuntoCobroDto = z.infer<typeof AdjuntoCobroSchema>
+
 export const RegistrarCobroSchema = z.object({
   cobro: z.object({
     fecha: fechaIso.optional().nullable(),
@@ -214,6 +226,7 @@ export const RegistrarCobroSchema = z.object({
   medios: z.array(MedioCobroSchema).max(50).optional().default([]),
   retenciones: z.array(RetencionCobroSchema).max(50).optional().default([]),
   imputaciones: z.array(ItemImputacionSchema).max(500).optional().default([]),
+  adjuntos: z.array(AdjuntoCobroSchema).max(20).optional().default([]),
 })
 export type RegistrarCobroDto = z.infer<typeof RegistrarCobroSchema>
 
