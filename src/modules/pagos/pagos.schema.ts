@@ -6,6 +6,7 @@
  * de pago, tipos de línea) son las mismas que el DDL: un test las compara.
  */
 import { z } from 'zod'
+import { ALICUOTA_IDS, CBTE_TIPOS_ARCA, TIPOS_TRIBUTO } from './lectura/arca.js'
 
 // ── Listas cerradas (espejo del DDL) ────────────────────────────────────────
 
@@ -44,10 +45,10 @@ export const TIPOS_ADJ_FACTURA = ['factura', 'remito', 'orden_compra', 'otro'] a
 export const TIPOS_ADJ_ORDEN = ['comprobante_pago', 'nota_credito', 'otro'] as const
 
 /** Con una línea de OP vigente, lo que mueve plata no se toca (409 FACTURA_CON_PAGOS { campos }). */
-export const CAMPOS_CONGELADOS = ['proveedor_id', 'fecha', 'neto', 'iva', 'percepciones', 'otros', 'total'] as const
+export const CAMPOS_CONGELADOS = ['proveedor_id', 'fecha', 'neto', 'iva', 'percepciones', 'otros', 'no_gravado', 'exento', 'total'] as const
 /** Lista cerrada de lo que devuelve una `aprobada` a `pendiente` (más las imputaciones y el CBU/alias del proveedor). */
 export const CAMPOS_QUE_DESAPRUEBAN = [
-  'proveedor_id', 'fecha', 'total', 'neto', 'iva', 'percepciones', 'otros', 'paga_cliente', 'vence_el', 'forma_pago_prevista',
+  'proveedor_id', 'fecha', 'total', 'neto', 'iva', 'percepciones', 'otros', 'no_gravado', 'exento', 'paga_cliente', 'vence_el', 'forma_pago_prevista',
 ] as const
 
 export const TAB_FACTURA = ['facturas'] as const
@@ -57,6 +58,8 @@ export const TAB_PROV_LECTURA = ['facturas', 'pagos', 'proveedores'] as const
 export const MIME_PERMITIDOS = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'] as const
 export const MAX_ADJUNTO_BYTES = 10 * 1024 * 1024
 export const PREFIJO_COMPROBANTE_PENDIENTE = 'ordenes/pendientes/'
+/** La factura «archivo primero» se sube acá antes de existir (20260924u). */
+export const PREFIJO_LECTURA = 'facturas/lecturas/'
 
 // ── Primitivas ──────────────────────────────────────────────────────────────
 
@@ -133,6 +136,45 @@ export const PlanChequesSchema = z.object({
   cada_dias:    z.number().int().min(1).max(365),
 }).strict()
 
+/**
+ * El desglose como lo pide ARCA (20260924u). `iva_detalle` = una fila por
+ * alícuota (códigos ARCA 3/4/5/6/8/9); `tributos` = percepciones e
+ * impuestos. Mandarlos reemplaza el detalle guardado; omitirlos no lo toca.
+ * Con detalle, la base DERIVA neto, iva, percepciones y otros.
+ */
+export const IvaDetalleSchema = z.object({
+  alicuota_id: z.number().int().refine((n) => (ALICUOTA_IDS as readonly number[]).includes(n), 'ALICUOTA_INVALIDA'),
+  base_imp:    MontoNoNeg,
+  importe:     MontoNoNeg,
+})
+export type IvaDetalleDto = z.infer<typeof IvaDetalleSchema>
+export const TributoSchema = z.object({
+  tipo:         z.enum(TIPOS_TRIBUTO),
+  jurisdiccion: z.string().trim().max(80).nullable().optional(),
+  descripcion:  z.string().trim().max(200).optional().default(''),
+  alicuota:     z.number().min(0).max(100).nullable().optional(),
+  base_imp:     MontoNoNeg.nullable().optional(),
+  importe:      Monto,
+})
+export type TributoDto = z.infer<typeof TributoSchema>
+const IvaDetalleLista = z.array(IvaDetalleSchema).max(6).superRefine((xs, ctx) => {
+  const vistas = new Set<number>()
+  xs.forEach((x, i) => {
+    if (vistas.has(x.alicuota_id)) ctx.addIssue({ code: 'custom', path: [i, 'alicuota_id'], message: 'ALICUOTA_REPETIDA' })
+    vistas.add(x.alicuota_id)
+  })
+})
+const TributosLista = z.array(TributoSchema).max(30)
+const CamposArca = {
+  no_gravado:     MontoNoNeg.nullable().optional(),
+  exento:         MontoNoNeg.nullable().optional(),
+  cae:            z.string().trim().regex(/^\d{14}$/, 'CAE_INVALIDO').nullable().optional(),
+  cae_vto:        FechaISO.nullable().optional(),
+  cbte_tipo_arca: z.number().int().refine((n) => (CBTE_TIPOS_ARCA as readonly number[]).includes(n), 'CBTE_TIPO_INVALIDO').nullable().optional(),
+  iva_detalle:    IvaDetalleLista.nullable().optional(),
+  tributos:       TributosLista.nullable().optional(),
+}
+
 export const CreateFacturaSchema = z.object({
   proveedor_id:        Id,
   tipo_comprobante:    z.enum(TIPOS_COMPROBANTE),
@@ -155,6 +197,9 @@ export const CreateFacturaSchema = z.object({
   plan_cheques:        PlanChequesSchema.nullable().optional(),
   imputaciones:        z.array(ImputacionSchema).min(1).max(50),
   orden:               OrdenAlCargarSchema.nullable().optional(),
+  ...CamposArca,
+  /** La lectura del comprobante (POST /facturas/leer): el archivo se adjunta solo. */
+  lectura_id:          Id.nullable().optional(),
 })
 export type CreateFacturaDto = z.infer<typeof CreateFacturaSchema>
 
@@ -185,6 +230,7 @@ export const UpdateFacturaSchema = z.object({
   plan_cheques:        PlanChequesSchema.nullable().optional(),
   imputaciones:        z.array(ImputacionSchema).min(1).max(50).optional(),
   motivo:              z.string().trim().min(3).max(300).optional(),
+  ...CamposArca,
 }).strict()
 export type UpdateFacturaDto = z.infer<typeof UpdateFacturaSchema>
 
@@ -252,6 +298,21 @@ export const UploadUrlOrdenSchema = UploadUrlFacturaSchema.extend({ tipo: z.enum
 export const RegistrarAdjOrdenSchema = RegistrarAdjFacturaSchema.extend({ tipo: z.enum(TIPOS_ADJ_ORDEN) })
 export type UploadUrlDto = z.infer<typeof UploadUrlFacturaSchema> | z.infer<typeof UploadUrlOrdenSchema>
 export type RegistrarAdjDto = z.infer<typeof RegistrarAdjFacturaSchema> | z.infer<typeof RegistrarAdjOrdenSchema>
+
+/** «Archivo primero»: la factura antes de existir va a `facturas/lecturas/` (20260924u). */
+export const UploadUrlLecturaSchema = z.object({
+  nombre_archivo: z.string().trim().min(1).max(255),
+  mime_type:      z.enum(MIME_PERMITIDOS),
+  size_bytes:     z.number().int().positive().max(MAX_ADJUNTO_BYTES),
+})
+export const LeerFacturaSchema = z.object({
+  storage_path:   z.string().min(1).max(500),
+  nombre_archivo: z.string().trim().min(1).max(255),
+  mime_type:      z.enum(MIME_PERMITIDOS),
+  /** El texto del QR de ARCA, si el navegador lo encontró. */
+  qr_texto:       z.string().max(4000).nullable().optional(),
+})
+export type LeerFacturaDto = z.infer<typeof LeerFacturaSchema>
 
 /** Comprobante ANTES de la fila de la OP: va a `ordenes/pendientes/`. */
 export const UploadComprobantePendienteSchema = z.object({

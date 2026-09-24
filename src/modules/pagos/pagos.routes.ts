@@ -29,12 +29,13 @@ import { pagosService, perfilDe, esAdmin, flagPagos, verPiiDe } from './pagos.se
 import { avisoPagoService } from './aviso-pago.service.js'
 import { proveedoresService, enmascararProveedor } from './proveedores.service.js'
 import { pagosAdjuntosService } from './adjuntos.service.js'
+import { lecturaService } from './lectura.service.js'
 import {
   TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, esBoolQ,
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
-  UploadComprobantePendienteSchema, BorrarPendienteSchema,
+  UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema,
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, DevolucionProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
 } from './pagos.schema.js'
@@ -92,6 +93,18 @@ pagos.get('/facturas/resumen', lectura, tabPago, zValidator('query', FacturasRes
 
 pagos.get('/facturas/export', lectura, tabFactura, zValidator('query', ListFacturasQuerySchema), handler(async (c) =>
   pagosService.exportarFacturas(c.req.valid('query'), await verPii(c), c.get('accessToken'))))
+
+// «Archivo primero» (20260924u): subir la factura, leerla (QR de ARCA + IA) y
+// devolver una propuesta SIN crear nada. Quien carga facturas lo puede usar.
+// Literales antes de `/:id`.
+pagos.post('/facturas/upload-lectura', creacion, tabFactura, zValidator('json', UploadUrlLecturaSchema), handler(async (c) =>
+  lecturaService.uploadUrl(c.req.valid('json'))))
+
+pagos.post('/facturas/leer', creacion, tabFactura, zValidator('json', LeerFacturaSchema), handler(async (c) =>
+  lecturaService.leer(c.req.valid('json'), c.get('user').id)))
+
+pagos.delete('/facturas/lectura-pendiente', creacion, tabFactura, zValidator('json', BorrarPendienteSchema), handler(async (c) =>
+  lecturaService.descartar(c.req.valid('json').storage_path)))
 
 pagos.get('/facturas/:id', lectura, tabPago, handler(async (c) =>
   pagosService.detalleFactura(idParam(c), await verPii(c), esBoolQ(c.req.query('borrados')), c.get('accessToken'))))

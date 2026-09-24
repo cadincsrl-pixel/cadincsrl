@@ -12,9 +12,9 @@ import {
 } from '../../../src/modules/pagos/pagos.schema.js'
 
 // Lo que dice el trigger `fn_pagos_factura_desaprobar` (migración de pagos, §4.2 del diseño).
-const DDL_DESAPRUEBAN = ['proveedor_id', 'fecha', 'total', 'neto', 'iva', 'percepciones', 'otros', 'paga_cliente', 'vence_el', 'forma_pago_prevista']
+const DDL_DESAPRUEBAN = ['proveedor_id', 'fecha', 'total', 'neto', 'iva', 'percepciones', 'otros', 'no_gravado', 'exento', 'paga_cliente', 'vence_el', 'forma_pago_prevista']
 // Lo que dice `trg_pagos_factura_congelada` (before update of …).
-const DDL_CONGELADOS = ['proveedor_id', 'fecha', 'neto', 'iva', 'percepciones', 'otros', 'total']
+const DDL_CONGELADOS = ['proveedor_id', 'fecha', 'neto', 'iva', 'percepciones', 'otros', 'no_gravado', 'exento', 'total']
 
 describe('listas cerradas = DDL', () => {
   it('CAMPOS_QUE_DESAPRUEBAN es exactamente la lista del trigger', () => {

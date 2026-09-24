@@ -216,7 +216,10 @@ export async function controlarFactura(
   storagePath: string,
   mime: string,
 ): Promise<ControlFactura | null> {
-  const modelo = process.env.PAGOS_CONTROL_MODEL ?? process.env.ASISTENTE_MODEL ?? 'claude-sonnet-5'
+  // 2026-09-24: por defecto el mismo modelo que la lectura completa
+  // (claude-opus-5) y ya no el del asistente: son tareas distintas y
+  // compartir la variable hacía que cambiar uno moviera el otro.
+  const modelo = process.env.PAGOS_CONTROL_MODEL ?? process.env.PAGOS_LECTURA_MODEL ?? 'claude-opus-5'
   const guardar = async (c: Omit<ControlFactura, 'factura_id' | 'adjunto_id' | 'modelo'>) => {
     const fila: ControlFactura = { ...c, factura_id: facturaId, adjunto_id: adjuntoId, modelo }
     const { data } = await supabase.from('pagos_facturas_control').insert(fila).select('*').single()
@@ -248,9 +251,13 @@ export async function controlarFactura(
     }
 
     const client = new Anthropic({ timeout: 90_000, maxRetries: 1 })
+    // Con claude-opus-5 el razonamiento está prendido por defecto: esfuerzo
+    // bajo (son tres datos) y margen de tokens para que no se corte antes
+    // del JSON.
     const r = await client.messages.create({
       model: modelo,
-      max_tokens: 400,
+      max_tokens: 4000,
+      output_config: { effort: 'low' },
       messages: [{ role: 'user', content: [bloque, { type: 'text', text: PROMPT }] }],
     })
     const texto = r.content.filter(b => b.type === 'text').map(b => (b as { text: string }).text).join('\n')
@@ -272,6 +279,35 @@ export async function controlarFactura(
         nota: `No se pudo controlar: ${e instanceof Error ? e.message : 'error desconocido'}`,
       })
     } catch { return null }
+  }
+}
+
+/**
+ * Control a partir de una lectura ya hecha (20260924u): la factura se cargó
+ * «archivo primero», así que el papel ya se leyó —QR de ARCA y/o IA— antes
+ * de guardar. No se vuelve a llamar al modelo: se compara lo leído contra lo
+ * que quedó cargado (la persona pudo corregir la propuesta) y se guarda la
+ * misma fila de siempre, con los mismos estados. Nunca lanza.
+ */
+export async function controlDesdeLectura(
+  facturaId: number,
+  adjuntoId: number | null,
+  leido: { numero: string | null; total: number | null; fecha: string | null },
+  modelo: string,
+): Promise<ControlFactura | null> {
+  try {
+    const { data: f } = await supabase
+      .from('pagos_facturas').select('numero, total, fecha').eq('id', facturaId).maybeSingle()
+    if (!f) return null
+    const fila = f as { numero: string | null; total: number | string; fecha: string }
+    const r = compararLectura(
+      { legible: true, numero: leido.numero, total: leido.total, fecha: leido.fecha },
+      fila.numero, Number(fila.total), fila.fecha)
+    const nueva: ControlFactura = { ...r, factura_id: facturaId, adjunto_id: adjuntoId, modelo }
+    const { data } = await supabase.from('pagos_facturas_control').insert(nueva).select('*').single()
+    return (data as ControlFactura | null) ?? nueva
+  } catch {
+    return null
   }
 }
 

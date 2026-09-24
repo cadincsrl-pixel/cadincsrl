@@ -38,10 +38,12 @@ import {
   type ImputacionDto, type RegistrarFinnegansDto, type DevolucionProveedorDto,
 } from './pagos.schema.js'
 import {
-  pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, BUCKET,
+  pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, hashDelBucket, BUCKET,
   type AdjuntoProcesado,
 } from './adjuntos.service.js'
-import { ultimoControl, recompararControl } from './control.service.js'
+import { ultimoControl, recompararControl, controlDesdeLectura, controlarFactura } from './control.service.js'
+import { lecturaService, camposEditados, type LecturaGuardada } from './lectura.service.js'
+import { esPercepcion } from './lectura/arca.js'
 import type { Aviso } from './proveedores.service.js'
 
 // ── Perfil del usuario (rol + permisos) ─────────────────────────────────────
@@ -153,7 +155,40 @@ interface ImportesFactura {
   iva?: number | null
   percepciones?: number | null
   otros?: number | null
+  no_gravado?: number | null
+  exento?: number | null
   total: number
+  iva_detalle?: { alicuota_id: number; base_imp: number; importe: number }[] | null
+  tributos?: { tipo: string; importe: number }[] | null
+}
+
+/**
+ * Las columnas agregadas tal como las va a dejar la base (20260924u): con
+ * detalle, `_pagos_guardar_desglose` deriva neto e IVA de las alícuotas y
+ * percepciones/otros de los tributos. Se calcula igual acá para validar el
+ * cierre y el reparto ANTES de la RPC, con el error en el campo correcto.
+ */
+export function importesEfectivos(f: ImportesFactura): ImportesFactura {
+  const out: ImportesFactura = { ...f }
+  if (f.iva_detalle) {
+    out.iva = sumaCentavos(f.iva_detalle.map((x) => x.importe))
+    if (f.iva_detalle.length) out.neto = sumaCentavos(f.iva_detalle.map((x) => x.base_imp))
+  }
+  if (f.tributos) {
+    const perc = sumaCentavos(f.tributos.filter((t) => esPercepcion(t.tipo)).map((t) => t.importe))
+    const otros = sumaCentavos(f.tributos.filter((t) => !esPercepcion(t.tipo)).map((t) => t.importe))
+    out.percepciones = perc === 0 && f.percepciones == null ? null : perc
+    out.otros = otros === 0 && f.otros == null ? null : otros
+  }
+  return out
+}
+
+/** '1000.00' (numeric de la base) y 1000 (JSON) son lo mismo; null es null. */
+export function valorComparable(v: unknown): string {
+  if (v == null || v === '') return 'null'
+  if (typeof v === 'number') return String(v)
+  if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) return String(Number(v))
+  return typeof v === 'object' ? JSON.stringify(v) : String(v)
 }
 
 export function imputableDe(f: { total: number; percepciones?: number | null }): number {
@@ -164,14 +199,17 @@ export function imputableDe(f: { total: number; percepciones?: number | null }):
  * Validaciones de importes y fechas de una factura (400 `{ error, campo }`).
  *   - fecha ≤ hoy AR; vence_el ≥ fecha.
  *   - desglose cuadra SOLO si vienen neto e iva los dos (decisión §11.35):
- *     neto + iva + percepciones + otros = total (±0,01).
+ *     neto + iva + percepciones + otros + no gravado + exento = total (±0,01).
+ *     Con detalle (iva_detalle / tributos) se valida sobre lo derivado.
  *   - imputaciones: sin obra repetida y Σ = imputable = total − percepciones (±0,01).
  */
-export function validarImportes(f: ImportesFactura, imputaciones: ImputacionDto[] | null, opts: { validarFecha: boolean }): void {
+export function validarImportes(fIn: ImportesFactura, imputaciones: ImputacionDto[] | null, opts: { validarFecha: boolean }): void {
+  const f = importesEfectivos(fIn)
   if (opts.validarFecha && f.fecha > hoyAR()) throw errorDeCampo('FECHA_FUTURA', 'fecha', { hoy: hoyAR() })
   if (f.vence_el && f.vence_el < f.fecha) throw errorDeCampo('VENCIMIENTO_INVALIDO', 'vence_el')
   if (f.neto != null && f.iva != null) {
-    const suma = sumaCentavos([Number(f.neto), Number(f.iva), Number(f.percepciones ?? 0), Number(f.otros ?? 0)])
+    const suma = sumaCentavos([Number(f.neto), Number(f.iva), Number(f.percepciones ?? 0), Number(f.otros ?? 0),
+      Number(f.no_gravado ?? 0), Number(f.exento ?? 0)])
     if (!cuadra(suma, Number(f.total))) throw errorDeCampo('DESGLOSE_NO_CUADRA', 'total', { suma, total: aCentavos(Number(f.total)) })
   }
   if (imputaciones) {
@@ -277,6 +315,50 @@ function ordenarFacturas(q: any, orden: ListFacturasQuery['orden']) {
   return q.order('vence_el', { ascending: true, nullsFirst: false }).order('fecha', { ascending: true }).order('id', { ascending: true })
 }
 
+/**
+ * La factura se creó desde una lectura: el archivo pasa de
+ * `facturas/lecturas/` a `facturas/<id>/`, se registra como adjunto
+ * `factura`, la lectura queda marcada como usada y se guarda el control del
+ * papel sin volver a llamar al modelo. Si la lectura no leyó nada (ni QR ni
+ * IA), el control corre como siempre. Nunca lanza: devuelve false si el
+ * adjunto no quedó, para avisar que hay que subirlo desde la ficha.
+ */
+async function adjuntarLectura(facturaId: number, l: LecturaGuardada, userId: string): Promise<boolean> {
+  try {
+    const nombre = l.storage_path.slice(l.storage_path.lastIndexOf('/') + 1)
+    const destino = `facturas/${facturaId}/${nombre}`
+    const mv = await supabase.storage.from(BUCKET).move(l.storage_path, destino)
+    const path = mv.error ? l.storage_path : destino
+    const { size } = await hashDelBucket(path)
+    const { data: adj, error } = await supabase.from('pagos_facturas_adjuntos').insert({
+      factura_id: facturaId, tipo: 'factura', storage_path: path, nombre_archivo: l.nombre_archivo,
+      hash_sha256: l.hash_sha256, mime_type: l.mime_type, size_bytes: size, obs: '',
+      created_by: userId, updated_by: userId,
+    }).select('id').single()
+    await supabase.from('pagos_facturas_lecturas').update({ factura_id: facturaId, storage_path: path }).eq('id', l.id)
+    if (error || !adj) {
+      console.error(`[pagos] factura ${facturaId}: la lectura ${l.id} no quedó como adjunto: ${error?.message}`)
+      return false
+    }
+    const adjId = (adj as { id: number }).id
+    const p = l.propuesta
+    const leido = {
+      numero: p.numero_comprobante ? `${p.punto_venta ?? ''}-${p.numero_comprobante}` : null,
+      total: p.total,
+      fecha: p.fecha,
+    }
+    if (leido.numero || leido.total != null || leido.fecha) {
+      await controlDesdeLectura(facturaId, adjId, leido, l.modelo ?? 'qr')
+    } else {
+      await controlarFactura(facturaId, adjId, path, l.mime_type)
+    }
+    return true
+  } catch (e) {
+    console.error(`[pagos] factura ${facturaId}: no se pudo adjuntar la lectura: ${e instanceof Error ? e.message : e}`)
+    return false
+  }
+}
+
 export const pagosService = {
 
   // ═══════════════════════════════════ Facturas ═══════════════════════════════
@@ -336,7 +418,7 @@ export const pagosService = {
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
 
-    const [imp, adjuntos, lineas, control] = await Promise.all([
+    const [imp, adjuntos, lineas, control, ivaDet, tribDet] = await Promise.all([
       sb.from('pagos_imputaciones')
         .select('id, obra_cod, monto, obs, created_at, updated_at, obra:obras(cod, nom, cc, es_interna, es_deposito, archivada)')
         .eq('factura_id', id).order('monto', { ascending: false }).order('id'),
@@ -347,6 +429,9 @@ export const pagosService = {
       // El último control automático del comprobante (20260921j). Va en la
       // ficha porque es donde se mira la factura antes de aprobarla.
       ultimoControl(id),
+      // El desglose como lo pide ARCA (20260924u).
+      sb.from('pagos_factura_iva').select('alicuota_id, base_imp, importe').eq('factura_id', id).order('alicuota_id'),
+      sb.from('pagos_factura_tributos').select('id, tipo, jurisdiccion, descripcion, alicuota, base_imp, importe').eq('factura_id', id).order('id'),
     ])
     if (imp.error) throw new PagosHttpError(500, 'DB_ERROR', imp.error.message)
     if (lineas.error) throw new PagosHttpError(500, 'DB_ERROR', lineas.error.message)
@@ -367,6 +452,8 @@ export const pagosService = {
     return {
       ...enmascararFila(fila, verPii),
       imputaciones: imp.data ?? [],
+      iva_detalle: ivaDet.data ?? [],
+      tributos: tribDet.data ?? [],
       adjuntos,
       pagos,
       control,
@@ -394,6 +481,18 @@ export const pagosService = {
    */
   async crearFactura(dto: CreateFacturaDto, userId: string, perfil: Perfil | null) {
     validarImportes(dto, dto.imputaciones, { validarFecha: true })
+    const ef = importesEfectivos(dto)
+
+    // «Archivo primero» (20260924u): la lectura se toma de la base, nunca del
+    // cliente. Si el mismo archivo ya respalda otra factura, se frena ANTES
+    // de crear nada (el índice de adjuntos lo rebotaría después).
+    let lectura: LecturaGuardada | null = null
+    if (dto.lectura_id) {
+      lectura = await lecturaService.tomar(dto.lectura_id)
+      const { data: dup } = await supabase.from('pagos_facturas_adjuntos').select('id, factura_id')
+        .eq('hash_sha256', lectura.hash_sha256).eq('tipo', 'factura').is('deleted_at', null).limit(1).maybeSingle()
+      if (dup) throw new PagosHttpError(409, 'ADJ_DUPLICADO', { entidad: 'factura', factura_id: (dup as { factura_id: number }).factura_id })
+    }
 
     let adjuntosOrden: AdjuntoProcesado[] = []
     let pOrden: Record<string, unknown> | null = null
@@ -425,10 +524,24 @@ export const pagosService = {
       fecha: dto.fecha,
       // «Ya está pagada» nace sin vencimiento (decisión 5: vencimiento opcional).
       vence_el: dto.orden ? null : (dto.vence_el ?? null),
-      neto: dto.neto ?? null, iva: dto.iva ?? null, percepciones: dto.percepciones ?? null, otros: dto.otros ?? null,
+      neto: ef.neto ?? null, iva: ef.iva ?? null, percepciones: ef.percepciones ?? null, otros: ef.otros ?? null,
+      no_gravado: dto.no_gravado ?? null, exento: dto.exento ?? null,
+      cae: dto.cae ?? null, cae_vto: dto.cae_vto ?? null, cbte_tipo_arca: dto.cbte_tipo_arca ?? null,
+      iva_detalle: dto.iva_detalle ?? null, tributos: dto.tributos ?? null,
       total: aCentavos(dto.total), forma_pago_prevista: dto.forma_pago_prevista,
       descripcion: dto.descripcion, obs: dto.obs ?? '', paga_cliente: dto.paga_cliente,
       plan_cheques: dto.plan_cheques ?? null,
+      lectura_estado: lectura?.estado ?? 'manual',
+      lectura_json: lectura ? {
+        lectura_id: lectura.id, modelo: lectura.modelo, archivo: lectura.nombre_archivo,
+        qr: lectura.qr, ia: lectura.ia, propuesta: lectura.propuesta,
+        fuente_por_campo: lectura.fuente_por_campo, avisos: lectura.avisos,
+        editados: camposEditados(lectura.propuesta, {
+          numero: dto.numero, fecha: dto.fecha, total: dto.total, tipo_comprobante: dto.tipo_comprobante,
+          vence_el: dto.vence_el ?? null, neto: ef.neto ?? null, no_gravado: dto.no_gravado ?? null,
+          exento: dto.exento ?? null, cae: dto.cae ?? null, iva: dto.iva_detalle ?? [], tributos: dto.tributos ?? [],
+        }),
+      } : null,
     }
 
     let res: { factura: Record<string, unknown>; orden?: Record<string, unknown> | null }
@@ -448,6 +561,13 @@ export const pagosService = {
 
     const avisos: Aviso[] = []
     const facturaId = Number((res.factura as { id?: number }).id)
+
+    // El archivo leído pasa a ser el adjunto de la factura, y el control del
+    // papel sale de la lectura. Best-effort: la factura ya está guardada.
+    if (lectura) {
+      const adj = await adjuntarLectura(facturaId, lectura, userId)
+      if (!adj) avisos.push({ code: 'ADJUNTO_NO_GUARDADO' })
+    }
 
     // Auto-aprobación (20260921f): quien tiene `aprobar_facturas` + `aprobar_propias`
     // no espera a nadie — su factura nace aprobada y con su firma. Es lo que
@@ -484,7 +604,7 @@ export const pagosService = {
   async editarFactura(id: number, dto: UpdateFacturaDto, userId: string, verPii: boolean) {
     const { data: actual, error: e0 } = await supabase
       .from('pagos_facturas')
-      .select('id, estado, proveedor_id, fecha, vence_el, neto, iva, percepciones, otros, total, aprobada_at')
+      .select('id, estado, proveedor_id, fecha, vence_el, neto, iva, percepciones, otros, no_gravado, exento, total, aprobada_at')
       .eq('id', id).maybeSingle()
     if (e0) throw new PagosHttpError(500, 'DB_ERROR', e0.message)
     if (!actual) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE')
@@ -493,17 +613,26 @@ export const pagosService = {
 
     const conPagos = a.estado === 'pagada' || a.estado === 'pagada_parcial'
     const { imputaciones, motivo, ...campos } = dto
+    // Con detalle, las columnas agregadas se mandan YA derivadas (las mismas
+    // que va a dejar `_pagos_guardar_desglose`): así lo que se compara contra
+    // lo congelado y lo que valida el cierre es lo que va a quedar guardado.
+    if (campos.iva_detalle || campos.tributos) {
+      const ef = importesEfectivos({ ...(a as ImportesFactura), ...(campos as Partial<ImportesFactura>) } as ImportesFactura)
+      const c = campos as Record<string, unknown>
+      if (campos.iva_detalle) { c.iva = ef.iva; if (campos.iva_detalle.length) c.neto = ef.neto }
+      if (campos.tributos) { c.percepciones = ef.percepciones; c.otros = ef.otros }
+    }
     const tocados = (Object.keys(campos) as (keyof typeof campos)[]).filter((k) => campos[k] !== undefined)
 
     if (conPagos) {
       const congelados = tocados.filter((k) =>
-        (CAMPOS_CONGELADOS as readonly string[]).includes(k) && String(campos[k] ?? null) !== String(a[k] ?? null))
+        (CAMPOS_CONGELADOS as readonly string[]).includes(k) && valorComparable(campos[k]) !== valorComparable(a[k]))
       if (congelados.length > 0) throw new PagosHttpError(409, 'FACTURA_CON_PAGOS', { campos: congelados })
       if (imputaciones && !motivo) throw errorDeCampo('MOTIVO_REQUERIDO', 'motivo')
     }
 
     const merged = { ...a, ...Object.fromEntries(tocados.map((k) => [k, campos[k]])) } as ImportesFactura
-    const cambiaImputable = tocados.includes('total') || tocados.includes('percepciones')
+    const cambiaImputable = tocados.includes('total') || tocados.includes('percepciones') || tocados.includes('tributos')
     let imputacionesAValidar: ImputacionDto[] | null = imputaciones ?? null
     if (!imputacionesAValidar && cambiaImputable) {
       // Cambió lo imputable y no vino reparto: con UNA sola obra la RPC ajusta

@@ -79,6 +79,8 @@ export const VERBOS: Record<string, string> = {
   // Cobranzas de Ventas (2026-09-24). `anular` y `upload-url` ya están arriba.
   imputar: 'imputar', marcar: 'marcar saldo', importar: 'importar', vencimiento: 'cambiar vencimiento',
   adjunto: 'adjuntar certificado', 'descartar-pendiente': 'descartar adjunto pendiente',
+  // Compras: factura «archivo primero» (20260924u).
+  'upload-lectura': 'subir adjunto', leer: 'leer comprobante', 'lectura-pendiente': 'descartar lectura',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
