@@ -81,6 +81,9 @@ const ModuloPermisosSchema = z.object({
   // Alquiler: gestionar documentación de máquinas (póliza de seguro,
   // aseguradora y vencimiento) sin ser admin. El resto del ABM sigue admin-only.
   gestionar_docs:    z.boolean().optional(),
+  // Alquiler: dar de alta y editar máquinas, clientes, obras y asignaciones
+  // sin ser admin. Borrar sigue admin-only.
+  gestionar_abm:     z.boolean().optional(),
   // Logística: anular (borrar) cobros PENDIENTES de facturación sin tener
   // eliminación del módulo entero. Los cobros ya cobrados siguen bloqueados.
   anular_cobros:     z.boolean().optional(),

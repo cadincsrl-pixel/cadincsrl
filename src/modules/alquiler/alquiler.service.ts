@@ -68,7 +68,9 @@ async function fetchAll<T>(buildQuery: (from: number, to: number) => any): Promi
 //   - operador/encargado (cualquier usuario con el módulo que NO sea jefe de
 //                        obra) → ve y carga TODO. El ABM (crear/borrar
 //                        máquinas/obras/clientes/cobros) sigue siendo
-//                        admin-only vía `requireAdmin`.
+//                        admin-only vía `requireAdmin`, salvo los flags
+//                        gestionar_abm (alta/edición), gestionar_cobros y
+//                        gestionar_docs. Borrar es siempre admin.
 //   - jefe de obra     → ve (read-only) SOLO las obras donde es jefe
 //                        (jefe_obra_user_id = él). El read-only sale del gate
 //                        de acción: tiene `lectura`, no creacion/actualizacion.
@@ -162,6 +164,20 @@ async function requireAdmin(userId: string): Promise<void> {
   }
 }
 
+// Alta y edición de máquinas, clientes, obras y asignaciones: admin o flag
+// `permisos.alquiler.gestionar_abm` (2026-09-24). Nació porque Alina maneja el
+// día a día de alquiler y cada cliente u obra nueva la dejaba esperando al
+// admin. BORRAR sigue siendo admin-only (requireAdmin en cada delete).
+async function requireGestionAbm(userId: string): Promise<{ esAdmin: boolean }> {
+  const { data } = await supabaseAdmin.from('profiles').select('rol, permisos').eq('id', userId).single()
+  if (data?.rol === 'admin') return { esAdmin: true }
+  const flag = (data?.permisos as Record<string, Record<string, unknown>> | null)?.alquiler?.gestionar_abm
+  if (flag !== true) {
+    forbidden('Necesitás el permiso "Gestionar flota, obras y clientes" de Alquiler para dar de alta o editar')
+  }
+  return { esAdmin: false }
+}
+
 // Cobros: admin o flag `permisos.alquiler.gestionar_cobros` (2026-07-17).
 // Primer flag no-admin del módulo: permite a un operador cargar/editar cobros
 // sin abrir el resto del ABM (flota/obras/clientes siguen con requireAdmin).
@@ -226,7 +242,7 @@ export const alquilerService = {
   },
 
   async createMaquina(dto: CreateMaquinaDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionAbm(userId)
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_maquinas')
@@ -238,12 +254,15 @@ export const alquilerService = {
   },
 
   async updateMaquina(id: number, dto: UpdateMaquinaDto, token: string, userId: string) {
-    // Admin edita todo. No-admin con flag gestionar_docs: SOLO los campos de
-    // seguro — el modal manda el form completo, así que acá se filtra (los
-    // demás campos del dto se descartan en vez de rechazar el request).
-    const { esAdmin } = await requireGestionDocs(userId)
+    // Admin o flag gestionar_abm edita todo. No-admin con solo gestionar_docs:
+    // SOLO los campos de seguro — el modal manda el form completo, así que acá
+    // se filtra (los demás campos del dto se descartan en vez de rechazar).
+    const { data: perfil } = await supabaseAdmin.from('profiles').select('rol, permisos').eq('id', userId).single()
+    const editaTodo = perfil?.rol === 'admin'
+      || (perfil?.permisos as Record<string, Record<string, unknown>> | null)?.alquiler?.gestionar_abm === true
+    if (!editaTodo) await requireGestionDocs(userId)
     let cambios: UpdateMaquinaDto = dto
-    if (!esAdmin) {
+    if (!editaTodo) {
       cambios = {}
       if (dto.seguro !== undefined)       cambios.seguro = dto.seguro
       if (dto.seguro_vence !== undefined) cambios.seguro_vence = dto.seguro_vence
@@ -325,7 +344,7 @@ export const alquilerService = {
   },
 
   async createCliente(dto: CreateClienteDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionAbm(userId)
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_clientes')
@@ -336,7 +355,7 @@ export const alquilerService = {
   },
 
   async updateCliente(id: number, dto: UpdateClienteDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionAbm(userId)
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_clientes')
@@ -390,7 +409,7 @@ export const alquilerService = {
   },
 
   async createObra(dto: CreateObraDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionAbm(userId)
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_obras')
@@ -402,7 +421,7 @@ export const alquilerService = {
   },
 
   async updateObra(id: number, dto: UpdateObraDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionAbm(userId)
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_obras')
@@ -447,7 +466,7 @@ export const alquilerService = {
   },
 
   async createObraMaquina(obraId: number, dto: CreateObraMaquinaDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionAbm(userId)
     const supabase = createSupabaseClient(token)
     const { data, error } = await supabase
       .from('alquiler_obra_maquinas')
@@ -473,7 +492,7 @@ export const alquilerService = {
   },
 
   async updateObraMaquina(id: number, dto: UpdateObraMaquinaDto, token: string, userId: string) {
-    await requireAdmin(userId)
+    await requireGestionAbm(userId)
     const supabase = createSupabaseClient(token)
     // Patch flexible: solo toca lo que vino en el body.
     const patch: Record<string, unknown> = { updated_by: userId }
