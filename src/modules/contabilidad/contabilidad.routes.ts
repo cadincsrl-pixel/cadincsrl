@@ -100,6 +100,10 @@ const uid = (c: any): string => c.get('user').id
 
 ctb.get('/ejercicios', lectura, handler(async (c) => periodosService.ejercicios(db(c))))
 
+// Abrir el ejercicio siguiente (20260928e): mismo permiso que cerrar/reabrir.
+ctb.post('/ejercicios/siguiente', lectura, actualizacion, tabPeriodos, flagCerrar, handler(async (c) =>
+  periodosService.abrirSiguiente(uid(c), db(c))))
+
 ctb.get('/periodos', lectura, valida('query', PeriodosQuerySchema), handler(async (c) =>
   periodosService.listar(c.req.valid('query').ejercicio_id, db(c))))
 

@@ -89,6 +89,8 @@ export const VERBOS: Record<string, string> = {
   'importar-arca': 'importar de ARCA', 'imputar-lote': 'imputar en lote', 'marcar-pagadas': 'marcar pagadas en lote',
   // Contabilidad fase 3 (motor de asientos) y líquido de la CVLP en Ventas.
   contabilizar: 'contabilizar', liquido: 'cargar líquido',
+  // Contabilidad: abrir el ejercicio siguiente desde Períodos (20260928e).
+  siguiente: 'abrir el siguiente',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
@@ -176,6 +178,7 @@ export const ENTIDADES: Record<string, string> = {
   // POST /contabilidad/cuentas/importar → «importar cuenta contable».
   contabilidad: 'contabilidad', 'contabilidad/asientos': 'asiento contable',
   'contabilidad/cuentas': 'cuenta contable', 'contabilidad/periodos': 'período contable',
+  'contabilidad/ejercicios': 'ejercicio contable',
   'contabilidad/tesoreria': 'cuenta de tesorería',
   // Fase 3: POST /contabilidad/automaticos/contabilizar → «contabilizar contabilizador»;
   // PUT /contabilidad/mapeos → «actualizar mapeo contable».

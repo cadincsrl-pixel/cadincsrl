@@ -491,6 +491,13 @@ export const ImportarRecibidosSchema = z.object({
    * `pago_a_reconstruir` y no cuentan como deuda, ni se aprueban, ni avisan.
    */
   historica:   z.boolean().default(false),
+  /**
+   * Período IVA de todo el archivo (20260928g): el del contador viene por
+   * período de IVA y trae comprobantes de meses anteriores informados en ese
+   * mes. Primer día del mes; se aplica a las filas con fecha de ese mes o
+   * anterior (las posteriores conservan su mes).
+   */
+  periodo_iva: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-01$/, 'PERIODO_IVA_INVALIDO').nullable().optional(),
 }).strict().superRefine((b, ctx) => {
   const n = [b.filas !== undefined, b.csv !== undefined, b.matriz !== undefined].filter(Boolean).length
   if (n !== 1) ctx.addIssue({ code: 'custom', path: ['filas'], message: 'SIN_FILAS' })

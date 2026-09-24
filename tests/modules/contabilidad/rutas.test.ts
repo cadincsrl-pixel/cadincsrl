@@ -44,6 +44,7 @@ vi.mock('../../../src/lib/supabase.js', () => {
 import ctb from '../../../src/modules/contabilidad/contabilidad.routes.js'
 import { accionesDePeriodos, ejercicioPorDefecto } from '../../../src/modules/contabilidad/periodos.service.js'
 import { parseRoute } from '../../../src/middleware/audit.js'
+import type { ImportarFila } from '../../../src/modules/contabilidad/plan-import.js'
 
 const json = (body: unknown) => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 const post = (path: string, body: unknown = {}) => ctb.request(path, { method: 'POST', ...json(body) })
@@ -88,6 +89,9 @@ beforeEach(() => {
         confirmado: args.p_confirmar, total_filas: args.p_filas.length, nuevas: args.p_filas.length, duplicadas: 0, errores: 0,
         filas: args.p_filas.map((f: any, i: number) => ({ indice: i + 1, estado: 'nueva', error: null, detalle: null, ...f, nivel: 1, padre_codigo: null, cuenta_id: null })),
       })
+    }
+    if (name === 'cont_abrir_ejercicio_siguiente') {
+      return chain({ ejercicio: { id: 2, nombre: '2027/28', desde: '2027-07-01', hasta: '2028-06-30', estado: 'abierto' }, periodos: 12 })
     }
     if (name === 'cont_cerrar_periodo') return chain({ periodo: PERIODOS[1], numerados: 4, desde_numero: 1, hasta_numero: 4 })
     if (name === 'cont_libro_diario') return chain({ total_asientos: 3, total_debe: 1, total_haber: 1, items: [{}, {}, {}] })
@@ -195,6 +199,25 @@ describe('períodos', () => {
     expect(b).toMatchObject({ numerados: 4, periodo: { id: 2, puede_cerrar: false, bloqueo_cerrar: 'HAY_BORRADORES' } })
   })
 
+  it('abrir el ejercicio siguiente pide cerrar_periodos; admin lo abre con su user id', async () => {
+    state.profile = MARIANA
+    expect((await post('/ejercicios/siguiente')).status).toBe(403)
+    expect(llamada('cont_abrir_ejercicio_siguiente')).toBeUndefined()
+    state.profile = ADMIN
+    const r = await post('/ejercicios/siguiente')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ ejercicio: { nombre: '2027/28' }, periodos: 12 })
+    expect(llamada('cont_abrir_ejercicio_siguiente')).toEqual({ p_user_id: 'u-1' })
+  })
+
+  it('abrir el siguiente cuando ya existe → 409 EJERCICIO_SIGUIENTE_YA_EXISTE', async () => {
+    state.profile = ADMIN
+    rpcMock.mockImplementation(() => Promise.resolve({ data: null, error: { code: 'P0001', message: 'EJERCICIO_SIGUIENTE_YA_EXISTE', details: '{"nombre":"2027/28"}' } }))
+    const r = await post('/ejercicios/siguiente')
+    expect(r.status).toBe(409)
+    expect(await r.json()).toMatchObject({ error: 'EJERCICIO_SIGUIENTE_YA_EXISTE', detail: { nombre: '2027/28' } })
+  })
+
   it('ejercicio inexistente → 404', async () => {
     state.profile = ADMIN
     expect((await get('/periodos?ejercicio_id=99')).status).toBe(404)
@@ -225,6 +248,38 @@ describe('plan de cuentas', () => {
     expect(r.status).toBe(422)
     expect((await r.json() as any).error).toBe('IMPORTACION_CON_ERRORES')
     expect(llamada('cont_importar_plan')).toMatchObject({ p_confirmar: false })
+  })
+
+  it('importar formato Finnegans: convierte, no manda las deshabilitadas y devuelve el código original', async () => {
+    state.profile = MARIANA
+    const csv = 'codigo;descripcion;nivel;cuenta_madre;imputable;capitulo;saldo_normal;habilitada\n'
+      + '1000000;ACTIVO;1;;NO;ACTIVO;DEUDOR;SI\n1100000;VIEJA;2;1000000;NO;ACTIVO;DEUDOR;NO\n1200000;NO CORRIENTE;2;1000000;NO;ACTIVO;DEUDOR;SI'
+    const r = await post('/cuentas/importar', { csv })
+    expect(r.status).toBe(200)
+    expect(llamada('cont_importar_plan')).toMatchObject({
+      p_filas: [
+        { codigo: '1', nombre: 'ACTIVO', rubro: 'activo', imputable: false, auxiliar: null },
+        { codigo: '1.2', nombre: 'NO CORRIENTE', rubro: 'activo', imputable: false, auxiliar: null },
+      ],
+    })
+    const b = await r.json() as { filas: ImportarFila[] }
+    expect(b).toMatchObject({ formato: 'finnegans', total_filas: 3, nuevas: 2, omitidas: 1, errores: 0 })
+    expect(b.filas.map((f) => [f.indice, f.codigo, f.codigo_original, f.estado])).toEqual([
+      [1, '1', '1000000', 'nueva'], [2, '1.1', '1100000', 'omitida'], [3, '1.2', '1200000', 'nueva'],
+    ])
+  })
+
+  it('IMPORTACION_CON_ERRORES de la RPC vuelve con los índices del archivo', async () => {
+    state.profile = MARIANA
+    rpcMock.mockImplementation(() => Promise.resolve({ data: null, error: {
+      code: 'P0001', message: 'IMPORTACION_CON_ERRORES',
+      details: JSON.stringify({ errores: [{ indice: 2, estado: 'error', error: 'PADRE_IMPUTABLE', detalle: { padre_codigo: '1' }, codigo: '1.2' }] }),
+    } }))
+    const csv = 'codigo;descripcion;nivel;cuenta_madre;imputable;capitulo;saldo_normal;habilitada\n'
+      + '1000000;ACTIVO;1;;SI;ACTIVO;DEUDOR;SI\n1100000;VIEJA;2;1000000;NO;ACTIVO;DEUDOR;NO\n1200000;NO CORRIENTE;2;1000000;NO;ACTIVO;DEUDOR;SI'
+    const r = await post('/cuentas/importar', { csv, confirmar: true })
+    expect(r.status).toBe(422)
+    expect((await r.json() as { detail: { errores: ImportarFila[] } }).detail.errores).toEqual([expect.objectContaining({ indice: 3, codigo: '1.2', codigo_original: '1200000', error: 'PADRE_IMPUTABLE' })])
   })
 
   it('importar limpio confirma', async () => {
@@ -354,6 +409,7 @@ describe('parseRoute — módulo contabilidad', () => {
     ['POST',   '/api/contabilidad/asientos/5/anular',       { modulo: 'contabilidad', entidad: 'asiento contable', accion: 'anular', entidadId: '5' }],
     ['POST',   '/api/contabilidad/periodos/3/cerrar',       { modulo: 'contabilidad', entidad: 'período contable', accion: 'cerrar', entidadId: '3' }],
     ['POST',   '/api/contabilidad/periodos/3/reabrir',      { modulo: 'contabilidad', entidad: 'período contable', accion: 'reabrir', entidadId: '3' }],
+    ['POST',   '/api/contabilidad/ejercicios/siguiente',    { modulo: 'contabilidad', entidad: 'ejercicio contable', accion: 'abrir el siguiente' }],
     ['POST',   '/api/contabilidad/cuentas/importar',        { modulo: 'contabilidad', entidad: 'cuenta contable', accion: 'importar' }],
     ['POST',   '/api/contabilidad/cuentas/9/baja',          { modulo: 'contabilidad', entidad: 'cuenta contable', accion: 'dar de baja', entidadId: '9' }],
     ['POST',   '/api/contabilidad/cuentas/9/alta',          { modulo: 'contabilidad', entidad: 'cuenta contable', accion: 'dar de alta', entidadId: '9' }],

@@ -14,7 +14,7 @@ import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { ContabilidadHttpError, mapRpcError, type PgError } from './contabilidad.errors.js'
 import { rpc } from './comun.js'
-import { filasDeEntrada, mezclarErroresLocales, type ImportarFila } from './plan-import.js'
+import { armarVistaPrevia, filasDeEntrada, formatoDeEntrada, type FormatoPlan, type ImportarFila } from './plan-import.js'
 import type { CuentaDto, UpdateCuentaDto } from './contabilidad.schema.js'
 
 export { normalizarFila, parsearCsv, filasDeEntrada, mezclarErroresLocales } from './plan-import.js'
@@ -27,6 +27,9 @@ export type CtbCuenta = Record<string, unknown> & {
 
 export interface ImportarRes {
   confirmado: boolean; total_filas: number; nuevas: number; duplicadas: number; errores: number; filas: ImportarFila[]
+  /** Filas `habilitada = NO` del formato Finnegans (no se importan). */
+  omitidas?: number
+  formato?: FormatoPlan
 }
 
 const MAX_FILAS = 2000
@@ -108,8 +111,11 @@ export const cuentasService = {
 
   /**
    * Vista previa (`confirmar=false`) o importación (todo o nada). Las filas
-   * con `imputable` ilegible se marcan acá y hacen fallar la confirmación
-   * igual que un error de la RPC (422 IMPORTACION_CON_ERRORES).
+   * con `imputable` ilegible, y en el formato Finnegans las que no se pueden
+   * convertir o cuya madre no coincide, se marcan acá y hacen fallar la
+   * confirmación igual que un error de la RPC (422 IMPORTACION_CON_ERRORES).
+   * Las `habilitada = NO` de Finnegans no se mandan a la RPC: vuelven como
+   * `omitida`.
    */
   async importar(
     entrada: { filas?: Record<string, string | number | boolean | null>[]; csv?: string; confirmar: boolean },
@@ -121,28 +127,41 @@ export const cuentasService = {
     if (normalizadas.length > MAX_FILAS) {
       throw new ContabilidadHttpError(400, 'DEMASIADAS_FILAS', { campo: 'filas', maximo: MAX_FILAS, filas: normalizadas.length })
     }
-    const locales = normalizadas.map((n, i) => ({ i, e: n.error })).filter((x) => x.e)
-    const pFilas = normalizadas.map((n) => n.fila)
+    const formato = formatoDeEntrada(entrada)
+    const enviar = normalizadas.filter((n) => !n.omitida)
+    if (enviar.length === 0) throw new ContabilidadHttpError(400, 'SIN_FILAS', { campo: 'filas', motivo: 'todas_deshabilitadas' })
+    const hayLocales = normalizadas.some((n) => n.error)
 
-    const res = await rpc<ImportarRes>(db, 'cont_importar_plan', {
-      p_filas: pFilas, p_user_id: userId, p_confirmar: entrada.confirmar && locales.length === 0,
-    })
-    if (locales.length === 0) return res
+    let res: ImportarRes
+    try {
+      res = await rpc<ImportarRes>(db, 'cont_importar_plan', {
+        p_filas: enviar.map((n) => n.fila), p_user_id: userId, p_confirmar: entrada.confirmar && !hayLocales,
+      })
+    } catch (e) {
+      // Los índices de la RPC cuentan solo lo enviado: volverlos a la fila del archivo.
+      if (e instanceof ContabilidadHttpError && e.code === 'IMPORTACION_CON_ERRORES') {
+        const errs = ((e.detail as { errores?: ImportarFila[] } | undefined)?.errores ?? [])
+        const filas = armarVistaPrevia(normalizadas, errs).filter((f) => f.estado === 'error')
+        throw new ContabilidadHttpError(422, 'IMPORTACION_CON_ERRORES', { errores: filas })
+      }
+      throw e
+    }
 
-    const filas = mezclarErroresLocales(res.filas, locales.map((x) => ({ indice: x.i, code: x.e!.code, detalle: x.e!.detalle })))
+    const filas = armarVistaPrevia(normalizadas, res.filas)
     const conError = filas.filter((f) => f.estado === 'error')
     const out: ImportarRes = {
       ...res,
-      confirmado: false,
+      confirmado: res.confirmado && !hayLocales,
+      total_filas: normalizadas.length,
       nuevas: filas.filter((f) => f.estado === 'nueva').length,
       duplicadas: filas.filter((f) => f.estado === 'duplicada').length,
       errores: conError.length,
+      omitidas: filas.filter((f) => f.estado === 'omitida').length,
+      formato,
       filas,
     }
-    if (entrada.confirmar) {
-      throw new ContabilidadHttpError(422, 'IMPORTACION_CON_ERRORES', {
-        errores: conError.map((f) => ({ indice: f.indice, codigo: f.codigo, error: f.error, detalle: f.detalle })),
-      })
+    if (entrada.confirmar && conError.length > 0) {
+      throw new ContabilidadHttpError(422, 'IMPORTACION_CON_ERRORES', { errores: conError })
     }
     return out
   },

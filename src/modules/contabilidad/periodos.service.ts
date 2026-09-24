@@ -110,6 +110,15 @@ export const periodosService = {
     return { ...r, periodo: await this.conAcciones(r.periodo, db) }
   },
 
+  /**
+   * Abre el ejercicio que sigue al último (julio a junio) con sus 12
+   * períodos (`cont_abrir_ejercicio_siguiente`, 20260928e). 409
+   * EJERCICIO_SIGUIENTE_YA_EXISTE si el último todavía no empezó.
+   */
+  async abrirSiguiente(userId: string, db: SupabaseClient = supabase): Promise<{ ejercicio: CtbEjercicio; periodos: number }> {
+    return rpc<{ ejercicio: CtbEjercicio; periodos: number }>(db, 'cont_abrir_ejercicio_siguiente', { p_user_id: userId })
+  },
+
   async reabrir(id: number, motivo: string, userId: string, db: SupabaseClient = supabase) {
     const r = await rpc<{ periodo: PeriodoFila; desnumerados: number }>(
       db, 'cont_reabrir_periodo', { p_periodo_id: id, p_motivo: motivo.trim(), p_user_id: userId })

@@ -6,7 +6,8 @@
  * mano, proveedor por CUIT (lo crea si no existe), desglose, período IVA =
  * mes de la fecha. Con `confirmar=false` es VISTA PREVIA y no escribe nada;
  * con `true` es TODO O NADA (422 IMPORTACION_CON_ERRORES si alguna fila
- * falla). Las facturas entran impagas, `sin_imputar` (sin concepto ni reparto
+ * falla). Con `periodo_iva` (20260928g) las filas de ese mes o anteriores
+ * entran con ese período IVA. Las facturas entran impagas, `sin_imputar` (sin concepto ni reparto
  * por obra) y no se pueden aprobar hasta imputarlas. Con `historica`
  * (20260928) son de meses ya pagados: `pago_a_reconstruir`, fuera de la deuda.
  *
@@ -72,10 +73,11 @@ export const importarArcaService = {
       p_filas: filas, p_user_id: userId, p_confirmar: dto.confirmar,
       p_archivo: dto.archivo ?? '', p_hash: dto.hash_sha256 ?? null,
       p_historica: dto.historica ?? false,
+      p_periodo_iva: dto.periodo_iva ?? null,
     })
     if (error) throw mapRpcError(error)
     const r = (data ?? {}) as Record<string, unknown>
-    console.info(`[pagos] importar ARCA recibidos ${dto.confirmar ? 'CONFIRMADO' : 'vista previa'}${dto.historica ? ' (histórica)' : ''} «${dto.archivo ?? ''}» por ${userId}: `
+    console.info(`[pagos] importar ARCA recibidos ${dto.confirmar ? 'CONFIRMADO' : 'vista previa'}${dto.historica ? ' (histórica)' : ''}${dto.periodo_iva ? ` (período IVA ${dto.periodo_iva.slice(0, 7)})` : ''} «${dto.archivo ?? ''}» por ${userId}: `
       + `${String(r.total_filas)} filas, ${String(r.nuevas)} nuevas, ${String(r.duplicadas)} duplicadas, ${String(r.errores)} con error, `
       + `${Array.isArray(r.proveedores_nuevos) ? r.proveedores_nuevos.length : 0} proveedores nuevos`
       + (r.importacion_id != null ? ` (importación ${String(r.importacion_id)})` : ''))

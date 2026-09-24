@@ -344,6 +344,20 @@ describe('compras de meses ya pagados (pago_a_reconstruir)', () => {
     expect((await post('/facturas/importar-arca', { filas: [FILA], historica: 'si' })).status).toBe(400)
   })
 
+  it('importar: periodo_iva viaja como p_periodo_iva (null si no viene) y valida el formato (20260928g)', async () => {
+    state.profile = IMPORTADOR
+    await post('/facturas/importar-arca', { filas: [FILA] })
+    expect(llamada('pagos_importar_recibidos')).toMatchObject({ p_periodo_iva: null })
+    rpcMock.mockClear()
+    expect((await post('/facturas/importar-arca', { filas: [FILA], periodo_iva: '2026-07-01' })).status).toBe(200)
+    expect(llamada('pagos_importar_recibidos')).toMatchObject({ p_periodo_iva: '2026-07-01' })
+    rpcMock.mockClear()
+    for (const malo of ['2026-07-15', '2026-13-01', '07/2026']) {
+      expect((await post('/facturas/importar-arca', { filas: [FILA], periodo_iva: malo })).status).toBe(400)
+    }
+    expect(llamada('pagos_importar_recibidos')).toBeUndefined()
+  })
+
   it('lista y resumen filtran pago_a_reconstruir solo si viene', async () => {
     state.profile = COMPRAS
     await pagos.request('/facturas?pago_a_reconstruir=0')
