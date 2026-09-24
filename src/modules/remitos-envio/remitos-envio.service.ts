@@ -2,6 +2,7 @@ import { createSupabaseClient } from '../../lib/supabase.js'
 import { registrarItemEvento } from '../../lib/item-eventos.js'
 import type { CreateRemitoEnvioDto } from './remitos-envio.schema.js'
 import { descConColor } from '../../lib/desc-con-color.js'
+import { sumarStock } from '../../lib/stock-actual.js'
 
 export const remitosEnvioService = {
 
@@ -198,21 +199,11 @@ export const remitosEnvioService = {
         // total) ingresa SU cantidad al stock: el material llegó físicamente.
         // (Los despachos de_deposito ya descontaron stock al despachar.)
         if (updated && esDeposito && itemPrev.estado === 'comprado' && itemPrev.material_id) {
-          const { data: mat } = await supabase
-            .from('stock_materiales').select('stock_actual').eq('id', itemPrev.material_id).maybeSingle()
-          if (mat) {
-            await supabase
-              .from('stock_materiales')
-              // Solo stock. Hasta el 2026-09-08 aca tambien se pisaba precio_ref
-              // con el precio de esta compra, sin mirar unidad ni IVA: un precio
-              // curado a mano se perdia con la siguiente recepcion. El catalogo
-              // se actualiza al COMPRAR, con confirmacion (actualizar_catalogo).
-              .update({
-                stock_actual: Number(mat.stock_actual) + aEnviar,
-                updated_by: userId,
-              })
-              .eq('id', itemPrev.material_id)
-          }
+          // Solo stock. Hasta el 2026-09-08 aca tambien se pisaba precio_ref
+          // con el precio de esta compra, sin mirar unidad ni IVA: un precio
+          // curado a mano se perdia con la siguiente recepcion. El catalogo
+          // se actualiza al COMPRAR, con confirmacion (actualizar_catalogo).
+          await sumarStock(itemPrev.material_id, aEnviar, userId)
           await supabase.from('stock_movimientos').insert({
             material_id:       itemPrev.material_id,
             tipo:              'entrada',

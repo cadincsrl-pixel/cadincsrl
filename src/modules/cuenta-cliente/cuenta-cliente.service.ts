@@ -323,10 +323,14 @@ export const cuentaClienteService = {
       // mano de obra. Si entraran acá, esa mano de obra se usaba como plata
       // libre para marcar Cobrado materiales que el cliente no pagó.
       supabaseAdmin.from('cuenta_cliente_cobros').select('id, fecha, monto').eq('obra_cod', obraCod).is('certificado_id', null).order('fecha').order('id'),
-      supabaseAdmin.from('materiales_a_cuenta_cliente').select('cobro_id, monto_cobrado').eq('obra_cod', obraCod).not('cobro_id', 'is', null),
+      // Paginado (§5.7): una obra grande pasa las 1000 filas y el tope cortaba
+      // en silencio, sobreestimando la capacidad libre de cada cobro.
+      todasLasFilas<{ cobro_id: number | null; monto_cobrado: number | null }>((d, h) =>
+        supabaseAdmin.from('materiales_a_cuenta_cliente').select('cobro_id, monto_cobrado').eq('obra_cod', obraCod).not('cobro_id', 'is', null).order('id').range(d, h))
+        .then(data => ({ data, error: null })),
       supabaseAdmin.from('cuenta_admin_imputaciones').select('sem_key, pata, cobro_id, monto').eq('obra_cod', obraCod),
     ])
-    for (const r of [cobrosR, imputMat, imputSem]) if (r.error) throw new Error(r.error.message)
+    for (const r of [cobrosR, imputSem]) if (r.error) throw new Error(r.error.message)
     const usado = new Map<number, number>()
     for (const m of imputMat.data ?? []) usado.set(m.cobro_id!, (usado.get(m.cobro_id!) ?? 0) + Number(m.monto_cobrado ?? 0))
     for (const i of imputSem.data ?? []) usado.set(i.cobro_id, (usado.get(i.cobro_id) ?? 0) + Number(i.monto))
@@ -338,10 +342,12 @@ export const cuentaClienteService = {
 
     // Materiales con precio, todavía vivos.
     const [{ data: mats, error: eMat }, { data: notas, error: eNotas }] = await Promise.all([
-      supabaseAdmin
-        .from('materiales_a_cuenta_cliente')
-        .select('id, item_id, fecha_resolucion, precio_total, pagado_por, a_cargo_de, certificado_id')
-        .eq('obra_cod', obraCod).is('cobro_id', null).gt('precio_total', 0),
+      todasLasFilas<{ id: number; item_id: number | null; fecha_resolucion: string | null; precio_total: number; pagado_por: string | null; a_cargo_de: string | null; certificado_id: number | null }>((d, h) =>
+        supabaseAdmin
+          .from('materiales_a_cuenta_cliente')
+          .select('id, item_id, fecha_resolucion, precio_total, pagado_por, a_cargo_de, certificado_id')
+          .eq('obra_cod', obraCod).is('cobro_id', null).gt('precio_total', 0).order('id').range(d, h))
+        .then(data => ({ data, error: null as { message: string } | null })),
       // Devoluciones (20260913k): lo devuelto ya no se le debe al cliente, así
       // que el renglón necesita MENOS plata para quedar cubierto. Se descuenta
       // del ítem que la originó y NO de la capacidad del cobro: una nota no es
@@ -427,14 +433,21 @@ export const cuentaClienteService = {
 
     const { asignados, sinCubrir } = asignarImputaciones(items, cobros)
 
-    // Escribir: materiales primero (falla temprano si algo cambió), semanas después.
+    // Escribir: materiales primero (falla temprano si algo cambió), semanas
+    // después. Cada update re-chequea en la misma sentencia que el renglón
+    // siga libre (sin cobro NI certificado) y devuelve si tocó la fila: lo
+    // que otro proceso tomó en el medio no se informa como congelado
+    // (revisión 23/09).
+    const noAplicados = new Set<string>()
     for (const a of asignados) {
       if (a.tipo === 'material') {
-        const { error } = await supabaseAdmin
+        const { data: tocadas, error } = await supabaseAdmin
           .from('materiales_a_cuenta_cliente')
           .update({ cobro_id: a.cobro_id, monto_cobrado: a.monto, updated_at: new Date().toISOString() })
-          .eq('id', Number(a.clave)).is('cobro_id', null)
+          .eq('id', Number(a.clave)).is('cobro_id', null).is('certificado_id', null)
+          .select('id')
         if (error) throw new Error(error.message)
+        if (!tocadas?.length) noAplicados.add(a.clave)
       }
     }
     const semanasNuevas = asignados
@@ -444,16 +457,21 @@ export const cuentaClienteService = {
         monto: a.monto, cobro_id: a.cobro_id, created_by: userId,
       }))
     if (semanasNuevas.length) {
-      const { error } = await supabaseAdmin.from('cuenta_admin_imputaciones').insert(semanasNuevas)
+      // Idempotente: un doble click (o dos personas a la vez) chocaba con el
+      // único (obra, semana, pata) y tiraba 500 con los materiales ya
+      // congelados. La semana que ya estaba, queda como estaba.
+      const { error } = await supabaseAdmin.from('cuenta_admin_imputaciones')
+        .upsert(semanasNuevas, { onConflict: 'obra_cod,sem_key,pata', ignoreDuplicates: true })
       if (error) throw new Error(error.message)
     }
+    const aplicados = asignados.filter(a => !(a.tipo === 'material' && noAplicados.has(a.clave)))
 
     const suma = (xs: { monto: number }[]) => Math.round(xs.reduce((s, x) => s + x.monto, 0) * 100) / 100
     return {
       congelado: {
         operarios:    { n: asignados.filter(a => a.tipo === 'operarios').length,    monto: suma(asignados.filter(a => a.tipo === 'operarios')) },
         contratistas: { n: asignados.filter(a => a.tipo === 'contratistas').length, monto: suma(asignados.filter(a => a.tipo === 'contratistas')) },
-        materiales:   { n: asignados.filter(a => a.tipo === 'material').length,     monto: suma(asignados.filter(a => a.tipo === 'material')) },
+        materiales:   { n: aplicados.filter(a => a.tipo === 'material').length,     monto: suma(aplicados.filter(a => a.tipo === 'material')) },
       },
       sin_cubrir: { n: sinCubrir.length, monto: suma(sinCubrir) },
     }

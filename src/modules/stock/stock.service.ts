@@ -15,6 +15,7 @@ export interface MaterialCompraProveedor {
 export interface MaterialComprasResumen { compras: MaterialCompra[]; por_proveedor: MaterialCompraProveedor[] }
 import type { CreateRubroDto, UpdateRubroDto, CreateMaterialDto, UpdateMaterialDto, CreateMovimientoDto, FraccionarDto } from './stock.schema.js'
 import { puedeActualizarCatalogo } from '../../middleware/permission.js'
+import { sumarStock } from '../../lib/stock-actual.js'
 
 /**
  * Estados de precio que calcula `v_catalogo_materiales` (20260904z), más tres
@@ -1023,17 +1024,7 @@ export const stockService = {
 
     // Entradas y salidas: aplicar delta inmediato.
     const delta = dto.tipo === 'entrada' ? dto.cantidad : -dto.cantidad
-    const { data: mat } = await supabase
-      .from('stock_materiales')
-      .select('stock_actual')
-      .eq('id', dto.material_id)
-      .single()
-    if (mat) {
-      await supabase
-        .from('stock_materiales')
-        .update({ stock_actual: mat.stock_actual + delta, updated_by: userId })
-        .eq('id', dto.material_id)
-    }
+    await sumarStock(dto.material_id, delta, userId)
     return mov
   },
 
@@ -1077,21 +1068,10 @@ export const stockService = {
     if (mov.tipo !== 'ajuste') throw new Error('Solo se aprueban ajustes')
     if (mov.estado !== 'pendiente') throw new Error('El ajuste ya no está pendiente')
 
-    // Aplicar delta al stock.
-    const { data: mat } = await supabase
-      .from('stock_materiales')
-      .select('stock_actual')
-      .eq('id', mov.material_id)
-      .single()
-    if (!mat) throw new Error('Material no existe')
-
-    const nuevoStock = mat.stock_actual + mov.cantidad
-    await supabase
-      .from('stock_materiales')
-      .update({ stock_actual: nuevoStock, updated_by: userId })
-      .eq('id', mov.material_id)
-
-    // Marcar como aprobado.
+    // Primero se marca aprobado (con guard de estado) y DESPUÉS se mueve el
+    // stock con un delta. Antes era al revés: si otro admin lo había
+    // aprobado en paralelo, el «revertir» escribía el stock viejo absoluto y
+    // se comía cualquier despacho concurrente (revisión 23/09).
     const { data: actualizado, error: errUp } = await supabase
       .from('stock_movimientos')
       .update({
@@ -1104,12 +1084,17 @@ export const stockService = {
       .select()
       .single()
     if (errUp || !actualizado) {
-      // Otro admin lo aprobó/rechazó en paralelo — revertimos el stock.
-      await supabase
-        .from('stock_materiales')
-        .update({ stock_actual: mat.stock_actual, updated_by: userId })
-        .eq('id', mov.material_id)
+      // Otro admin lo aprobó/rechazó en paralelo: no se tocó el stock.
       throw new Error('El ajuste ya fue procesado por otro usuario')
+    }
+    try {
+      await sumarStock(mov.material_id, Number(mov.cantidad), userId)
+    } catch (e) {
+      // El stock no se movió: el ajuste vuelve a pendiente para reintentar.
+      await supabase.from('stock_movimientos')
+        .update({ estado: 'pendiente', aprobado_por: null, aprobado_at: null })
+        .eq('id', movId)
+      throw e
     }
     return actualizado
   },

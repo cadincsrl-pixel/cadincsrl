@@ -24,6 +24,7 @@ function mapRpcError(error: { message?: string; details?: string | null; code?: 
     /ITEM_PROVEEDOR_DISTINTO/.test(msg)    ? 'ITEM_PROVEEDOR_DISTINTO' :
     /CANTIDAD_EXCEDE_PENDIENTE/.test(msg)  ? 'CANTIDAD_EXCEDE_PENDIENTE' :
     /ITEM_COBRADO/.test(msg)               ? 'ITEM_COBRADO' :
+    /ITEM_DE_OTRA_OBRA/.test(msg)          ? 'ITEM_DE_OTRA_OBRA' :
     error.code || 'UNKNOWN'
   switch (code) {
     case 'SIN_ITEMS':                  return new StockProvHttpError(400, code)
@@ -35,6 +36,9 @@ function mapRpcError(error: { message?: string; details?: string | null; code?: 
     // La fila de la cuenta del cliente de ese item ya se cobró: un retiro más
     // le pisaría cantidad y total (20260904aa). El detail trae el cobro_id.
     case 'ITEM_COBRADO':                return new StockProvHttpError(409, code, error.details ?? undefined)
+    // Renglón de un pedido de otra obra (20260924t): la obra del retiro no la
+    // elige quien llama, tiene que ser la del pedido.
+    case 'ITEM_DE_OTRA_OBRA':           return new StockProvHttpError(409, code)
     default:                            return new StockProvHttpError(500, 'DB_ERROR', { dbMessage: msg })
   }
 }

@@ -4,6 +4,7 @@ import { getObrasDelUsuarioCached } from '../../lib/obras-usuario.js'
 import { registrarItemEvento } from '../../lib/item-eventos.js'
 import { validarActualizacionCatalogo, fechaART } from './actualizar-catalogo.js'
 import { descConColor } from '../../lib/desc-con-color.js'
+import { sumarStock } from '../../lib/stock-actual.js'
 import type {
   CreateSolicitudDto, UpdateSolicitudDto,
   ComprarItemDto, DespacharItemDto, EnviarItemDto, EditarItemDto, DevolverItemDto,
@@ -708,25 +709,20 @@ export const solicitudesService = {
   async comprarItemEnProveedor(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
     const supabase = createSupabaseClient(token)
     // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
+    // `pagado_por` y `cantidad_comprada` van ADENTRO de la RPC (20260924t).
+    // Antes se escribían después, sin mirar el error: la entrada al galpón
+    // usaba la cantidad pedida y, si el patch fallaba, el retiro le cobraba al
+    // cliente algo que había pagado directo al proveedor.
     const { error } = await supabaseAdmin.rpc('resolver_item_en_proveedor', {
-      p_item_id:      itemId,
-      p_proveedor_id: dto.proveedor_id,
-      p_precio_unit:  dto.precio_unit,
-      p_factura_id:   dto.factura_id ?? null,
-      p_user_id:      userId,
+      p_item_id:           itemId,
+      p_proveedor_id:      dto.proveedor_id,
+      p_precio_unit:       dto.precio_unit,
+      p_factura_id:        dto.factura_id ?? null,
+      p_user_id:           userId,
+      p_cantidad_comprada: dto.cantidad_comprada ?? null,
+      p_pagado_por:        dto.pagado_por === 'cliente' ? 'cliente' : null,
     })
     if (error) throw mapRpcError(error)
-
-    // Post-RPC: persistir `pagado_por` y `cantidad_comprada` en el item (la
-    // RPC no acepta esos params aún). Cuando se retire del proveedor,
-    // _registrarMaterialCliente lee del item y usa COALESCE(cantidad_comprada,
-    // cantidad) al insertar el MCC.
-    const itemPatch: Record<string, unknown> = {}
-    if (dto.pagado_por === 'cliente') itemPatch.pagado_por = 'cliente'
-    if (dto.cantidad_comprada != null) itemPatch.cantidad_comprada = dto.cantidad_comprada
-    if (Object.keys(itemPatch).length > 0) {
-      await supabase.from('solicitud_compra_item').update(itemPatch).eq('id', itemId)
-    }
 
     const { data: item, error: selErr } = await supabase
       .from('solicitud_compra_item')
@@ -932,17 +928,7 @@ export const solicitudesService = {
 
     // Descontar stock si el ítem tiene material_id vinculado
     if (data.material_id) {
-      const { data: mat } = await supabase
-        .from('stock_materiales')
-        .select('stock_actual')
-        .eq('id', data.material_id)
-        .maybeSingle()
-      if (mat) {
-        await supabase
-          .from('stock_materiales')
-          .update({ stock_actual: mat.stock_actual - data.cantidad, updated_by: userId })
-          .eq('id', data.material_id)
-      }
+      await sumarStock(data.material_id, -Number(data.cantidad), userId)
       await supabase.from('stock_movimientos').insert({
         material_id:       data.material_id,
         tipo:              'salida',
@@ -1268,18 +1254,8 @@ export const solicitudesService = {
       .eq('solicitud_item_id', itemId)
     for (const mov of movs ?? []) {
       if (mov.material_id != null) {
-        const { data: mat } = await supabase
-          .from('stock_materiales')
-          .select('stock_actual')
-          .eq('id', mov.material_id)
-          .maybeSingle()
-        if (mat) {
-          const delta = mov.tipo === 'entrada' ? -Number(mov.cantidad) : Number(mov.cantidad)
-          await supabase
-            .from('stock_materiales')
-            .update({ stock_actual: Number(mat.stock_actual) + delta })
-            .eq('id', mov.material_id)
-        }
+        const delta = mov.tipo === 'entrada' ? -Number(mov.cantidad) : Number(mov.cantidad)
+        await sumarStock(mov.material_id, delta, userId)
       }
       await supabase.from('stock_movimientos').delete().eq('id', mov.id)
     }
@@ -1288,7 +1264,8 @@ export const solicitudesService = {
     // .is('cobro_id', null) re-chequea la imputación EN la misma sentencia:
     // si un cobro imputó la fila entre el guard de arriba y este delete
     // (carrera), la fila cobrada sobrevive en vez de dejar el pago huérfano.
-    await supabase.from('materiales_a_cuenta_cliente').delete().eq('item_id', itemId).is('cobro_id', null)
+    const { error: errDel } = await supabase.from('materiales_a_cuenta_cliente').delete().eq('item_id', itemId).is('cobro_id', null)
+    if (errDel) throw mapRpcError(errDel)
 
     await registrarItemEvento(supabase, {
       itemId,
@@ -1401,14 +1378,7 @@ export const solicitudesService = {
       .eq('motivo', 'compra')
     for (const mov of movsEntrada ?? []) {
       if (mov.material_id != null) {
-        const { data: mat } = await supabase
-          .from('stock_materiales').select('stock_actual').eq('id', mov.material_id).maybeSingle()
-        if (mat) {
-          await supabase
-            .from('stock_materiales')
-            .update({ stock_actual: Number(mat.stock_actual) - Number(mov.cantidad) })
-            .eq('id', mov.material_id)
-        }
+        await sumarStock(mov.material_id, -Number(mov.cantidad), userId)
       }
       await supabase.from('stock_movimientos').delete().eq('id', mov.id)
     }
@@ -1498,7 +1468,10 @@ export const solicitudesService = {
       updates.updated_by = userId
       // .is('cobro_id', null): si un cobro imputó la fila entre el guard y
       // este update (carrera), el precio congelado no se pisa.
-      await supabase.from('materiales_a_cuenta_cliente').update(updates).eq('item_id', itemId).is('cobro_id', null)
+      const { error: errMcc } = await supabase.from('materiales_a_cuenta_cliente').update(updates).eq('item_id', itemId).is('cobro_id', null)
+      // El renglón ya se editó: si la cuenta del cliente no acompaña, avisar en
+      // vez de devolver 200 con los dos precios distintos.
+      if (errMcc) throw mapRpcError(errMcc)
     }
 
     if (cambiaUnidad && previo) {
@@ -1516,12 +1489,9 @@ export const solicitudesService = {
           if (!(nueva > 0)) continue
           const diferencia = Number(mov.cantidad) - nueva
           if (diferencia !== 0 && mov.material_id != null) {
-            const { data: mat } = await supabase.from('stock_materiales').select('stock_actual').eq('id', mov.material_id).maybeSingle()
-            if (mat) {
-              // salida: se había descontado de más → vuelve; entrada: se había sumado de más → se resta
-              const delta = mov.tipo === 'salida' ? diferencia : -diferencia
-              await supabase.from('stock_materiales').update({ stock_actual: Number(mat.stock_actual) + delta }).eq('id', mov.material_id)
-            }
+            // salida: se había descontado de más → vuelve; entrada: se había sumado de más → se resta
+            const delta = mov.tipo === 'salida' ? diferencia : -diferencia
+            await sumarStock(mov.material_id, delta, userId)
           }
           await supabase.from('stock_movimientos').update({ cantidad: nueva }).eq('id', mov.id)
         }
@@ -1801,10 +1771,12 @@ export const solicitudesService = {
       .eq('item_id', item.id)
       .maybeSingle()
 
-    if (existing) {
-      await supabase.from('materiales_a_cuenta_cliente').update({ ...registro, updated_by: userId }).eq('item_id', item.id)
-    } else {
-      await supabase.from('materiales_a_cuenta_cliente').insert(registro)
-    }
+    // Con chequeo de error (revisión 23/09): antes, si la base rechazaba la
+    // fila (MCC_COBRADO, un CHECK), el renglón quedaba comprado SIN cuenta del
+    // cliente y la respuesta era 200.
+    const { error: errMcc } = existing
+      ? await supabase.from('materiales_a_cuenta_cliente').update({ ...registro, updated_by: userId }).eq('item_id', item.id)
+      : await supabase.from('materiales_a_cuenta_cliente').insert(registro)
+    if (errMcc) throw mapRpcError(errMcc)
   },
 }
