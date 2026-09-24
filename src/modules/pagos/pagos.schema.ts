@@ -146,6 +146,8 @@ export const OrdenAlCargarSchema = z.object({
   // Un cheque es un cheque venga de donde venga: marcar una factura como ya
   // pagada con cheque también exige decir cuál.
   cheques:      z.array(ChequeSchema).max(50).optional().default([]),
+  /** De qué cuenta propia (tesoreria_cuentas) salió la plata. Opcional (20260926g). */
+  cuenta_origen_id: Id.nullable().optional(),
 })
 export type OrdenAlCargarDto = z.infer<typeof OrdenAlCargarSchema>
 
@@ -488,6 +490,8 @@ export const CreateOrdenSchema = z.object({
   // Comprobante de pago (u otro), ya subidos a `ordenes/pendientes/`.
   adjuntos:     z.array(AdjuntoPendienteSchema).max(10).optional().default([]),
   cheques:      z.array(ChequeSchema).max(50).optional().default([]),
+  /** De qué cuenta propia (tesoreria_cuentas) salió la plata. Opcional (20260926g). */
+  cuenta_origen_id: Id.nullable().optional(),
 }).superRefine((o, ctx) => {
   const vistas = new Set<string>()
   o.lineas.forEach((l, i) => {
@@ -562,6 +566,8 @@ export type ContactoProveedorDto = z.infer<typeof ContactoProveedorSchema>
 export const UpdateOrdenSchema = z.object({
   referencia: z.string().trim().max(120).optional(),
   obs:        z.string().trim().max(1000).optional(),
+  /** Corregible aunque la OP esté emitida (no la congela `fn_pagos_orden_congelada`). */
+  cuenta_origen_id: Id.nullable().optional(),
 }).strict()
 export type UpdateOrdenDto = z.infer<typeof UpdateOrdenSchema>
 

@@ -369,4 +369,8 @@ pagos.patch('/conceptos/:id', actualizacion, tabProvLect, zValidator('json', Upd
 
 pagos.get('/catalogos/obras', lectura, handler(async () => pagosService.catalogoObras()))
 
+// De qué cuenta propia sale la plata («Sale de la cuenta», 20260926g). La
+// leen el modal de pago y el de factura ya pagada.
+pagos.get('/cuentas-origen', lectura, tabPago, handler(async (c) => pagosService.cuentasOrigen(c.get('accessToken'))))
+
 export default pagos

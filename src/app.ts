@@ -71,6 +71,7 @@ import oficinaRoutes from './modules/oficina/oficina.routes.js'
 import asistenteRoutes from './modules/asistente/asistente.routes.js'
 import pagosRoutes from './modules/pagos/pagos.routes.js'
 import facturacionRoutes from './modules/facturacion/facturacion.routes.js'
+import contabilidadRoutes from './modules/contabilidad/contabilidad.routes.js'
 import facturacionInternalRoutes from './modules/facturacion/facturacion.internal.routes.js'
 import { iniciarArca } from './modules/facturacion/emision.service.js'
 
@@ -173,6 +174,7 @@ app.route('/api/oficina', oficinaRoutes)
 app.route('/api/asistente', asistenteRoutes)
 app.route('/api/pagos', pagosRoutes)
 app.route('/api/facturacion', facturacionRoutes)
+app.route('/api/contabilidad', contabilidadRoutes)
 
 // ── Manejo global de errores ──
 app.onError((err, c) => {

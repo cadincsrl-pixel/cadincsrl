@@ -167,6 +167,11 @@ export const ENTIDADES: Record<string, string> = {
   'facturacion/cobros/adjuntos': 'adjunto del cobro',
   'facturacion/imputaciones': 'imputación', 'facturacion/compensaciones': 'imputación',
   'facturacion/externos': 'comprobante externo',
+  // Contabilidad (fase 1). POST /contabilidad/periodos/3/cerrar → «cerrar período contable 3»;
+  // POST /contabilidad/cuentas/importar → «importar cuenta contable».
+  contabilidad: 'contabilidad', 'contabilidad/asientos': 'asiento contable',
+  'contabilidad/cuentas': 'cuenta contable', 'contabilidad/periodos': 'período contable',
+  'contabilidad/tesoreria': 'cuenta de tesorería',
 }
 
 /** Palabras que aparecen como segmentos de ruta: nunca son un id. */

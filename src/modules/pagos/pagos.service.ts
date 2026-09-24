@@ -613,6 +613,8 @@ export const pagosService = {
         monto_pagado: aCentavos(dto.total), monto_nc: 0,
         cheques: chequesParaRpc(o.cheques),
         adjuntos: adjuntosOrden,
+        // De qué cuenta propia salió la plata (20260926g). La RPC la valida.
+        cuenta_origen_id: o.cuenta_origen_id ?? null,
       }
     }
 
@@ -1234,6 +1236,8 @@ export const pagosService = {
           forma_pago: formaPago, referencia: dto.referencia ?? '', obs: dto.obs ?? '',
           monto_pagado: montoPagado, monto_nc: 0,
           cheques: chequesParaRpc(dto.cheques),
+          // De qué cuenta propia salió la plata (20260926g). La RPC la valida.
+          cuenta_origen_id: dto.cuenta_origen_id ?? null,
         },
         p_lineas: dto.lineas.map((l) => ({
           tipo: l.tipo, factura_id: l.factura_id ?? null, monto: aCentavos(l.monto),
@@ -1250,15 +1254,34 @@ export const pagosService = {
     return { ...enmascararRespuesta(res, verPiiDe(perfil)), avisos }
   },
 
-  /** Solo `obs` y `referencia`: lo financiero y la cuenta destino de una OP no cambian nunca. */
+  /**
+   * `obs`, `referencia` y la cuenta de origen (20260926g, se puede corregir:
+   * no la congela `fn_pagos_orden_congelada`). Lo financiero y la cuenta
+   * destino de una OP no cambian nunca.
+   */
   async editarOrden(id: number, dto: UpdateOrdenDto, userId: string, token: string) {
     const sb = createSupabaseClient(token)
     const cambios: Record<string, unknown> = {}
     if (dto.referencia !== undefined) cambios.referencia = dto.referencia
     if (dto.obs !== undefined) cambios.obs = dto.obs
+    if (dto.cuenta_origen_id !== undefined) {
+      const { data: op, error: eOp } = await sb.from('pagos_ordenes').select('id, estado, cuenta_origen_id').eq('id', id).maybeSingle()
+      if (eOp) throw mapRpcError(eOp)
+      if (!op) throw new PagosHttpError(404, 'ORDEN_NO_EXISTE')
+      if ((op as { estado: string }).estado === 'anulada') throw new PagosHttpError(409, 'ORDEN_ANULADA', { orden_id: id })
+      // La cuenta que ya tenía no se revalida: puede haberse dado de baja después.
+      if (dto.cuenta_origen_id !== null && dto.cuenta_origen_id !== (op as { cuenta_origen_id: number | null }).cuenta_origen_id) {
+        const { data: cta, error: eCta } = await sb.from('tesoreria_cuentas').select('id, activo').eq('id', dto.cuenta_origen_id).maybeSingle()
+        if (eCta) throw mapRpcError(eCta)
+        if (!cta || !(cta as { activo: boolean }).activo) {
+          throw errorDeCampo('CUENTA_ORIGEN_INVALIDA', 'cuenta_origen_id', { cuenta_origen_id: dto.cuenta_origen_id })
+        }
+      }
+      cambios.cuenta_origen_id = dto.cuenta_origen_id
+    }
     const { data, error } = await sb
       .from('pagos_ordenes').update({ ...cambios, updated_by: userId }).eq('id', id)
-      .select('id, numero, referencia, obs, estado').maybeSingle()
+      .select('id, numero, referencia, obs, estado, cuenta_origen_id').maybeSingle()
     if (error) throw mapRpcError(error)
     if (!data) throw new PagosHttpError(404, 'ORDEN_NO_EXISTE')
     return data
@@ -1339,5 +1362,20 @@ export const pagosService = {
     const filas = await todasLasFilas<Record<string, unknown>>((d, h) =>
       supabase.from('obras').select('cod, nom, cc, es_interna, es_deposito, archivada').order('archivada').order('nom').order('cod').range(d, h))
     return filas
+  },
+
+  /**
+   * Cuentas propias de CADINC de donde puede salir la plata de una OP
+   * (`tesoreria_cuentas`, 20260926b). Activas, por tipo y nombre. Es la tabla
+   * de Contabilidad, no la de Ventas: Pagos sigue sin cruzarse con Ventas.
+   */
+  async cuentasOrigen(token?: string | null) {
+    const sb = token ? createSupabaseClient(token) : supabase
+    const orden: Record<string, number> = { banco: 0, caja: 1, valores: 2 }
+    const { data, error } = await sb.from('tesoreria_cuentas')
+      .select('id, tipo, nombre, banco, moneda').eq('activo', true).order('nombre').order('id')
+    if (error) throw mapRpcError(error)
+    return ((data ?? []) as Array<{ id: number; tipo: string; nombre: string; banco: string; moneda: string }>)
+      .sort((a, b) => (orden[a.tipo] ?? 9) - (orden[b.tipo] ?? 9))
   },
 }

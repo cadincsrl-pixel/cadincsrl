@@ -111,6 +111,19 @@ const ModuloPermisosSchema = z.object({
   aprobar_facturas:      z.boolean().optional(),
   registrar_pagos:       z.boolean().optional(),
   anular_pagos:          z.boolean().optional(),
+  // Faltaban (24/09) y Admin los borraba al guardar el usuario: el primero
+  // es de Pagos (quien carga aprueba lo suyo), los cuatro siguientes de
+  // Ventas y el último de Certificaciones. Al 24/09 nadie los había perdido.
+  aprobar_propias:       z.boolean().optional(),
+  emitir_facturas:       z.boolean().optional(),
+  emitir_notas_credito:  z.boolean().optional(),
+  registrar_cobros:      z.boolean().optional(),
+  registrar_finnegans:   z.boolean().optional(),
+  anular_certificados:   z.boolean().optional(),
+  // Contabilidad (fase 1, 24/09).
+  asientos_manuales:     z.boolean().optional(),
+  cerrar_periodos:       z.boolean().optional(),
+  editar_plan:           z.boolean().optional(),
   obras_scope:       z.enum(['todas', 'asignadas']).optional(),
 })
 
