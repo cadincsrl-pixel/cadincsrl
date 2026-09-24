@@ -1,7 +1,7 @@
 /**
  * Schemas zod del módulo Facturación (contrato de la API, fase 1).
  *
- * Solo forma: las reglas de negocio (letra, centro de costo, fecha, saldo de
+ * Solo forma: las reglas de negocio (letra, obra, fecha, saldo de
  * la NC, totales) las valida la RPC `ventas_guardar_borrador`, que es la
  * fuente de verdad. Acá se rechaza lo que ni siquiera tiene sentido mandar.
  */
@@ -94,7 +94,9 @@ export const FacturaCabeceraSchema = z.object({
   cbte_tipo: z.coerce.number().int().optional().nullable(),
   cliente_id: z.coerce.number().int().positive(),
   producto: z.enum(['AVANCE DE OBRA', 'TRANSPORTE']).optional().default('AVANCE DE OBRA'),
-  centro_costo: z.string().max(200).optional().nullable(),
+  // La obra ES el centro de costo (23/09): obligatoria en AVANCE DE OBRA (lo
+  // valida la RPC: OBRA_REQUERIDA). `centro_costo` lo deriva la base; si un
+  // cliente viejo lo manda, zod lo descarta.
   obra_cod: z.string().max(100).optional().nullable(),
   fecha_cbte: fechaIso.optional().nullable(),
   provincia_origen: texto(100).optional().nullable(),
@@ -126,7 +128,7 @@ export const ListFacturasQuerySchema = z.object({
   estado: idsCsv,
   cbte_tipo: z.string().regex(/^[\d,]*$/).optional(),
   cliente_id: z.coerce.number().int().positive().optional(),
-  centro_costo: z.string().max(200).optional(),
+  obra_cod: z.string().max(100).optional(),
   producto: z.enum(['AVANCE DE OBRA', 'TRANSPORTE']).optional(),
   desde: fechaIso.optional(),
   hasta: fechaIso.optional(),

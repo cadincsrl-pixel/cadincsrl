@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   calcularTotales, importeNetoRenglon, redondear, aYyyymmdd, deYyyymmdd, conceptoDe, esNC, admiteLetraA,
-  armarComprobante, pResDeCAE, pResDeConsultado, coincideConsultado, resumir, normDoc, CONDICIONES_IVA,
+  armarComprobante, pResDeCAE, pResDeConsultado, coincideConsultado, resumir, obrasNoVinculables, normDoc, CONDICIONES_IVA,
   letraDe, letraDeTipo, tipoPara, requiereIdentificacion, TOPE_CF_IDENTIFICACION, TIPOS_HABILITADOS,
   type FJ,
 } from '../../../src/modules/facturacion/reglas.js'
@@ -273,18 +273,33 @@ describe('reconciliación', () => {
 })
 
 describe('resumen', () => {
-  it('agrupa por mes, centro de costo, producto y letra; la NC resta', () => {
+  it('agrupa por mes, obra, producto y letra; la NC resta', () => {
+    const obra = { obra_cod: 'CC-026', obra_nom: 'MANTENIMIENTO FARMACIA' }
     const r = resumir([
-      { mes: '2026-09', centro_costo: 'ANIMAR', producto: 'AVANCE DE OBRA', letra: 'A', es_nc: false, imp_neto: 1000, imp_iva: 210, imp_total: 1210 },
-      { mes: '2026-09', centro_costo: 'ANIMAR', producto: 'AVANCE DE OBRA', letra: 'A', es_nc: false, imp_neto: 500, imp_iva: 105, imp_total: 605 },
-      { mes: '2026-09', centro_costo: 'ANIMAR', producto: 'AVANCE DE OBRA', letra: 'A', es_nc: true, imp_neto: 100, imp_iva: 21, imp_total: 121 },
-      { mes: '2026-09', centro_costo: null, producto: 'TRANSPORTE', letra: 'A', es_nc: false, imp_neto: 10, imp_iva: 2.1, imp_total: 12.1 },
-      { mes: '2026-08', centro_costo: 'ANIMAR', producto: 'AVANCE DE OBRA', letra: 'A', es_nc: true, imp_neto: 1, imp_iva: 0.21, imp_total: 1.21 },
+      { mes: '2026-09', ...obra, producto: 'AVANCE DE OBRA', letra: 'A', es_nc: false, imp_neto: 1000, imp_iva: 210, imp_total: 1210 },
+      { mes: '2026-09', ...obra, producto: 'AVANCE DE OBRA', letra: 'A', es_nc: false, imp_neto: 500, imp_iva: 105, imp_total: 605 },
+      { mes: '2026-09', ...obra, producto: 'AVANCE DE OBRA', letra: 'A', es_nc: true, imp_neto: 100, imp_iva: 21, imp_total: 121 },
+      { mes: '2026-09', obra_cod: null, obra_nom: null, producto: 'TRANSPORTE', letra: 'A', es_nc: false, imp_neto: 10, imp_iva: 2.1, imp_total: 12.1 },
+      { mes: '2026-08', ...obra, producto: 'AVANCE DE OBRA', letra: 'A', es_nc: true, imp_neto: 1, imp_iva: 0.21, imp_total: 1.21 },
     ])
     expect(r).toEqual([
-      { mes: '2026-09', centro_costo: null, producto: 'TRANSPORTE', letra: 'A', cantidad: 1, neto: 10, iva: 2.1, total: 12.1 },
-      { mes: '2026-09', centro_costo: 'ANIMAR', producto: 'AVANCE DE OBRA', letra: 'A', cantidad: 3, neto: 1400, iva: 294, total: 1694 },
-      { mes: '2026-08', centro_costo: 'ANIMAR', producto: 'AVANCE DE OBRA', letra: 'A', cantidad: 1, neto: -1, iva: -0.21, total: -1.21 },
+      { mes: '2026-09', obra_cod: null, obra_nom: null, producto: 'TRANSPORTE', letra: 'A', cantidad: 1, neto: 10, iva: 2.1, total: 12.1 },
+      { mes: '2026-09', ...obra, producto: 'AVANCE DE OBRA', letra: 'A', cantidad: 3, neto: 1400, iva: 294, total: 1694 },
+      { mes: '2026-08', ...obra, producto: 'AVANCE DE OBRA', letra: 'A', cantidad: 1, neto: -1, iva: -0.21, total: -1.21 },
     ])
+  })
+})
+
+describe('obrasNoVinculables', () => {
+  const o = (cod: string, es_interna = false, es_deposito = false) => ({ cod, es_interna, es_deposito })
+  it('null si todas existen y son de cliente', () => {
+    expect(obrasNoVinculables(['A', 'B'], [o('A'), o('B')])).toBeNull()
+  })
+  it('primero las que no existen', () => {
+    expect(obrasNoVinculables(['A', 'X', 'P'], [o('A'), o('P', true)])).toEqual({ code: 'OBRA_NO_EXISTE', obra_cods: ['X'] })
+  })
+  it('el depósito y las internas no se vinculan', () => {
+    expect(obrasNoVinculables(['A', 'DEP'], [o('A'), o('DEP', true, true)])).toEqual({ code: 'OBRA_DEPOSITO', obra_cods: ['DEP'] })
+    expect(obrasNoVinculables(['A', 'PODA'], [o('A'), o('PODA', true)])).toEqual({ code: 'OBRA_INTERNA', obra_cods: ['PODA'] })
   })
 })

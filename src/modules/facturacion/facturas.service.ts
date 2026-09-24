@@ -16,7 +16,7 @@ import { FacturacionHttpError, mapRpcError, type PgError } from './facturacion.e
 import { ambienteProceso, leerFJ, rpc, talonarioProceso } from './comun.js'
 import {
   TIPOS_HABILITADOS, TOPE_CF_IDENTIFICACION, calcularTotales, esFce, esNC, letraDe, letraDeTipo, requiereIdentificacion,
-  resumir, tipoPara, type FJ, type FacturaVista,
+  resumir, tipoPara, type FJ, type FacturaVista, type FilaParaResumen,
 } from './reglas.js'
 import { fceService } from './fce.service.js'
 import type { GuardarFacturaDto, ListFacturasQuery, ResumenQuery } from './facturacion.schema.js'
@@ -114,7 +114,7 @@ export const facturasService = {
     const tipos = lista(q.cbte_tipo).map(Number).filter(Number.isInteger)
     if (tipos.length) s = s.in('cbte_tipo', tipos)
     if (q.cliente_id) s = s.eq('cliente_id', q.cliente_id)
-    if (q.centro_costo) s = s.eq('centro_costo', q.centro_costo.trim())
+    if (q.obra_cod) s = s.eq('obra_cod', q.obra_cod.trim())
     if (q.producto) s = s.eq('producto', q.producto)
     if (q.desde) s = s.gte('fecha_cbte', q.desde)
     if (q.hasta) s = s.lte('fecha_cbte', q.hasta)
@@ -143,9 +143,9 @@ export const facturasService = {
 
   async resumen(q: ResumenQuery, db: SupabaseClient = supabase) {
     const amb = ambienteFiltro(q.ambiente)
-    const filas = await todasLasFilas<{ mes: string; centro_costo: string | null; producto: string; letra: string; es_nc: boolean; imp_neto: number; imp_iva: number; imp_total: number }>((d, h) => {
+    const filas = await todasLasFilas<FilaParaResumen>((d, h) => {
       let s = db.from('v_ventas_facturas')
-        .select('id, mes, centro_costo, producto, letra, es_nc, imp_neto, imp_iva, imp_total')
+        .select('id, mes, obra_cod, obra_nom, producto, letra, es_nc, imp_neto, imp_iva, imp_total')
         .eq('estado', 'autorizada')
       if (amb) s = s.eq('ambiente', amb)
       if (q.desde) s = s.gte('fecha_cbte', q.desde)
@@ -174,7 +174,7 @@ export const facturasService = {
   /**
    * Crea (id ausente) o reemplaza por completo un borrador. El backend pone
    * ambiente y punto de venta del proceso; la RPC recalcula totales y valida
-   * letra, centro de costo, fecha y saldo de la NC.
+   * letra, obra (el centro de costo, que la RPC deriva), fecha y saldo de la NC.
    */
   async guardar(dto: GuardarFacturaDto, id: number | null, userId: string, esAdmin: boolean, db: SupabaseClient = supabase): Promise<FJ> {
     const pedido = dto.factura.cbte_tipo
@@ -200,7 +200,6 @@ export const facturasService = {
       ambiente, pto_vta: ptoVta, cbte_tipo: tipo,
       cliente_id: f.cliente_id,
       producto: f.producto,
-      centro_costo: f.centro_costo?.trim() || null,
       obra_cod: f.obra_cod?.trim() || null,
       fecha_cbte: f.fecha_cbte || null,
       provincia_origen: f.provincia_origen ?? null,

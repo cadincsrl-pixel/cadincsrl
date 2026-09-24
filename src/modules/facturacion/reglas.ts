@@ -430,7 +430,9 @@ export function coincideConsultado(f: Pick<FacturaVista, 'rec_doc_nro' | 'imp_to
 
 export interface FilaResumen {
   mes: string
-  centro_costo: string | null
+  /** La obra es el centro de costo (23/09). null = sin obra (transporte). */
+  obra_cod: string | null
+  obra_nom: string | null
   producto: string
   letra: string
   cantidad: number
@@ -439,15 +441,27 @@ export interface FilaResumen {
   total: number
 }
 
+export interface FilaParaResumen {
+  mes: string
+  obra_cod: string | null
+  obra_nom: string | null
+  producto: string
+  letra: string
+  es_nc: boolean
+  imp_neto: number
+  imp_iva: number
+  imp_total: number
+}
+
 /**
- * Autorizadas agrupadas por mes, centro de costo, producto y letra. Las NC
- * restan (neto, IVA y total negativos) y cuentan en `cantidad`.
+ * Autorizadas agrupadas por mes, obra, producto y letra. Las NC restan (neto,
+ * IVA y total negativos) y cuentan en `cantidad`.
  */
-export function resumir(filas: Array<{ mes: string; centro_costo: string | null; producto: string; letra: string; es_nc: boolean; imp_neto: number; imp_iva: number; imp_total: number }>): FilaResumen[] {
+export function resumir(filas: FilaParaResumen[]): FilaResumen[] {
   const grupos = new Map<string, FilaResumen>()
   for (const f of filas) {
-    const clave = [f.mes, f.centro_costo ?? '', f.producto, f.letra].join('\u0000')
-    const g = grupos.get(clave) ?? { mes: f.mes, centro_costo: f.centro_costo ?? null, producto: f.producto, letra: f.letra, cantidad: 0, neto: 0, iva: 0, total: 0 }
+    const clave = [f.mes, f.obra_cod ?? '', f.producto, f.letra].join('\u0000')
+    const g = grupos.get(clave) ?? { mes: f.mes, obra_cod: f.obra_cod ?? null, obra_nom: f.obra_nom ?? null, producto: f.producto, letra: f.letra, cantidad: 0, neto: 0, iva: 0, total: 0 }
     const s = f.es_nc ? -1 : 1
     g.cantidad += 1
     g.neto = r2(g.neto + s * Number(f.imp_neto))
@@ -457,9 +471,30 @@ export function resumir(filas: Array<{ mes: string; centro_costo: string | null;
   }
   return [...grupos.values()].sort((a, b) =>
     b.mes.localeCompare(a.mes)
-    || (a.centro_costo ?? '').localeCompare(b.centro_costo ?? '')
+    || (a.obra_cod ?? '').localeCompare(b.obra_cod ?? '')
     || a.producto.localeCompare(b.producto)
     || a.letra.localeCompare(b.letra))
+}
+
+// ── Obras ───────────────────────────────────────────────────────────────────
+
+export interface ObraFacturable { cod: string; es_interna: boolean; es_deposito: boolean }
+
+/**
+ * Obras que no se pueden vincular a un cliente (PUT /clientes/:id/obras):
+ * primero las que no existen, después el depósito y las internas (no se le
+ * facturan a nadie; CC PODA había quedado en la Iglesia por el atajo de `cc`).
+ * null = todas vinculables.
+ */
+export function obrasNoVinculables(cods: string[], encontradas: ObraFacturable[]): { code: 'OBRA_NO_EXISTE' | 'OBRA_DEPOSITO' | 'OBRA_INTERNA'; obra_cods: string[] } | null {
+  const por = new Map(encontradas.map((o) => [o.cod, o]))
+  const faltan = cods.filter((c) => !por.has(c))
+  if (faltan.length) return { code: 'OBRA_NO_EXISTE', obra_cods: faltan }
+  const deposito = cods.filter((c) => por.get(c)?.es_deposito)
+  if (deposito.length) return { code: 'OBRA_DEPOSITO', obra_cods: deposito }
+  const internas = cods.filter((c) => por.get(c)?.es_interna)
+  if (internas.length) return { code: 'OBRA_INTERNA', obra_cods: internas }
+  return null
 }
 
 // ── Clientes ────────────────────────────────────────────────────────────────

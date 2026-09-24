@@ -1,8 +1,10 @@
 /**
  * Padrón de clientes de Facturación (`ventas_clientes`). Módulo independiente
  * como Pagos: no se cruza con aridos_clientes ni con la cuenta corriente. Lo
- * único compartido son las obras (`obras.cliente_id` precarga el cliente de
- * la factura, `obras.cc` el centro de costo).
+ * único compartido son las obras: cada obra es su propio centro de costo
+ * (decisión del 23/09, `obras.cc` en desuso) y `obras.cliente_id` precarga el
+ * cliente de la factura. Las obras internas y el depósito no se facturan: no
+ * se vinculan a un cliente ni aparecen en el selector.
  *
  * Los clientes se escriben por tabla (no hay RPC): el índice único parcial
  * `ventas_clientes_doc_uidx` (doc_tipo, doc_nro) where activo es la verdad
@@ -15,10 +17,10 @@ import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { cuitValido } from '../pagos/pagos.util.js'
 import { FacturacionHttpError, errorDeCampo, mapRpcError, type PgError } from './facturacion.errors.js'
-import { CONDICIONES_IVA_IDS, letraDe, normDoc } from './reglas.js'
+import { CONDICIONES_IVA_IDS, letraDe, normDoc, obrasNoVinculables, type ObraFacturable } from './reglas.js'
 import type { CreateClienteDto, UpdateClienteDto } from './facturacion.schema.js'
 
-export interface ObraCliente { cod: string; nom: string; cc: string | null }
+export interface ObraCliente { cod: string; nom: string }
 export type VentasCliente = Record<string, unknown> & { id: number; obras: ObraCliente[] }
 
 const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by, cuenta_fce_id, fce_obligado, fce_monto_desde, fce_consultado_at'
@@ -82,13 +84,13 @@ async function conObras(db: SupabaseClient, clientes: Array<Record<string, unkno
   for (let i = 0; i < ids.length; i += 200) {
     const lote = ids.slice(i, i + 200)
     const filas = await todasLasFilas<ObraCliente & { cliente_id: number }>((d, h) =>
-      db.from('obras').select('cod, nom, cc, cliente_id').in('cliente_id', lote).order('cod').range(d, h))
+      db.from('obras').select('cod, nom, cliente_id').in('cliente_id', lote).order('cod').range(d, h))
     obras.push(...filas)
   }
   const por = new Map<number, ObraCliente[]>()
   for (const o of obras) {
     const l = por.get(o.cliente_id) ?? []
-    l.push({ cod: o.cod, nom: o.nom, cc: o.cc })
+    l.push({ cod: o.cod, nom: o.nom })
     por.set(o.cliente_id, l)
   }
   return clientes.map((c) => ({ ...c, obras: por.get(c.id) ?? [] }))
@@ -206,20 +208,21 @@ export const clientesService = {
   /**
    * Las obras que se le facturan a este cliente: `obras.cliente_id = id` para
    * las de la lista y `null` para las que tenía y ya no están. Una obra que
-   * estaba con otro cliente pasa a este (la lista manda).
+   * estaba con otro cliente pasa a este (la lista manda). Las internas y el
+   * depósito no se le facturan a nadie: OBRA_INTERNA / OBRA_DEPOSITO.
    */
   async setObras(id: number, obraCods: string[], db: SupabaseClient = supabase): Promise<VentasCliente> {
     await this.detalle(id, db)
     const cods = [...new Set(obraCods.map((c) => c.trim()).filter(Boolean))]
     if (cods.length) {
-      const existentes = new Set<string>()
+      const encontradas: ObraFacturable[] = []
       for (let i = 0; i < cods.length; i += 200) {
-        const { data, error } = await db.from('obras').select('cod').in('cod', cods.slice(i, i + 200))
+        const { data, error } = await db.from('obras').select('cod, es_interna, es_deposito').in('cod', cods.slice(i, i + 200))
         if (error) throw mapRpcError(error as PgError)
-        for (const o of (data ?? []) as Array<{ cod: string }>) existentes.add(o.cod)
+        encontradas.push(...((data ?? []) as ObraFacturable[]))
       }
-      const faltan = cods.filter((c) => !existentes.has(c))
-      if (faltan.length) throw new FacturacionHttpError(400, 'OBRA_NO_EXISTE', { campo: 'obra_cods', obra_cods: faltan })
+      const err = obrasNoVinculables(cods, encontradas)
+      if (err) throw new FacturacionHttpError(400, err.code, { campo: 'obra_cods', obra_cods: err.obra_cods })
     }
     // Soltar las que ya no están.
     let soltar = db.from('obras').update({ cliente_id: null }).eq('cliente_id', id)
@@ -233,21 +236,19 @@ export const clientesService = {
     return this.detalle(id, db)
   },
 
-  /** Obras no archivadas para los selectores. */
+  /**
+   * Obras que se pueden facturar, para los selectores: no archivadas, ni
+   * internas ni depósito. Cada una es su propio centro de costo; `cliente_nom`
+   * es el cliente que la agrupa (precarga el de la factura).
+   */
   async obras(db: SupabaseClient = supabase) {
-    return todasLasFilas<Record<string, unknown>>((d, h) =>
-      db.from('obras').select('cod, nom, cc, cliente_id, archivada').eq('archivada', false).order('nom').order('cod').range(d, h))
-  },
-
-  /** Centros de costo: distinct btrim(obras.cc) no vacío, ordenado. Lista cerrada. */
-  async centrosCosto(db: SupabaseClient = supabase): Promise<string[]> {
-    const filas = await todasLasFilas<{ cc: string | null }>((d, h) =>
-      db.from('obras').select('cc').not('cc', 'is', null).order('cod').range(d, h))
-    const set = new Set<string>()
-    for (const f of filas) {
-      const cc = (f.cc ?? '').trim()
-      if (cc) set.add(cc)
-    }
-    return [...set].sort((a, b) => a.localeCompare(b, 'es'))
+    const filas = await todasLasFilas<Record<string, unknown> & { cliente?: { razon_social: string } | { razon_social: string }[] | null }>((d, h) =>
+      db.from('obras').select('cod, nom, cliente_id, es_interna, archivada, cliente:ventas_clientes(razon_social)')
+        .eq('archivada', false).eq('es_interna', false).eq('es_deposito', false)
+        .order('nom').order('cod').range(d, h))
+    return filas.map(({ cliente, ...o }) => {
+      const c = Array.isArray(cliente) ? cliente[0] : cliente
+      return { ...o, cliente_nom: c?.razon_social ?? null }
+    })
   },
 }

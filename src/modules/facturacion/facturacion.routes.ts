@@ -9,7 +9,7 @@
  * emitir_notas_credito, registrar_finnegans }`. Flags default false; admin
  * bypass. Guardias POR RUTA (patrón pagos.routes.ts).
  *
- * Tabs: los catálogos (clientes, obras, centros de costo, condiciones de IVA,
+ * Tabs: los catálogos (clientes, obras —cada obra es su centro de costo—, condiciones de IVA,
  * estado de ARCA) los necesita el formulario de la factura, así que el tab
  * `facturas` también los habilita; la bandeja de Finnegans lista facturas.
  *
@@ -110,8 +110,6 @@ async function exigirFlagEmision(c: any, id: number): Promise<void> {
 // ═══════════════════════════════════ Estado y catálogos ═════════════════════
 
 fact.get('/arca/estado', lectura, tabCatalogos, handler(async () => emisionService.estado()))
-
-fact.get('/centros-costo', lectura, tabCatalogos, handler(async (c) => clientesService.centrosCosto(db(c))))
 
 fact.get('/condiciones-iva', lectura, tabCatalogos, handler(async () => CONDICIONES_IVA))
 
