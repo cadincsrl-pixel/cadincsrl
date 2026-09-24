@@ -31,6 +31,8 @@ export const CreateClienteSchema = z.object({
   email: texto(200).optional().nullable(),
   obs: texto(2000).optional().nullable(),
   cuenta_fce_id: z.coerce.number().int().positive().optional().nullable(),
+  /** Días para el vencimiento de cobro de sus facturas (vence_el = fecha + plazo). */
+  plazo_pago_dias: z.coerce.number().int().min(0).max(365).optional(),
 })
 export type CreateClienteDto = z.infer<typeof CreateClienteSchema>
 
@@ -44,6 +46,7 @@ export const UpdateClienteSchema = z.object({
   email: texto(200).optional().nullable(),
   obs: texto(2000).optional().nullable(),
   cuenta_fce_id: z.coerce.number().int().positive().optional().nullable(),
+  plazo_pago_dias: z.coerce.number().int().min(0).max(365).optional(),
 })
 export type UpdateClienteDto = z.infer<typeof UpdateClienteSchema>
 

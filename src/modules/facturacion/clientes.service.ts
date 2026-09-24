@@ -23,7 +23,7 @@ import type { CreateClienteDto, UpdateClienteDto } from './facturacion.schema.js
 export interface ObraCliente { cod: string; nom: string }
 export type VentasCliente = Record<string, unknown> & { id: number; obras: ObraCliente[] }
 
-const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by, cuenta_fce_id, fce_obligado, fce_monto_desde, fce_consultado_at, padron_json, padron_consultado_at'
+const COLS = 'id, razon_social, razon_social_norm, doc_tipo, doc_nro, condicion_iva_id, domicilio, provincia, email, activo, obs, created_at, updated_at, created_by, updated_by, cuenta_fce_id, fce_obligado, fce_monto_desde, fce_consultado_at, padron_json, padron_consultado_at, plazo_pago_dias'
 
 /** La cuenta preferida para la FCE tiene que existir y estar activa. */
 async function validarCuentaFce(db: SupabaseClient, id: number | null | undefined): Promise<void> {
@@ -140,6 +140,7 @@ export const clientesService = {
       email: limpio(dto.email),
       obs: limpio(dto.obs),
       cuenta_fce_id: dto.cuenta_fce_id ?? null,
+      ...(dto.plazo_pago_dias !== undefined ? { plazo_pago_dias: dto.plazo_pago_dias } : {}),
       created_by: userId,
       updated_by: userId,
     }).select('id').single()
@@ -172,6 +173,7 @@ export const clientesService = {
     for (const k of ['domicilio', 'provincia', 'email', 'obs'] as const) {
       if (dto[k] !== undefined) upd[k] = limpio(dto[k])
     }
+    if (dto.plazo_pago_dias !== undefined) upd.plazo_pago_dias = dto.plazo_pago_dias
     if (dto.cuenta_fce_id !== undefined) {
       await validarCuentaFce(db, dto.cuenta_fce_id)
       upd.cuenta_fce_id = dto.cuenta_fce_id ?? null
