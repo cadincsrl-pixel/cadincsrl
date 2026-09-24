@@ -81,6 +81,8 @@ export const VERBOS: Record<string, string> = {
   adjunto: 'adjuntar certificado', 'descartar-pendiente': 'descartar adjunto pendiente',
   // Compras: factura «archivo primero» (20260924u).
   'upload-lectura': 'subir adjunto', leer: 'leer comprobante', 'lectura-pendiente': 'descartar lectura',
+  // Completar el desglose de una factura ya cargada (20260924v).
+  desglose: 'completar desglose', 'leer-adjunto': 'leer comprobante',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */

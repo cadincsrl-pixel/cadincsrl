@@ -58,6 +58,27 @@ function validarPath(path: string) {
   }
 }
 
+/**
+ * Lo común de las dos lecturas (archivo nuevo y adjunto ya guardado): QR que
+ * mandó el navegador + IA + fusión. Nunca falla por la IA: sin key o con la
+ * API caída devuelve lo del QR (o nada) y avisa.
+ */
+export async function analizarComprobante(buffer: Buffer, mime: string, qrTexto: string | null) {
+  const qr = parsearQrArca(qrTexto)
+  const qrIlegible = !!qrTexto && !qr
+  const ia: ResultadoIA = await leerFacturaConIA(buffer, mime)
+  const fusion = fusionar(qr, ia.ok ? ia.lectura : null, { hoy: hoyAR() })
+  if (qrIlegible) {
+    fusion.avisos.push({ campo: 'qr', severidad: 'advertencia', codigo: 'QR_NO_ES_DE_ARCA',
+      mensaje: 'El QR del comprobante no es un QR de factura de ARCA válido: se usó sólo la lectura del papel.' })
+  }
+  if (!ia.ok && ia.motivo !== 'SIN_API_KEY') {
+    fusion.avisos.push({ campo: 'ia', severidad: 'advertencia', codigo: 'IA_FALLO',
+      mensaje: `No se pudo leer el detalle del comprobante (${ia.motivo}).` })
+  }
+  return { qr, ia, fusion }
+}
+
 export const lecturaService = {
 
   /** Paso 1: dónde subir el archivo antes de que exista la factura. */
@@ -88,23 +109,9 @@ export const lecturaService = {
     validarPath(dto.storage_path)
     const dl = await supabase.storage.from(BUCKET).download(dto.storage_path)
     if (dl.error || !dl.data) throw new PagosHttpError(400, 'ARCHIVO_NO_SUBIDO', { storage_path: dto.storage_path })
-    const buffer = Buffer.from(await dl.data.arrayBuffer())
     const hash = await sha256OfBlob(dl.data)
-
-    const qr = parsearQrArca(dto.qr_texto ?? null)
-    const qrIlegible = !!dto.qr_texto && !qr
-    const ia: ResultadoIA = await leerFacturaConIA(buffer, dto.mime_type)
-    const fusion = fusionar(qr, ia.ok ? ia.lectura : null, { hoy: hoyAR() })
+    const { qr, ia, fusion } = await analizarComprobante(Buffer.from(await dl.data.arrayBuffer()), dto.mime_type, dto.qr_texto ?? null)
     const p = fusion.propuesta
-
-    if (qrIlegible) {
-      fusion.avisos.push({ campo: 'qr', severidad: 'advertencia', codigo: 'QR_NO_ES_DE_ARCA',
-        mensaje: 'El QR del comprobante no es un QR de factura de ARCA válido: se usó sólo la lectura del papel.' })
-    }
-    if (!ia.ok && ia.motivo !== 'SIN_API_KEY') {
-      fusion.avisos.push({ campo: 'ia', severidad: 'advertencia', codigo: 'IA_FALLO',
-        mensaje: `No se pudo leer el detalle del comprobante (${ia.motivo}).` })
-    }
 
     // Contexto: proveedor por CUIT, factura repetida, archivo repetido.
     const [prov, adjRep] = await Promise.all([

@@ -124,7 +124,7 @@ function enmascararFila<T extends Record<string, unknown>>(row: T, verPii: boole
  * que la fila venga suelta (aprobar/observar/corregida/anular factura) o
  * adentro de `factura`, `orden` o `facturas[]` (crear, editar, OP).
  */
-function enmascararRespuesta<T extends Record<string, unknown>>(res: T, verPii: boolean): T {
+export function enmascararRespuesta<T extends Record<string, unknown>>(res: T, verPii: boolean): T {
   if (verPii || !res || typeof res !== 'object') return res
   const out: Record<string, unknown> = enmascararFila(res, verPii)
   for (const k of ['factura', 'orden']) {
@@ -298,6 +298,7 @@ function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'li
   if (esBoolQ(f.sin_adjunto)) q = q.or('tiene_factura_adj.is.null,tiene_factura_adj.eq.false')
   if (esBoolQ(f.sin_numero)) q = q.eq('sin_numero', true)
   if (esBoolQ(f.sin_revisar)) q = q.eq('sin_revisar', true)
+  if (esBoolQ(f.sin_desglose)) q = q.or('neto.is.null,iva.is.null,desglose_a_revisar.eq.true')
   if (f.paga_cliente !== undefined) q = q.eq('paga_cliente', esBoolQ(f.paga_cliente))
   if (f.pagada_al_cargar !== undefined) q = q.eq('pagada_al_cargar', esBoolQ(f.pagada_al_cargar))
   if (esBoolQ(f.cuenta_cambiada)) q = q.eq('cuenta_cambio_tras_aprobar', true)

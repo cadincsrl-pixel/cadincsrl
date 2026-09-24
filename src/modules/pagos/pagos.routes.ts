@@ -30,12 +30,14 @@ import { avisoPagoService } from './aviso-pago.service.js'
 import { proveedoresService, enmascararProveedor } from './proveedores.service.js'
 import { pagosAdjuntosService } from './adjuntos.service.js'
 import { lecturaService } from './lectura.service.js'
+import { desgloseService } from './desglose.service.js'
 import {
   TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, esBoolQ,
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
   UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema,
+  CompletarDesgloseSchema, LeerAdjuntoSchema,
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, DevolucionProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
 } from './pagos.schema.js'
@@ -121,6 +123,19 @@ pagos.post('/facturas', creacion, tabFactura, zValidator('json', CreateFacturaSc
 
 pagos.patch('/facturas/:id', actualizacion, tabFactura, zValidator('json', UpdateFacturaSchema), handler(async (c) =>
   pagosService.editarFactura(idParam(c), c.req.valid('json'), c.get('user').id, await verPii(c))))
+
+// Completar el desglose impositivo (20260924v): aunque la factura esté
+// pagada, sin cambiar total ni percepciones (lo valida la RPC). `forzar`
+// sólo admin (lo mira el service). `leer-adjunto` corre QR + IA sobre el
+// adjunto ya guardado y NO guarda nada.
+pagos.post('/facturas/:id/leer-adjunto', actualizacion, tabFactura, zValidator('json', LeerAdjuntoSchema), handler(async (c) =>
+  desgloseService.leerAdjunto(idParam(c), c.req.valid('json'))))
+
+pagos.post('/facturas/:id/desglose', actualizacion, tabFactura, zValidator('json', CompletarDesgloseSchema), handler(async (c) => {
+  const userId = c.get('user').id
+  const perfil = await perfilDe(userId)
+  return desgloseService.completar(idParam(c), c.req.valid('json'), userId, esAdmin(perfil), verPiiDe(perfil))
+}))
 
 // Aprobar en lote: aplica las que puede y devuelve `omitidas` (propias, no
 // pendientes, paga_cliente, proveedor inactivo). Va antes de /:id/aprobar.

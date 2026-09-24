@@ -234,6 +234,33 @@ export const UpdateFacturaSchema = z.object({
 }).strict()
 export type UpdateFacturaDto = z.infer<typeof UpdateFacturaSchema>
 
+/**
+ * Completar el desglose de una factura ya cargada, aunque esté pagada
+ * (20260924v). `iva_detalle` y `tributos` obligatorios (pueden ir vacíos):
+ * es un reemplazo, no un parche. `neto` sólo vale sin alícuotas (B/C).
+ * `forzar` (sólo admin) deja cargar percepciones cuando hoy son 0 y la
+ * factura ya tiene reparto por obra: cambia lo imputado.
+ */
+export const CompletarDesgloseSchema = z.object({
+  iva_detalle:    IvaDetalleLista,
+  tributos:       TributosLista,
+  no_gravado:     MontoNoNeg.nullable().optional(),
+  exento:         MontoNoNeg.nullable().optional(),
+  neto:           MontoNoNeg.nullable().optional(),
+  cae:            z.string().trim().regex(/^\d{14}$/, 'CAE_INVALIDO').nullable().optional(),
+  cae_vto:        FechaISO.nullable().optional(),
+  cbte_tipo_arca: z.number().int().refine((n) => (CBTE_TIPOS_ARCA as readonly number[]).includes(n), 'CBTE_TIPO_INVALIDO').nullable().optional(),
+  forzar:         z.boolean().optional(),
+}).strict()
+export type CompletarDesgloseDto = z.infer<typeof CompletarDesgloseSchema>
+
+/** Leer el adjunto 'factura' ya guardado (el último, o el que se indique). */
+export const LeerAdjuntoSchema = z.object({
+  adjunto_id: z.number().int().positive().nullable().optional(),
+  qr_texto:   z.string().max(4000).nullable().optional(),
+}).strict()
+export type LeerAdjuntoDto = z.infer<typeof LeerAdjuntoSchema>
+
 export const MotivoSchema = z.object({
   motivo: z.string().trim().min(3).max(500),
 })
@@ -261,6 +288,8 @@ export const ListFacturasQuerySchema = z.object({
   sin_adjunto:      BOOL_Q,
   sin_numero:       BOOL_Q,
   sin_revisar:      BOOL_Q,
+  /** Sin IVA discriminado (neto o IVA vacíos) o marcadas a revisar: lo que le falta al Libro IVA (20260924v). */
+  sin_desglose:     BOOL_Q,
   paga_cliente:     BOOL_Q,
   pagada_al_cargar: BOOL_Q,
   cuenta_cambiada:  BOOL_Q,
