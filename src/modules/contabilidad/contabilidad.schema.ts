@@ -154,9 +154,14 @@ export type ListAsientosQuery = z.infer<typeof ListAsientosQuerySchema>
 
 // ── Reportes ────────────────────────────────────────────────────────────────
 
+/** `detallado` = un asiento por comprobante; `dia`/`mes` = automáticos resumidos por circuito (20260928i). */
+export const DIARIO_MODOS = ['detallado', 'dia', 'mes'] as const
+export type DiarioModo = (typeof DIARIO_MODOS)[number]
+
 export const DiarioQuerySchema = z.object({
   desde:  FechaISO,
   hasta:  FechaISO,
+  modo:   z.enum(DIARIO_MODOS).optional().default('detallado'),
   limit:  z.coerce.number().int().min(1).max(200).optional().default(50),
   offset: z.coerce.number().int().min(0).optional().default(0),
 })
@@ -180,6 +185,23 @@ export const SumasSaldosQuerySchema = z.object({
   incluir_sin_movimiento: BoolQ,
 })
 export type SumasSaldosQuery = z.infer<typeof SumasSaldosQuerySchema>
+
+// Estados contables (20260928j): balance a una fecha y resultados de un rango.
+export const BalanceQuerySchema = z.object({
+  fecha:        FechaISO,
+  nivel:        z.coerce.number().int().min(1).max(5).optional().default(3),
+  incluir_cero: BoolQ,
+})
+export type BalanceQuery = z.infer<typeof BalanceQuerySchema>
+
+export const ResultadosQuerySchema = z.object({
+  desde:        FechaISO,
+  hasta:        FechaISO,
+  nivel:        z.coerce.number().int().min(1).max(5).optional().default(4),
+  comparativo:  BoolQ,
+  incluir_cero: BoolQ,
+})
+export type ResultadosQuery = z.infer<typeof ResultadosQuerySchema>
 
 // ── Tesorería ───────────────────────────────────────────────────────────────
 
@@ -233,6 +255,10 @@ export const PendientesQuerySchema = z.object({
   /** Default: hoy (AR). */
   hasta:  FechaISO.optional(),
   fuente: z.enum(FUENTES).optional(),
+  /** Circuitos tildados, como lista de fuentes separada por comas (20260928h). */
+  fuentes: z.string().trim().optional()
+    .transform((s) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : undefined))
+    .pipe(z.array(z.enum(FUENTES)).min(1).max(FUENTES.length).optional()),
   estado: z.enum(PENDIENTE_ESTADOS).optional(),
   motivo: z.string().trim().max(60).optional(),
   limit:  z.coerce.number().int().min(1).max(200).default(50),

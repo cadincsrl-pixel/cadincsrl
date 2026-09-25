@@ -14,6 +14,9 @@
  * y `editar_mapeos` (default false). `/automaticos/*`, `/mapeos` y `/config`;
  * cerrar un período frena con 409 HAY_PENDIENTES_AUTOMATICOS salvo `forzar`.
  *
+ * Tanda 4 (20260928h–k): `fuentes` en pendientes (circuitos), `modo` del
+ * libro diario (detallado | dia | mes) y tab `estados` (balance y resultados).
+ *
  * Rutas literales (`/cuentas/importar`) van ANTES de `/:id`.
  */
 import { Hono } from 'hono'
@@ -35,7 +38,7 @@ import {
   esBoolQ, MotivoSchema, PeriodosQuerySchema,
   CuentaSchema, UpdateCuentaSchema, ListCuentasQuerySchema, ImportarPlanSchema,
   GuardarAsientoSchema, AnularAsientoSchema, ListAsientosQuerySchema,
-  DiarioQuerySchema, MayorQuerySchema, SumasSaldosQuerySchema,
+  DiarioQuerySchema, MayorQuerySchema, SumasSaldosQuerySchema, BalanceQuerySchema, ResultadosQuerySchema,
   TesoreriaSchema, UpdateTesoreriaSchema, ListTesoreriaQuerySchema, AuxiliaresQuerySchema,
   PendientesQuerySchema, PropuestaQuerySchema, ContabilizarSchema, GuardarMapeosSchema, ConfigSchema, CerrarPeriodoSchema,
 } from './contabilidad.schema.js'
@@ -55,6 +58,7 @@ const tabAsientoLeer = requireTab(MOD, ['asientos', 'diario', 'mayor'])
 const tabDiario      = requireTab(MOD, 'diario')
 const tabMayor       = requireTab(MOD, 'mayor')
 const tabSumas       = requireTab(MOD, 'sumas-saldos')
+const tabEstados     = requireTab(MOD, 'estados')
 const tabPlan        = requireTab(MOD, 'plan')
 const tabPeriodos    = requireTab(MOD, 'periodos')
 const flagAsientos   = requireFlag(MOD, 'asientos_manuales')
@@ -179,6 +183,13 @@ ctb.get('/mayor', lectura, tabMayor, valida('query', MayorQuerySchema), handler(
 
 ctb.get('/sumas-saldos', lectura, tabSumas, valida('query', SumasSaldosQuerySchema), handler(async (c) =>
   reportesService.sumasSaldos(c.req.valid('query'), db(c))))
+
+// Estados contables (20260928j): tab `estados`.
+ctb.get('/estados/balance', lectura, tabEstados, valida('query', BalanceQuerySchema), handler(async (c) =>
+  reportesService.balance(c.req.valid('query'), db(c))))
+
+ctb.get('/estados/resultados', lectura, tabEstados, valida('query', ResultadosQuerySchema), handler(async (c) =>
+  reportesService.resultados(c.req.valid('query'), db(c))))
 
 // ═══════════════════════════════════ Tesorería ══════════════════════════════
 

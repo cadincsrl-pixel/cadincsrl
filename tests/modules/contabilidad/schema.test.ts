@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest'
 import {
   GuardarAsientoSchema, LineaAsientoSchema, chequearPartidaDoble, CuentaSchema, UpdateCuentaSchema,
   TesoreriaSchema, UpdateTesoreriaSchema, ImportarPlanSchema, ListAsientosQuerySchema, FechaISO,
+  PendientesQuerySchema, DiarioQuerySchema, BalanceQuerySchema, ResultadosQuerySchema,
 } from '../../../src/modules/contabilidad/contabilidad.schema.js'
 
 const L = (cuenta_id: number, debe: number, haber: number) => ({ cuenta_id, debe, haber })
@@ -129,5 +130,26 @@ describe('ListAsientosQuerySchema', () => {
   it('defaults y coerción', () => {
     expect(ListAsientosQuerySchema.parse({ cuenta_id: '7', limit: '20' })).toMatchObject({ estado: 'todos', cuenta_id: 7, limit: 20, offset: 0 })
     expect(ListAsientosQuerySchema.safeParse({ limit: '500' }).success).toBe(false)
+  })
+})
+
+describe('tanda 4: fuentes, modo y nivel', () => {
+  it('fuentes CSV → array; vacío → undefined; inválida → error', () => {
+    expect(PendientesQuerySchema.parse({ fuentes: 'ventas_facturas, pagos_ordenes' }).fuentes).toEqual(['ventas_facturas', 'pagos_ordenes'])
+    expect(PendientesQuerySchema.parse({}).fuentes).toBeUndefined()
+    expect(PendientesQuerySchema.parse({ fuentes: '' }).fuentes).toBeUndefined()
+    expect(PendientesQuerySchema.safeParse({ fuentes: 'ventas_facturas,cualquiera' }).success).toBe(false)
+  })
+  it('modo del diario: default detallado; dia y mes; otro → error', () => {
+    const base = { desde: '2026-07-01', hasta: '2026-07-31' }
+    expect(DiarioQuerySchema.parse(base).modo).toBe('detallado')
+    expect(DiarioQuerySchema.parse({ ...base, modo: 'mes' }).modo).toBe('mes')
+    expect(DiarioQuerySchema.safeParse({ ...base, modo: 'anio' }).success).toBe(false)
+  })
+  it('nivel de los estados: defaults 3 y 4, rango 1 a 5', () => {
+    expect(BalanceQuerySchema.parse({ fecha: '2026-09-30' }).nivel).toBe(3)
+    expect(ResultadosQuerySchema.parse({ desde: '2026-07-01', hasta: '2026-09-30' }).nivel).toBe(4)
+    expect(BalanceQuerySchema.safeParse({ fecha: '2026-09-30', nivel: '6' }).success).toBe(false)
+    expect(ResultadosQuerySchema.safeParse({ desde: '2026-07-01', hasta: '2026-09-30', nivel: '0' }).success).toBe(false)
   })
 })

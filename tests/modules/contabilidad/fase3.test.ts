@@ -113,7 +113,7 @@ describe('pendientes y propuesta', () => {
     state.profile = LECTOR
     const r = await get('/automaticos/pendientes?fuente=pagos_facturas&limit=10')
     expect(r.status).toBe(200)
-    expect(llamadas('cont_pendientes')[0]).toEqual({ p_desde: '2026-08-01', p_hasta: HOY, p_fuente: 'pagos_facturas', p_estado: null, p_motivo: null, p_limit: 10, p_offset: 0 })
+    expect(llamadas('cont_pendientes')[0]).toEqual({ p_desde: '2026-08-01', p_hasta: HOY, p_fuente: 'pagos_facturas', p_estado: null, p_motivo: null, p_limit: 10, p_offset: 0, p_fuentes: null })
     expect(await r.json()).toMatchObject({ total: 3, limit: 10, offset: 0, hasMore: true, items: [{ origen_id: 1 }], resumen: { por_estado: { sin_contabilizar: 2 } } })
   })
 

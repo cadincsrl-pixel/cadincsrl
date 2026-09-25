@@ -355,6 +355,62 @@ describe('reportes', () => {
   })
 })
 
+describe('tanda 4: circuitos, diario resumido y estados', () => {
+  const CONTADORA = perfil({
+    lectura: true, creacion: true, actualizacion: true,
+    tabs: ['diario', 'sumas-saldos', 'estados', 'automaticos'],
+  })
+
+  it('pendientes: `fuentes` CSV viaja como p_fuentes; inválida → 400', async () => {
+    state.profile = CONTADORA
+    rpcMock.mockImplementation(() => chain({ total: 0, resumen: { por_estado: {}, por_fuente: {}, por_motivo: [] }, items: [] }))
+    const r = await get('/automaticos/pendientes?desde=2026-07-01&hasta=2026-07-31&fuentes=ventas_facturas,ventas_comprobantes_externos')
+    expect(r.status).toBe(200)
+    expect(llamada('cont_pendientes')).toMatchObject({ p_fuentes: ['ventas_facturas', 'ventas_comprobantes_externos'] })
+    rpcMock.mockClear()
+    await get('/automaticos/pendientes?desde=2026-07-01&hasta=2026-07-31')
+    expect(llamada('cont_pendientes')).toMatchObject({ p_fuentes: null })
+    expect((await get('/automaticos/pendientes?desde=2026-07-01&hasta=2026-07-31&fuentes=otra_tabla')).status).toBe(400)
+  })
+
+  it('diario: modo mes despacha al resumido con hasMore sobre total_items', async () => {
+    state.profile = CONTADORA
+    rpcMock.mockImplementation((n: string) => n === 'cont_libro_diario_resumido'
+      ? chain({ total_items: 5, total_asientos: 400, items: [{}, {}] })
+      : chain({ total_asientos: 3, items: [{}, {}, {}] }))
+    const b = await (await get('/diario?desde=2026-07-01&hasta=2026-09-30&modo=mes&limit=2')).json() as any
+    expect(llamada('cont_libro_diario_resumido')).toEqual({ p_desde: '2026-07-01', p_hasta: '2026-09-30', p_agrupar: 'mes', p_limit: 2, p_offset: 0 })
+    expect(b).toMatchObject({ modo: 'mes', total_items: 5, hasMore: true })
+    expect(llamada('cont_libro_diario')).toBeUndefined()
+    const d = await (await get('/diario?desde=2026-07-01&hasta=2026-07-31')).json() as any
+    expect(d.modo).toBe('detallado')
+    expect((await get('/diario?desde=2026-07-01&hasta=2026-07-31&modo=semana')).status).toBe(400)
+  })
+
+  it('estados: sin la tab → 403 SIN_TAB; con la tab llegan los parámetros', async () => {
+    state.profile = MARIANA
+    const r = await get('/estados/balance?fecha=2026-09-30')
+    expect(r.status).toBe(403)
+    expect((await r.json() as any).error).toBe('SIN_TAB')
+
+    state.profile = CONTADORA
+    rpcMock.mockImplementation(() => chain({ cuadra: true }))
+    expect((await get('/estados/balance?fecha=2026-09-30&incluir_cero=1')).status).toBe(200)
+    expect(llamada('cont_balance')).toEqual({ p_fecha: '2026-09-30', p_nivel: 3, p_incluir_cero: true })
+    expect((await get('/estados/resultados?desde=2026-07-01&hasta=2026-09-30&comparativo=1&nivel=2')).status).toBe(200)
+    expect(llamada('cont_estado_resultados')).toEqual({ p_desde: '2026-07-01', p_hasta: '2026-09-30', p_nivel: 2, p_comparativo: true, p_incluir_cero: false })
+    expect((await get('/estados/balance?fecha=2026-09-30&nivel=9')).status).toBe(400)
+    const inv = await get('/estados/resultados?desde=2026-09-30&hasta=2026-07-01')
+    expect((await inv.json() as any).error).toBe('RANGO_INVALIDO')
+  })
+
+  it('admin pasa sin tabs', async () => {
+    state.profile = ADMIN
+    rpcMock.mockImplementation(() => chain({ cuadra: true }))
+    expect((await get('/estados/balance?fecha=2026-09-30')).status).toBe(200)
+  })
+})
+
 describe('tesorería', () => {
   it('CBU con verificadores inválidos → 400 CBU_INVALIDO; caja con CBU → 400', async () => {
     state.profile = MARIANA

@@ -91,6 +91,7 @@ export const automaticosService = {
     const r = await rpc<{ total?: number; resumen?: unknown; items?: unknown[] } | null>(db, 'cont_pendientes', {
       p_desde: desde, p_hasta: hasta, p_fuente: q.fuente ?? null, p_estado: q.estado ?? null,
       p_motivo: q.motivo || null, p_limit: q.limit, p_offset: q.offset,
+      p_fuentes: q.fuentes ?? null,
     })
     const items = r?.items ?? []
     return {
