@@ -13,7 +13,7 @@ import { normTxt } from '../../lib/norm-txt.js'
 import { todasLasFilas } from '../../lib/paginar.js'
 import { ContabilidadHttpError, mapRpcError, type PgError } from './contabilidad.errors.js'
 import { pagina } from './comun.js'
-import type { ChequesRecibidosQuery, ChequeRecibidoAManoDto } from './contabilidad.schema.js'
+import type { ChequesRecibidosQuery, ChequeRecibidoAManoDto, ChequesCambiarEstadoDto } from './contabilidad.schema.js'
 
 export const ESTADOS_CARTERA = ['en_cartera', 'endosado', 'depositado', 'rechazado', 'recuperado'] as const
 
@@ -55,6 +55,19 @@ export const chequesRecibidosService = {
       if (f.estado === 'en_cartera') sumar(f.vencido ? 'vencidos' : 'por_vencer', Number(f.importe))
     }
     return t
+  },
+
+  /**
+   * Depositar / rechazar / recuperar / volver a cartera (20260930o). La RPC
+   * valida la transición de cada cheque; todavía sin asiento (fase 4b).
+   */
+  async cambiarEstado(dto: ChequesCambiarEstadoDto, userId: string, db: SupabaseClient = supabase) {
+    const { data, error } = await db.rpc('cheques_recibidos_cambiar_estado', {
+      p_ids: dto.ids, p_accion: dto.accion, p_fecha: dto.fecha ?? null,
+      p_tesoreria_id: dto.tesoreria_id ?? null, p_motivo: dto.motivo ?? null, p_user_id: userId,
+    })
+    if (error) throw mapRpcError(error as PgError)
+    return data as { accion: string; cheques: number }
   },
 
   /** Alta a mano desde Tesorería: cheques que no pasaron por un cobro. */

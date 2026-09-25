@@ -53,7 +53,7 @@ import {
   TesoreriaSchema, UpdateTesoreriaSchema, ListTesoreriaQuerySchema, AuxiliaresQuerySchema,
   PendientesQuerySchema, PropuestaQuerySchema, ContabilizarSchema, GuardarMapeosSchema, ConfigSchema, CerrarPeriodoSchema,
   TesMovimientoSchema, TesMovimientosQuerySchema, TesConceptoSchema, UpdateTesConceptoSchema, TesConceptosQuerySchema,
-  ChequesRecibidosQuerySchema, ChequesRecibidosAManoSchema,
+  ChequesRecibidosQuerySchema, ChequesRecibidosAManoSchema, ChequesCambiarEstadoSchema,
   TesAdjUploadUrlSchema, TesAdjRegistrarSchema, IvaEstadosQuerySchema, IvaGenerarSchema,
   BienSchema, BajaBienSchema, BienesQuerySchema, ImportarBienesSchema, CuadroBienesQuerySchema, CorridasQuerySchema, AmortizarSchema,
 } from './contabilidad.schema.js'
@@ -271,6 +271,9 @@ ctb.patch('/config', lectura, actualizacion, tabMapeos, flagMapeos, valida('json
 // mano = además crear + flag de movimientos de fondos.
 ctb.get('/cheques-recibidos', lectura, tabTesoreria, valida('query', ChequesRecibidosQuerySchema), handler(async (c) =>
   chequesRecibidosService.listar(c.req.valid('query'), db(c))))
+
+ctb.post('/cheques-recibidos/estado', lectura, actualizacion, tabTesoreria, flagFondos, valida('json', ChequesCambiarEstadoSchema), handler(async (c) =>
+  chequesRecibidosService.cambiarEstado(c.req.valid('json'), uid(c), db(c))))
 
 ctb.post('/cheques-recibidos', lectura, creacion, tabTesoreria, flagFondos, valida('json', ChequesRecibidosAManoSchema), handler(async (c) =>
   chequesRecibidosService.altaManual(c.req.valid('json').cheques, uid(c), db(c))))

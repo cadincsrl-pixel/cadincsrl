@@ -512,3 +512,13 @@ export const ChequeRecibidoAManoSchema = z.object({
 })
 export type ChequeRecibidoAManoDto = z.infer<typeof ChequeRecibidoAManoSchema>
 export const ChequesRecibidosAManoSchema = z.object({ cheques: z.array(ChequeRecibidoAManoSchema).min(1).max(60) })
+
+export const ChequesCambiarEstadoSchema = z.object({
+  ids:          z.array(z.number().int().positive()).min(1).max(500),
+  accion:       z.enum(['depositar', 'rechazar', 'recuperar', 'volver_a_cartera']),
+  /** Sin fecha al depositar = la fecha de cobro de cada cheque (para los vencidos en lote). */
+  fecha:        FechaISO.nullable().optional(),
+  tesoreria_id: z.number().int().positive().nullable().optional(),
+  motivo:       z.string().trim().max(300).nullable().optional(),
+})
+export type ChequesCambiarEstadoDto = z.infer<typeof ChequesCambiarEstadoSchema>

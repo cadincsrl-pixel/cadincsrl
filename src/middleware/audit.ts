@@ -84,8 +84,9 @@ export const VERBOS: Record<string, string> = {
   'upload-lectura': 'subir adjunto', leer: 'leer comprobante', 'lectura-pendiente': 'descartar lectura',
   // Completar el desglose de una factura ya cargada (20260924v).
   desglose: 'completar desglose', 'leer-adjunto': 'leer comprobante',
-  // Cartera de cheques: releer el adjunto del cobro (20260930j).
-  'leer-cheques': 'leer cheques',
+  // Cartera de cheques: releer el adjunto del cobro (20260930j) y cambiar
+  // el estado (depositar / rechazar / recuperar, 20260930o).
+  'leer-cheques': 'leer cheques', estado: 'cambiar estado',
   // Compras: importador de ARCA recibidos, imputación y pagadas en lote
   // (20260927b/c/h). `imputar` ya está arriba.
   'importar-arca': 'importar de ARCA', 'imputar-lote': 'imputar en lote', 'marcar-pagadas': 'marcar pagadas en lote',
@@ -197,6 +198,7 @@ export const ENTIDADES: Record<string, string> = {
   'contabilidad/cuentas': 'cuenta contable', 'contabilidad/periodos': 'período contable',
   'contabilidad/ejercicios': 'ejercicio contable',
   'contabilidad/tesoreria': 'cuenta de tesorería',
+  'contabilidad/cheques-recibidos': 'cheque recibido (cartera)',
   // Fase 3: POST /contabilidad/automaticos/contabilizar → «contabilizar contabilizador»;
   // PUT /contabilidad/mapeos → «actualizar mapeo contable».
   'contabilidad/automaticos': 'contabilizador', 'contabilidad/mapeos': 'mapeo contable',
