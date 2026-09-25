@@ -107,6 +107,8 @@ const STATUS_POR_CODIGO: Record<string, number> = {
   FACTURA_NO_A_RECONSTRUIR: 409,
   // «Completar la ya cargada» con el archivo leído (20260925)
   LECTURA_NO_COINCIDE: 409, ADJUNTO_NO_GUARDADO: 500,
+  // Cuenta corriente con el proveedor (20260929s)
+  RANGO_INVALIDO: 400,
   IMPORTACION_CON_ERRORES: 422,
   // Pagadas en lote con tarjeta / billetera (20260927h)
   FORMA_NO_COINCIDE_CUENTA: 400, FECHA_ANTERIOR_A_FACTURA: 400, FACTURA_SIN_SALDO: 409, FACTURA_YA_APROBADA: 409,

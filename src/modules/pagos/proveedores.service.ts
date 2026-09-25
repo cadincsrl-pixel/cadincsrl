@@ -271,6 +271,18 @@ export const proveedoresService = {
   },
 
   /** Ficha + historial de datos de pago (de audit_log, enmascarado) + facturas abiertas. */
+  /**
+   * Compras › Cuentas (20260929s): la cuenta corriente con el proveedor entre
+   * dos fechas, como la arma el proveedor. RPC `pagos_cuenta_corriente`:
+   * facturas y ND al debe; NC y OPs emitidas al haber; sin anulados ni lo que
+   * paga el cliente; saldo inicial + saldo corrido. No expone CBU ni alias.
+   */
+  async cuentaCorriente(id: number, desde: string, hasta: string) {
+    const { data, error } = await supabase.rpc('pagos_cuenta_corriente', { p_proveedor_id: id, p_desde: desde, p_hasta: hasta })
+    if (error) throw mapRpcError(error)
+    return data as Record<string, unknown>
+  },
+
   async detalle(id: number, verPii: boolean, token: string) {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb.from('v_pagos_proveedores').select('*').eq('id', id).maybeSingle()

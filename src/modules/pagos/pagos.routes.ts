@@ -42,7 +42,7 @@ import { marcarPagadasService } from './marcar-pagadas.service.js'
 import { pagosConfigService, PagosConfigPatchSchema } from './config.service.js'
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import {
-  TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, esBoolQ,
+  TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, TAB_CUENTAS, CuentaCorrienteQuerySchema, esBoolQ,
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
@@ -64,6 +64,7 @@ const actualizacion = requirePermiso('pagos', 'actualizacion')
 const tabFactura    = requireTab('pagos', [...TAB_FACTURA])
 const tabPago       = requireTab('pagos', [...TAB_PAGO])
 const tabProvLect   = requireTab('pagos', [...TAB_PROV_LECTURA])
+const tabCuentas    = requireTab('pagos', [...TAB_CUENTAS])
 const tabProveedores = requireTab('pagos', 'proveedores')
 const tabFacturaOProveedores = requireTab('pagos', ['facturas', 'proveedores'])
 const aprobarFacturas = requireFlag('pagos', 'aprobar_facturas')
@@ -386,6 +387,12 @@ pagos.get('/proveedores/padron/:cuit', creacion, tabFacturaOProveedores, handler
 // Masivo: todos los activos con CUIT, de a uno. No pisa razón social.
 pagos.post('/proveedores/actualizar-desde-arca', actualizacion, tabProveedores, handler(async (c) =>
   proveedoresService.actualizarTodosDesdeArca(c.get('user').id, c.get('accessToken'))))
+
+// Compras › Cuentas (20260929s): la cuenta corriente con el proveedor entre dos fechas.
+pagos.get('/proveedores/:id/cuenta-corriente', lectura, tabCuentas, zValidator('query', CuentaCorrienteQuerySchema), handler(async (c) => {
+  const q = c.req.valid('query')
+  return proveedoresService.cuentaCorriente(idParam(c), q.desde, q.hasta)
+}))
 
 pagos.get('/proveedores/:id', lectura, tabProvLect, handler(async (c) =>
   proveedoresService.detalle(idParam(c), await verPii(c), c.get('accessToken'))))

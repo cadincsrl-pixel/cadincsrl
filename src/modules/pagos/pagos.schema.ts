@@ -63,7 +63,9 @@ export const CAMPOS_QUE_DESAPRUEBAN = [
 
 export const TAB_FACTURA = ['facturas'] as const
 export const TAB_PAGO = ['facturas', 'pagos'] as const
-export const TAB_PROV_LECTURA = ['facturas', 'pagos', 'proveedores'] as const
+export const TAB_PROV_LECTURA = ['facturas', 'pagos', 'proveedores', 'cuentas'] as const
+/** Compras › Cuentas (20260929s): la cuenta corriente con un proveedor. */
+export const TAB_CUENTAS = ['cuentas'] as const
 
 export const MIME_PERMITIDOS = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'] as const
 export const MAX_ADJUNTO_BYTES = 10 * 1024 * 1024
@@ -569,6 +571,10 @@ export const UploadUrlLecturaSchema = z.object({
 /** «Completar la ya cargada» (20260925): el archivo leído va a una factura que ya existe. */
 export const CompletarConLecturaSchema = z.object({ lectura_id: Id })
 export type CompletarConLecturaDto = z.infer<typeof CompletarConLecturaSchema>
+
+/** GET /proveedores/:id/cuenta-corriente (20260929s). */
+export const CuentaCorrienteQuerySchema = z.object({ desde: FechaISO, hasta: FechaISO })
+export type CuentaCorrienteQuery = z.infer<typeof CuentaCorrienteQuerySchema>
 
 export const LeerFacturaSchema = z.object({
   storage_path:   z.string().min(1).max(500),
