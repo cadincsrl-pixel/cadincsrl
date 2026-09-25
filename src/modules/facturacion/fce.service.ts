@@ -9,7 +9,8 @@
  * Reglas (las aplica `exigirTipoFce`, al guardar y al emitir):
  *   - obligado y total ≥ su monto → FCE (201). Emitir una Factura A (1) →
  *     CORRESPONDE_FCE.
- *   - no obligado, o total < monto (o < MONTO_MINIMO_FCE) → Factura A. Una
+ *   - no obligado, o total < monto (o < el mínimo general vigente a la fecha
+ *     del comprobante, `ventas_parametros` desde 20260929e) → Factura A. Una
  *     201 → NO_CORRESPONDE_FCE.
  *   - WSFECRED no responde y no hay cache → NO se bloquea: el usuario elige
  *     (la UI muestra el aviso). El piso general de la 201 lo sigue frenando
@@ -20,7 +21,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase.js'
 import { ArcaError, consultarMontoObligadoRecepcion } from '../../lib/arca/index.js'
 import { FacturacionHttpError, mapRpcError, type PgError } from './facturacion.errors.js'
-import { MONTO_MINIMO_FCE, cacheVigente, correspondeFce, hoyAr, letraDe } from './reglas.js'
+import { cacheVigente, correspondeFce, hoyAr, letraDe } from './reglas.js'
+import { parametrosService } from './parametros.service.js'
 
 export interface InfoFce {
   cliente_id: number
@@ -31,7 +33,7 @@ export interface InfoFce {
   consultado_at: string | null
   /** De dónde salió el dato. `no_aplica` = el cliente no es de letra A. */
   fuente: 'arca' | 'cache' | 'sin_datos' | 'no_aplica'
-  /** Mínimo general de la FCE (espejo de la base). */
+  /** Mínimo general de la FCE vigente a la fecha pedida (o hoy); espejo de la base. */
   minimo: number
   /** Si WSFECRED falló, por qué (la UI lo muestra como aviso). */
   error: string | null
@@ -55,8 +57,9 @@ export const fceService = {
     if (error) throw mapRpcError(error as PgError)
     if (!data) throw new FacturacionHttpError(404, 'CLIENTE_NO_EXISTE', { cliente_id: clienteId })
     const c = data as ClienteFce
+    const { monto_minimo_fce: minimo } = await parametrosService.vigentes(opts.fecha ?? null, db)
     const base = {
-      cliente_id: c.id, cuit: String(c.doc_nro), minimo: MONTO_MINIMO_FCE,
+      cliente_id: c.id, cuit: String(c.doc_nro), minimo,
       obligado: c.fce_obligado, monto_desde: c.fce_monto_desde == null ? null : Number(c.fce_monto_desde),
       consultado_at: c.fce_consultado_at,
     }
@@ -89,16 +92,16 @@ export const fceService = {
     if (p.tipo !== 1 && p.tipo !== 201) return null
     const info = await this.info(p.clienteId, { fecha: p.fecha ?? undefined }, db)
     if (p.forzar) return info
-    const corresponde = correspondeFce({ obligado: info.obligado, montoDesde: info.monto_desde }, p.total)
+    const corresponde = correspondeFce({ obligado: info.obligado, montoDesde: info.monto_desde }, p.total, info.minimo)
     const detalle = {
       campo: 'cbte_tipo', cliente_id: p.clienteId, total: p.total, obligado: info.obligado,
-      monto_desde: info.monto_desde, minimo: MONTO_MINIMO_FCE, fuente: info.fuente,
+      monto_desde: info.monto_desde, minimo: info.minimo, fuente: info.fuente,
     }
     if (p.tipo === 1 && corresponde === true) {
       throw new FacturacionHttpError(400, 'CORRESPONDE_FCE', detalle)
     }
     if (p.tipo === 201) {
-      if (Math.round(p.total * 100) < MONTO_MINIMO_FCE * 100) {
+      if (Math.round(p.total * 100) < Math.round(info.minimo * 100)) {
         throw new FacturacionHttpError(400, 'NO_CORRESPONDE_FCE', { ...detalle, motivo: 'monto_minimo' })
       }
       if (corresponde === false) {

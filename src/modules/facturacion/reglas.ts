@@ -26,8 +26,12 @@ export const TIPOS_FCE = new Set([201, 203])
  * Fuente: Registro de FCE MiPyMEs de ARCA, vigente desde el 14/04/2026
  * (consultado el 23/09/2026). WSFECRED (`consultarMontoObligadoRecepcion`)
  * devuelve el monto de cada receptor y es el que manda; este es el piso
- * general. Espejo de `_ventas_monto_minimo_fce()` (20260924e) y de
- * MONTO_MINIMO_FCE del frontend.
+ * general.
+ *
+ * Desde 20260929e el valor vive en la base con vigencia (`ventas_parametros`,
+ * Ventas › Configuración › Montos de ARCA) y se lee con
+ * `parametrosService.vigentes(fecha)`. Esta constante queda como fallback
+ * (si la base no contesta) y para los tests: es la semilla de la tabla.
  */
 export const MONTO_MINIMO_FCE = 5_549_862
 
@@ -70,9 +74,10 @@ const CONDICIONES_B = new Set(CONDICIONES_IVA.filter((c) => c.admite_b).map((c) 
  * Desde este total el consumidor final se identifica (RG ARCA 5700/2025,
  * vigente desde el 29/05/2025: "igual o superior a $ 10.000.000"). Un
  * comprobante B con documento 99 y total ≥ tope → CF_REQUIERE_IDENTIFICACION.
- * Espejo de `_ventas_tope_cf()` (20260924d) y del frontend. Si ARCA lo
- * cambia, rebota con su propio error (10015/10013 según la versión del
- * manual) y hay que tocar los tres lugares.
+ * Desde 20260929e vive en la base con vigencia (`ventas_parametros`) y se
+ * cambia desde Ventas › Configuración › Montos de ARCA; se lee con
+ * `parametrosService.vigentes(fecha)`. Esta constante queda como fallback y
+ * para los tests (es la semilla de la tabla).
  */
 export const TOPE_CF_IDENTIFICACION = 10_000_000
 
@@ -256,16 +261,22 @@ export function esFce(cbteTipo: number): boolean {
 export function correspondeFce(
   info: { obligado: boolean | null; montoDesde: number | null } | null,
   total: number,
+  /** Mínimo general vigente a la fecha del comprobante (`parametrosService.vigentes`). */
+  minimo: number = MONTO_MINIMO_FCE,
 ): boolean | null {
   if (!info || info.obligado === null) return null
   if (!info.obligado) return false
-  const piso = Math.max(info.montoDesde ?? MONTO_MINIMO_FCE, 0)
+  const piso = Math.max(info.montoDesde ?? minimo, 0)
   return Math.round(total * 100) >= Math.round(piso * 100)
 }
 
 /** ¿Hay que identificar al receptor? Comprobante B, sin documento (99) y total ≥ tope. */
-export function requiereIdentificacion(cbteTipo: number, docTipo: number, total: number): boolean {
-  return letraDeTipo(cbteTipo) === 'B' && docTipo === 99 && Math.round(total * 100) >= TOPE_CF_IDENTIFICACION * 100
+export function requiereIdentificacion(
+  cbteTipo: number, docTipo: number, total: number,
+  /** Tope vigente a la fecha del comprobante (`parametrosService.vigentes`). */
+  tope: number = TOPE_CF_IDENTIFICACION,
+): boolean {
+  return letraDeTipo(cbteTipo) === 'B' && docTipo === 99 && Math.round(total * 100) >= Math.round(tope * 100)
 }
 
 // ── Del FJ de la base al pedido a ARCA ──────────────────────────────────────

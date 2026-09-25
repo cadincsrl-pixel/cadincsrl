@@ -40,6 +40,7 @@ import { aAnsi, nombreArchivo } from './lid-ventas.js'
 import { lidComprasService } from './lid-compras.service.js'
 import { productosService } from './productos.service.js'
 import { puntosVentaService } from './puntos-venta.service.js'
+import { parametrosService } from './parametros.service.js'
 import { nombreArchivoCompras } from './lid-compras.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
@@ -53,6 +54,7 @@ import {
   CreateExternoSchema, UpdateExternoSchema, LiquidoExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
   ProductoCreateSchema, ProductoUpdateSchema, ListProductosQuerySchema,
   PuntoVentaCreateSchema, PuntoVentaUpdateSchema, ListPuntosVentaQuerySchema,
+  ParametroCreateSchema, ListParametrosQuerySchema, ParametrosVigentesQuerySchema,
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
@@ -206,6 +208,35 @@ fact.patch('/puntos-venta/:id', lectura, tabConfiguracion, configurar, validaPv(
 
 fact.post('/puntos-venta/:id/verificar', lectura, tabConfiguracion, configurar, handler(async (c) =>
   puntosVentaService.verificar(idParam(c), uid(c), db(c))))
+
+// ═══════════════════════════════════ Montos de ARCA (20260929e) ═════════════
+// GET sin tab (el formulario de la factura lee los vigentes a su fecha).
+// POST/DELETE: tab configuracion + flag configurar (la RPC vuelve a chequear
+// el flag). Sin PATCH: la tabla no se edita en el lugar, un valor nuevo es
+// una vigencia nueva; solo se borra una futura. Validación → 400 PARAMETRO_INVALIDO.
+
+function validaParametro<T extends ZodType>(schema: T) {
+  return zValidator('json', schema, (r, c) => {
+    if (!r.success) {
+      const issue = r.error.issues[0]
+      const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
+      const campo = claves[0] ?? (issue?.path?.join('.') || null)
+      return c.json({ error: 'PARAMETRO_INVALIDO', campo, detail: { campo, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+    }
+  })
+}
+
+fact.get('/parametros', lectura, valida('query', ListParametrosQuerySchema), handler(async (c) =>
+  parametrosService.listar(c.req.valid('query').clave, db(c))))
+
+fact.get('/parametros/vigentes', lectura, valida('query', ParametrosVigentesQuerySchema), handler(async (c) =>
+  parametrosService.vigentes(c.req.valid('query').fecha, db(c))))
+
+fact.post('/parametros', lectura, tabConfiguracion, configurar, validaParametro(ParametroCreateSchema), handler(async (c) =>
+  c.json(await parametrosService.crear(c.req.valid('json'), uid(c), db(c)), 201)))
+
+fact.delete('/parametros/:id', lectura, tabConfiguracion, configurar, handler(async (c) =>
+  parametrosService.borrar(idParam(c), uid(c), db(c))))
 
 // ═══════════════════════════════════ Clientes ═══════════════════════════════
 

@@ -244,6 +244,25 @@ export type PuntoVentaUpdateDto = z.infer<typeof PuntoVentaUpdateSchema>
 
 export const ListPuntosVentaQuerySchema = z.object({ ambiente: z.enum(['homo', 'prod']).optional() })
 
+// ── Montos de ARCA con vigencia (20260929e) ────────────────────────────────
+// No se editan: un valor nuevo es una fila nueva. Duplicado, retroactivo y
+// «ya vigente» los valida la RPC.
+const claveParametro = z.enum(['monto_minimo_fce', 'tope_cf_identificacion'])
+export const ParametroCreateSchema = z.object({
+  clave: claveParametro,
+  valor: z.coerce.number().positive('tiene que ser mayor que cero').max(999_999_999_999.99, 'demasiado grande')
+    .refine((n) => Math.abs(Math.round(n * 100) - n * 100) < 1e-6, 'hasta dos decimales'),
+  vigente_desde: fechaIso,
+  fuente: z.string().trim().max(120).optional(),
+  obs: z.string().trim().max(500).optional(),
+  /** Guardar aunque haya facturas autorizadas desde esa fecha (PARAMETRO_RETROACTIVO). */
+  forzar: z.boolean().optional().default(false),
+}).strict()
+export type ParametroCreateDto = z.infer<typeof ParametroCreateSchema>
+
+export const ListParametrosQuerySchema = z.object({ clave: claveParametro.optional() })
+export const ParametrosVigentesQuerySchema = z.object({ fecha: fechaIso.optional() })
+
 export const EmitirSchema = z.object({ forzar: z.boolean().optional().default(false) })
 export const MotivoSchema = z.object({ motivo: z.string().max(1000).optional().nullable() })
 export const RegistrarFinnegansSchema = z.object({

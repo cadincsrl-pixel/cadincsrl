@@ -202,6 +202,9 @@ describe('Factura B (fase 5)', () => {
     expect(requiereIdentificacion(8, 99, 12_000_000)).toBe(true)
     expect(requiereIdentificacion(6, 96, 50_000_000)).toBe(false)   // con DNI, sin tope
     expect(requiereIdentificacion(1, 99, 50_000_000)).toBe(false)   // la A ya exige CUIT
+    // Tope vigente a la fecha (20260929e): se pasa como parámetro.
+    expect(requiereIdentificacion(6, 99, 12_000_000, 15_000_000)).toBe(false)
+    expect(requiereIdentificacion(6, 99, 15_000_000, 15_000_000)).toBe(true)
   })
 
   it('FB a consumidor final sin identificar: DocTipo 99, DocNro 0, IVA discriminado y condición 5', () => {

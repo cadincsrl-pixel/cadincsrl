@@ -109,6 +109,9 @@ describe('qué tipo corresponde', () => {
     expect(correspondeFce(null, 99_000_000)).toBeNull()
     // Sin monto del receptor, el piso general.
     expect(correspondeFce({ obligado: true, montoDesde: null }, MONTO_MINIMO_FCE - 1)).toBe(false)
+    // Mínimo vigente a la fecha (20260929e): se pasa como parámetro.
+    expect(correspondeFce({ obligado: true, montoDesde: null }, 6_000_000, 6_500_000)).toBe(false)
+    expect(correspondeFce({ obligado: true, montoDesde: null }, 6_500_000, 6_500_000)).toBe(true)
   })
 
   it('cache de 30 días y hoy en Argentina', () => {

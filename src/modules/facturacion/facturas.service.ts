@@ -15,10 +15,11 @@ import { normTxt } from '../../lib/norm-txt.js'
 import { FacturacionHttpError, mapRpcError, type PgError } from './facturacion.errors.js'
 import { ambienteProceso, leerFJ, rpc, talonario, talonarioProceso } from './comun.js'
 import {
-  TIPOS_HABILITADOS, TOPE_CF_IDENTIFICACION, calcularTotales, esFce, esNC, letraDe, letraDeTipo, requiereIdentificacion,
+  TIPOS_HABILITADOS, calcularTotales, esFce, esNC, letraDe, letraDeTipo, requiereIdentificacion,
   resumir, tipoPara, type FJ, type FacturaVista, type FilaParaResumen,
 } from './reglas.js'
 import { fceService } from './fce.service.js'
+import { parametrosService } from './parametros.service.js'
 import type { GuardarFacturaDto, ListFacturasQuery, ResumenQuery } from './facturacion.schema.js'
 
 export interface Evento {
@@ -91,9 +92,11 @@ export async function resolverTipo(
     throw new FacturacionHttpError(400, 'TIPO_NO_HABILITADO', { campo: 'cbte_tipo', cbte_tipo: tipo, habilitados: [...TIPOS_HABILITADOS] })
   }
   const total = calcularTotales(renglones).total
-  if (requiereIdentificacion(tipo, Number(c.doc_tipo), total)) {
+  // Tope vigente a la fecha del comprobante (20260929e); sin fecha, hoy (como la RPC).
+  const { tope_cf_identificacion: tope } = await parametrosService.vigentes(f.fecha_cbte ?? null, db)
+  if (requiereIdentificacion(tipo, Number(c.doc_tipo), total, tope)) {
     throw new FacturacionHttpError(400, 'CF_REQUIERE_IDENTIFICACION', {
-      campo: 'cliente_id', tope: TOPE_CF_IDENTIFICACION, total, cliente_id: f.cliente_id,
+      campo: 'cliente_id', tope, total, cliente_id: f.cliente_id,
     })
   }
   if (!nc) await fceService.exigirTipoFce({ clienteId: f.cliente_id, tipo, total, fecha: f.fecha_cbte, forzar: opts.forzar }, db)

@@ -38,6 +38,8 @@ describe('parseRoute — módulo facturacion', () => {
     ['POST',   '/api/facturacion/puntos-venta',                     { modulo: 'facturacion', entidad: 'punto de venta', accion: 'crear' }],
     ['PATCH',  '/api/facturacion/puntos-venta/2',                   { modulo: 'facturacion', entidad: 'punto de venta', accion: 'actualizar', entidadId: '2' }],
     ['POST',   '/api/facturacion/puntos-venta/2/verificar',         { modulo: 'facturacion', entidad: 'punto de venta', accion: 'verificar en ARCA', entidadId: '2' }],
+    ['POST',   '/api/facturacion/parametros',                       { modulo: 'facturacion', entidad: 'parámetro ARCA', accion: 'crear' }],
+    ['DELETE', '/api/facturacion/parametros/7',                     { modulo: 'facturacion', entidad: 'parámetro ARCA', accion: 'eliminar', entidadId: '7' }],
   ])('%s %s', (method, path, esperado) => {
     expect(parseRoute(path, method)).toEqual(esperado)
   })
