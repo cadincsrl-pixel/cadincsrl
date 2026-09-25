@@ -426,14 +426,12 @@ export type ListFacturasQuery = z.infer<typeof ListFacturasQuerySchema>
 
 /** `concepto` (20260925m): grupo = concepto_id como texto; sin concepto → 'sin_concepto'. */
 export const FACTURAS_RESUMEN_GRUPOS = ['proveedor', 'centro_costo', 'obra', 'mes_emision', 'estado', 'vencimiento', 'forma_pago', 'concepto'] as const
-// Los filtros que `pagos_resumen` no respeta se sacan del schema para que
-// nadie crea que el resumen los aplica (se ignorarían en silencio).
-// `concepto_id` y `sin_imputar` sí los filtra desde 20260927k, y
-// `pago_a_reconstruir` desde 20260928: los chips de la bandeja tienen que
-// contar lo mismo que la lista.
+// El resumen acepta EXACTAMENTE los filtros de la lista: el conjunto de
+// facturas sale de `aplicarFiltrosFacturas` y la RPC solo agrega (20260929o).
+// Antes se sacaban del schema los que la RPC no sabía filtrar y los chips
+// contaban otra cosa que la lista.
 export const FacturasResumenQuerySchema = ListFacturasQuerySchema.omit({
   orden: true, limit: true, offset: true,
-  periodo_iva: true, periodo_iva_distinto: true, tributos_a_revisar: true, origen_carga: true, importacion_id: true,
 }).extend({
   grupo: z.enum(FACTURAS_RESUMEN_GRUPOS).default('estado'),
 })

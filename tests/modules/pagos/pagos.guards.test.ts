@@ -628,14 +628,22 @@ describe('lecturas con NC', () => {
     expect((await get('/facturas?clase=otra')).status).toBe(400)
   })
 
-  it('GET /facturas/resumen manda p_clase', async () => {
+  it('GET /facturas/resumen filtra la clase igual que la lista (ids, 20260929o)', async () => {
     state.profile = CONTADOR
     rpcMock.mockImplementation(async () => ({ data: [], error: null }))
+    const llamadas: unknown[][] = []
+    fromMock.mockImplementation((t: string) => {
+      if (t === 'profiles') return chain(state.profile)
+      const c = chain([{ id: 4 }])
+      c.eq = (...args: unknown[]) => { llamadas.push(args); return c }
+      return c
+    })
     await get('/facturas/resumen?grupo=proveedor&clase=factura')
-    expect(llamada('pagos_resumen')?.p_clase).toBe('factura')
-    rpcMock.mockClear()
+    expect(llamadas).toContainEqual(['clase', 'factura'])
+    expect(llamada('pagos_resumen')).toMatchObject({ p_grupo: 'proveedor', p_ids: [4], p_archivadas: true })
+    llamadas.length = 0
     await get('/facturas/resumen?grupo=proveedor')
-    expect(llamada('pagos_resumen')?.p_clase).toBeNull()
+    expect(llamadas.some((a) => a[0] === 'clase')).toBe(false)
   })
 
   const APLICACIONES = [{ id: 1, nc_id: 7, factura_id: 5, monto: '30.00', created_at: '2026-09-25T12:00:00Z' }]
@@ -788,19 +796,27 @@ describe('enmascarado de CBU/alias también en las respuestas de las mutaciones'
 })
 
 describe('GET /facturas/resumen: las anuladas quedan afuera como en la bandeja', () => {
-  it('sin filtro de estado manda p_estados sin «anulada»; con anuladas=1 manda null; con estado explícito lo respeta', async () => {
+  it('sin filtro de estado saca las anuladas; con anuladas=1 no; con estado explícito lo respeta', async () => {
     state.profile = CONTADOR
     rpcMock.mockImplementation(async () => ({ data: [], error: null }))
+    const llamadas: [string, unknown[]][] = []
+    fromMock.mockImplementation((t: string) => {
+      if (t === 'profiles') return chain(state.profile)
+      const c = chain([])
+      for (const m of ['neq', 'in']) c[m] = (...args: unknown[]) => { llamadas.push([m, args]); return c }
+      return c
+    })
     expect((await get('/facturas/resumen?grupo=proveedor')).status).toBe(200)
-    expect(llamada('pagos_resumen')?.p_estados).toEqual(['pendiente', 'observada', 'aprobada', 'pagada_parcial', 'pagada'])
+    expect(llamadas).toContainEqual(['neq', ['estado', 'anulada']])
+    expect(llamada('pagos_resumen')).toMatchObject({ p_ids: [] })
 
-    rpcMock.mockClear()
+    llamadas.length = 0
     await get('/facturas/resumen?grupo=proveedor&anuladas=1')
-    expect(llamada('pagos_resumen')?.p_estados).toBeNull()
+    expect(llamadas.some(([m, a]) => m === 'neq' && a[0] === 'estado')).toBe(false)
 
-    rpcMock.mockClear()
+    llamadas.length = 0
     await get('/facturas/resumen?grupo=estado&estado=aprobada,anulada')
-    expect(llamada('pagos_resumen')?.p_estados).toEqual(['aprobada', 'anulada'])
+    expect(llamadas).toContainEqual(['in', ['estado', ['aprobada', 'anulada']]])
   })
 })
 

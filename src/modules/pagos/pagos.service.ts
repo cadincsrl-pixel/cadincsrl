@@ -36,7 +36,7 @@ import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { PagosHttpError, errorDeCampo, mapRpcError } from './pagos.errors.js'
 import {
-  hoyAR, fechaARDe, normNumeroFactura, enmascarar, sumaCentavos, aCentavos, cuadra,
+  hoyAR, fechaARDe, normNumeroFactura, separarNumerosFactura, enmascarar, sumaCentavos, aCentavos, cuadra,
 } from './pagos.util.js'
 import {
   esBoolQ, ESTADOS_FACTURA, CAMPOS_CONGELADOS, CAMPOS_QUE_DESAPRUEBAN,
@@ -303,7 +303,15 @@ function aplicarFiltrosOrdenes(q: any, f: Omit<ListOrdenesQuery, 'limit' | 'offs
   return q
 }
 
-function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'limit' | 'offset'>) {
+/**
+ * Los filtros de la bandeja de facturas, en UN solo lugar: la lista paginada,
+ * el export y los chips/KPI (`resumenFacturas` junta los ids con esta misma
+ * función y la RPC solo agrega, 20260929o). Un filtro nuevo va SOLO acá; el
+ * test `facturas-filtros.test.ts` falla si una clave del schema no filtra o
+ * si el resumen deja de pasar por acá (CLAUDE.md §5.9).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'limit' | 'offset'>) {
   const estados = estadosDe(f.estado)
   if (estados.length > 0) q = q.in('estado', estados)
   else if (!esBoolQ(f.anuladas)) q = q.neq('estado', 'anulada')
@@ -344,7 +352,11 @@ function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden' | 'li
   if (f.importacion_id) q = q.eq('importacion_id', f.importacion_id)
   // Facturas cuyas obras están TODAS archivadas: solo con el tilde.
   if (!esBoolQ(f.archivadas)) q = q.or('todas_archivadas.is.null,todas_archivadas.eq.false')
-  for (const w of palabras(f.q)) q = q.ilike('busq', `%${w}%`)
+  // Un número de comprobante completo se busca exacto por `numero_norm`
+  // (0005-… y 00005-… son la misma factura); el resto, substring de `busq`.
+  const { numeros, resto } = separarNumerosFactura(f.q)
+  for (const n of numeros) q = q.eq('numero_norm', n)
+  for (const w of palabras(resto)) q = q.ilike('busq', `%${w}%`)
   return q
 }
 
@@ -487,32 +499,23 @@ export const pagosService = {
     return { items, total, limit: f.limit, offset: f.offset, hasMore: f.offset + items.length < total }
   },
 
-  /** Agregados por grupo (eje EMISIÓN), calculados en la base: cap 1000 de PostgREST. */
+  /**
+   * Agregados por grupo (eje EMISIÓN): los chips y KPI de la bandeja y el tab
+   * Resumen. El CONJUNTO de facturas lo decide `aplicarFiltrosFacturas`, la
+   * misma consulta de la lista (se juntan los ids de a 1000: cap de
+   * PostgREST, §5.7); la RPC solo agrega sobre esos ids (20260929o). Hasta
+   * ese día la RPC recibía un subconjunto de filtros y, con «Sin adjunto»
+   * tildado, la lista daba 0 y los chips seguían contando todo.
+   * `p_archivadas: true`: la RPC no vuelve a filtrar lo que ya filtró la lista.
+   */
   async resumenFacturas(f: FacturasResumenQuery) {
-    // Mismo default que la bandeja (aplicarFiltrosFacturas): sin `estado` ni
-    // `anuladas=1`, las anuladas quedan afuera; si no, una anulada suma como
-    // deuda en los KPIs y no cuadra con la lista.
-    let estados = estadosDe(f.estado)
-    if (estados.length === 0 && !esBoolQ(f.anuladas)) estados = ESTADOS_FACTURA.filter((e) => e !== 'anulada')
-    const pal = palabras(f.q)
+    const { grupo, ...filtros } = f
+    const filas = await todasLasFilas<{ id: number }>((d, h) =>
+      aplicarFiltrosFacturas(supabase.from('v_pagos_facturas').select('id'), filtros).order('id').range(d, h))
     const r = await supabase.rpc('pagos_resumen', {
-      p_grupo:        f.grupo,
-      p_proveedor_id: f.proveedor_id ?? null,
-      p_obra_cod:     f.obra_cod ?? null,
-      p_centro_costo: f.centro_costo ?? null,
-      p_estados:      estados.length ? estados : null,
-      p_tipo:         f.tipo ?? null,
-      p_forma_pago:   f.forma_pago ?? null,
-      p_vencimiento:  f.vencimiento ?? null,
-      p_desde:        f.desde ?? null,
-      p_hasta:        f.hasta ?? null,
-      p_palabras:     pal.length ? pal : null,
-      p_archivadas:   esBoolQ(f.archivadas),
-      p_paga_cliente: f.paga_cliente === undefined ? null : esBoolQ(f.paga_cliente),
-      p_clase:        f.clase ?? null,
-      p_sin_imputar:  f.sin_imputar === undefined ? null : esBoolQ(f.sin_imputar),
-      p_pago_a_reconstruir: f.pago_a_reconstruir === undefined ? null : esBoolQ(f.pago_a_reconstruir),
-      p_concepto_id:  f.concepto_id ?? null,
+      p_grupo:      grupo,
+      p_ids:        filas.map((x) => Number(x.id)),
+      p_archivadas: true,
     })
     // Cada grupo trae `facturas` (solo facturas), `notas_credito` y `total` /
     // `imputable` con signo (la NC resta).

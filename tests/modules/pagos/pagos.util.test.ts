@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   hoyAR, normNumeroFactura, normCuit, cuitValido, normCbu, cbuValido, normAlias, aliasValido,
-  enmascarar, enmascararTexto, cuadra, sumaCentavos,
+  enmascarar, enmascararTexto, cuadra, sumaCentavos, separarNumerosFactura,
 } from '../../../src/modules/pagos/pagos.util.js'
 
 // CBU construido con los dos verificadores (bloque 1 pesos 7,1,3,9,7,1,3; bloque 2 pesos 3,9,7,1,3,9,7,1,3,9,7,1,3).
@@ -113,5 +113,21 @@ describe('tolerancia única de $0,01', () => {
     expect(cuadra(100, 100.01)).toBe(true)
     expect(cuadra(100, 100.02)).toBe(false)
     expect(sumaCentavos([0.1, 0.2])).toBe(0.3)
+  })
+})
+
+describe('separarNumerosFactura', () => {
+  it('saca los números completos y deja el resto', () => {
+    expect(separarNumerosFactura('00005-00025267')).toEqual({ numeros: ['5-25267'], resto: '' })
+    expect(separarNumerosFactura('5-25267 hierro')).toEqual({ numeros: ['5-25267'], resto: 'hierro' })
+    expect(separarNumerosFactura('0005 00025267')).toEqual({ numeros: ['5-25267'], resto: '' })
+    expect(separarNumerosFactura('0000500025267')).toEqual({ numeros: ['5-25267'], resto: '' })
+  })
+  it('lo parcial, los CUIT y el texto no son números de factura', () => {
+    expect(separarNumerosFactura('25267')).toEqual({ numeros: [], resto: '25267' })
+    expect(separarNumerosFactura('30-57742861-8')).toEqual({ numeros: [], resto: '30-57742861-8' })
+    expect(separarNumerosFactura('30577428618')).toEqual({ numeros: [], resto: '30577428618' })
+    expect(separarNumerosFactura('5 25267')).toEqual({ numeros: [], resto: '5 25267' })
+    expect(separarNumerosFactura(undefined)).toEqual({ numeros: [], resto: '' })
   })
 })

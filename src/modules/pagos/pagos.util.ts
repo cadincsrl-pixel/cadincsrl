@@ -146,3 +146,37 @@ export function sumaCentavos(ns: number[]): number {
 export function cuadra(a: number, b: number): boolean {
   return Math.abs(aCentavos(a) - aCentavos(b)) <= 0.01 + 1e-9
 }
+
+/**
+ * Separa de la búsqueda de la bandeja lo que es un número de comprobante
+ * completo, para buscarlo EXACTO por `numero_norm` y no como texto: la
+ * factura cargada a mano guarda `0005-00025267` y la importada de ARCA
+ * `00005-00025267`; las dos normalizan a `5-25267`, pero `busq` solo tiene
+ * el número crudo y un substring `5-25267` también pegaría en `25-25267`.
+ *
+ * Cuenta como número completo (siempre como palabras sueltas):
+ *   - punto de venta y número con guion: `5-25267`, `0005-00025267`
+ *     (1–5 y 1–8 dígitos; un CUIT con guiones `30-57742861-8` NO: tiene dos);
+ *   - punto de venta y número separados por espacio, como en el papel:
+ *     `0005 00025267` (4–5 dígitos y 8 dígitos exactos);
+ *   - una tira de 12 o 13 dígitos: `000500025267` (un CUIT tiene 11).
+ * Todo lo demás (p. ej. `25267` solo) sigue yendo al substring de `busq`.
+ */
+export function separarNumerosFactura(q: string | null | undefined): { numeros: string[]; resto: string } {
+  const tokens = (q ?? '').trim().split(/\s+/).filter(Boolean)
+  const numeros: string[] = []
+  const resto: string[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i] ?? ''
+    const sig = tokens[i + 1]
+    if (/^\d{1,5}-\d{1,8}$/.test(t) || /^\d{12,13}$/.test(t)) {
+      numeros.push(normNumeroFactura(t) as string)
+    } else if (/^\d{4,5}$/.test(t) && sig !== undefined && /^\d{8}$/.test(sig)) {
+      numeros.push(normNumeroFactura(`${t}-${sig}`) as string)
+      i++
+    } else {
+      resto.push(t)
+    }
+  }
+  return { numeros: [...new Set(numeros)], resto: resto.join(' ') }
+}

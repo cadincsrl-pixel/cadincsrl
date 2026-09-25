@@ -125,7 +125,7 @@ describe('período IVA', () => {
     expect((await pagos.request('/facturas/periodo-iva-sugerido?fecha=2026-07-20')).status).toBe(403)
   })
 
-  it('schemas: YYYY-MM se guarda como día 1; el resumen filtra sin_imputar pero no el período IVA', () => {
+  it('schemas: YYYY-MM se guarda como día 1; el resumen acepta sin_imputar y el período IVA (20260929o)', () => {
     const base = { proveedor_id: 1, tipo_comprobante: 'A', numero: '1-1', fecha: '2026-07-01', total: 1, descripcion: 'abc', concepto_id: 1, imputaciones: [{ obra_cod: 'X', monto: 1 }] }
     expect(CreateFacturaSchema.parse({ ...base, periodo_iva: '2026-08' }).periodo_iva).toBe('2026-08-01')
     expect(CreateFacturaSchema.parse({ ...base, periodo_iva: null }).periodo_iva).toBeNull()
@@ -135,7 +135,7 @@ describe('período IVA', () => {
     expect(ListFacturasQuerySchema.parse({ periodo_iva: '2026-09', sin_imputar: '1' })).toMatchObject({ periodo_iva: '2026-09', sin_imputar: '1' })
     const res = FacturasResumenQuerySchema.parse({ periodo_iva: '2026-09', sin_imputar: '1' })
     expect(res).toHaveProperty('sin_imputar', '1')
-    expect(res).not.toHaveProperty('periodo_iva')
+    expect(res).toHaveProperty('periodo_iva', '2026-09')
   })
 
   it('alta con período anterior al mes de la fecha → 400 antes de la RPC; válido viaja en p_factura', async () => {
@@ -365,11 +365,14 @@ describe('compras de meses ya pagados (pago_a_reconstruir)', () => {
     filtros.length = 0
     await pagos.request('/facturas')
     expect(filtros.some((f) => f[1] === 'pago_a_reconstruir')).toBe(false)
+    // El resumen junta los ids con los mismos filtros (20260929o).
+    filtros.length = 0
     await pagos.request('/facturas/resumen?pago_a_reconstruir=1')
-    expect(llamada('pagos_resumen')).toMatchObject({ p_pago_a_reconstruir: true })
-    rpcMock.mockClear()
+    expect(filtros).toContainEqual(['v_pagos_facturas', 'pago_a_reconstruir', true])
+    expect(llamada('pagos_resumen')).toHaveProperty('p_ids')
+    filtros.length = 0
     await pagos.request('/facturas/resumen')
-    expect(llamada('pagos_resumen')).toMatchObject({ p_pago_a_reconstruir: null })
+    expect(filtros.some((f) => f[1] === 'pago_a_reconstruir')).toBe(false)
   })
 
   it('«vence en 7 días» no trae las de meses ya pagados', async () => {
