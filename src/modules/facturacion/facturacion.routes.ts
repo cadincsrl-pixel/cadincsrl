@@ -44,6 +44,7 @@ import { parametrosService } from './parametros.service.js'
 import { retencionTiposService, ventasConfigService } from './retencion-tipos.service.js'
 import { gastoConceptosService } from './gasto-conceptos.service.js'
 import { liquidacionService } from './liquidacion.service.js'
+import { chequesCobroService } from './cheques-cobro.service.js'
 import { nombreArchivoCompras } from './lid-compras.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
@@ -59,7 +60,7 @@ import {
   PuntoVentaCreateSchema, PuntoVentaUpdateSchema, ListPuntosVentaQuerySchema,
   ParametroCreateSchema, ListParametrosQuerySchema, ParametrosVigentesQuerySchema,
   RetencionTipoCreateSchema, RetencionTipoUpdateSchema, ListRetencionTiposQuerySchema, VentasConfigPatchSchema,
-  CLAVE_RETENCION_RE, GastoConceptoCreateSchema, GastoConceptoUpdateSchema, LeerLiquidacionSchema,
+  CLAVE_RETENCION_RE, GastoConceptoCreateSchema, GastoConceptoUpdateSchema, LeerChequesCobroSchema, LeerLiquidacionSchema,
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
@@ -487,6 +488,11 @@ fact.delete('/cobros/adjuntos/:id', lectura, tabCobranzas, handler(async (c) => 
 // IA) y devuelve la propuesta del cobro. NO crea nada; se confirma con POST /cobros.
 fact.post('/cobros/liquidacion/leer', lectura, registrarCobros, tabCobranzas, valida('json', LeerLiquidacionSchema), handler(async (c) =>
   liquidacionService.leer(c.req.valid('json'), db(c))))
+
+// «Soltá acá los cheques» (2026-09-25): lee los cheques de una foto o PDF ya
+// subido y reconoce al cliente. NO crea nada; se confirma con POST /cobros.
+fact.post('/cobros/cheques/leer', lectura, registrarCobros, tabCobranzas, valida('json', LeerChequesCobroSchema), handler(async (c) =>
+  chequesCobroService.leer(c.req.valid('json'), db(c))))
 
 fact.get('/cobros/:id/adjuntos', lectura, tabLeerCobros, handler(async (c) =>
   cobrosService.listarAdjuntos(idParam(c), db(c))))

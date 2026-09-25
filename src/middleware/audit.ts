@@ -193,6 +193,8 @@ export const ENTIDADES: Record<string, string> = {
   // 20260930k: POST /facturacion/cobros/liquidacion/leer → «leer comprobante liquidación del cliente»
   // (no crea nada); Ventas › Configuración › Gastos descontados.
   'facturacion/cobros/liquidacion': 'liquidación del cliente',
+  // «Soltá acá los cheques» (2026-09-25): POST /facturacion/cobros/cheques/leer → «leer comprobante cheques del cliente» (no crea nada).
+  'facturacion/cobros/cheques': 'cheques del cliente',
   'facturacion/cobro-gasto-conceptos': 'concepto de gasto de cobro',
   'facturacion/imputaciones': 'imputación', 'facturacion/compensaciones': 'imputación',
   'facturacion/externos': 'comprobante externo',
