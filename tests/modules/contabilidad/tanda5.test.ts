@@ -172,6 +172,29 @@ describe('motor, config y errores', () => {
     expect(configDeFilas([{ clave: 'iva_ddjj_arrastre', valor: true }]).iva_ddjj_arrastre).toBe(true)
   })
 
+  it('ConfigSchema: bu_titulo_rubros es un id positivo (20260929h)', () => {
+    expect(ConfigSchema.safeParse({ bu_titulo_rubros: 1111 }).data).toEqual({ bu_titulo_rubros: 1111 })
+    expect(ConfigSchema.safeParse({ bu_titulo_rubros: '1111' }).data).toEqual({ bu_titulo_rubros: 1111 })
+    expect(ConfigSchema.safeParse({ bu_titulo_rubros: 0 }).success).toBe(false)
+    expect(ConfigSchema.safeParse({ bu_titulo_rubros: -3 }).success).toBe(false)
+    expect(ConfigSchema.safeParse({ bu_titulo_rubros: 'abc' }).success).toBe(false)
+    expect(ConfigSchema.safeParse({ bu_titulo_rubros: 1.5 }).success).toBe(false)
+  })
+
+  it('configDeFilas: bu_titulo_rubros como id crudo o como objeto de cont_config_json', () => {
+    expect(configDeFilas([]).bu_titulo_rubros).toBeNull()
+    expect(configDeFilas([{ clave: 'bu_titulo_rubros', valor: 1111 }]).bu_titulo_rubros).toEqual({ cuenta_id: 1111, codigo: null, nombre: null })
+    expect(configDeFilas([{ clave: 'bu_titulo_rubros', valor: { cuenta_id: 1111, codigo: '1.2.2', nombre: 'BIENES DE USO' } }]).bu_titulo_rubros)
+      .toEqual({ cuenta_id: 1111, codigo: '1.2.2', nombre: 'BIENES DE USO' })
+    expect(configDeFilas([{ clave: 'bu_titulo_rubros', valor: null }]).bu_titulo_rubros).toBeNull()
+  })
+
+  it('PATCH /config manda bu_titulo_rubros a la RPC como número', async () => {
+    state.profile = ADMIN
+    expect((await patch('/config', { bu_titulo_rubros: '1111' })).status).toBe(200)
+    expect(llamada('cont_guardar_config')).toEqual({ p_cambios: { bu_titulo_rubros: 1111 }, p_user_id: 'u-1' })
+  })
+
   it('PATCH /config manda las claves nuevas a la RPC', async () => {
     state.profile = ADMIN
     expect((await patch('/config', { iva_ddjj_arrastre: true, bu_frecuencia: 'anual' })).status).toBe(200)

@@ -256,6 +256,8 @@ describe('mapeos y config', () => {
       automaticos_desde: '2026-08-01', cvlp_modo: 'bruto', compras_fecha_contable: 'mes_iva', paga_cliente_modo: null,
       // Tanda 5 (20260928n): defaults hasta que la base tenga las claves.
       iva_ddjj_arrastre: false, bu_frecuencia: 'mensual', bu_criterio_alta: 'proporcional', bu_corte_inicial: '2026-06-30',
+      // 20260929h: sin la fila, la base usa 1.2.2.
+      bu_titulo_rubros: null,
     })
     const r = await patch('/config', { automaticos_desde: '2026-09-01', compras_fecha_contable: 'fecha' })
     expect(r.status).toBe(200)

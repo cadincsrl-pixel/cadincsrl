@@ -30,7 +30,11 @@ export interface CtbConfig {
   bu_frecuencia: 'mensual' | 'anual'
   bu_criterio_alta: 'completo' | 'proporcional'
   bu_corte_inicial: string
+  /** Cuenta título de los rubros de bienes de uso (20260929h). null = la base usa 1.2.2. */
+  bu_titulo_rubros: CtbCuentaTitulo | null
 }
+
+export interface CtbCuentaTitulo { cuenta_id: number; codigo: string | null; nombre: string | null }
 
 export const CONFIG_DEFAULT: CtbConfig = {
   automaticos_desde: '2026-07-01',
@@ -41,13 +45,31 @@ export const CONFIG_DEFAULT: CtbConfig = {
   bu_frecuencia: 'mensual',
   bu_criterio_alta: 'proporcional',
   bu_corte_inicial: '2026-06-30',
+  bu_titulo_rubros: null,
+}
+
+/** `cont_config.bu_titulo_rubros` viene como id (fila cruda) o como {cuenta_id, codigo, nombre} (cont_config_json). */
+function tituloDeValor(v: unknown): CtbCuentaTitulo | null {
+  if (typeof v === 'number' && Number.isInteger(v) && v > 0) return { cuenta_id: v, codigo: null, nombre: null }
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>
+    const id = Number(o.cuenta_id)
+    if (!Number.isInteger(id) || id <= 0) return null
+    return {
+      cuenta_id: id,
+      codigo: typeof o.codigo === 'string' ? o.codigo : null,
+      nombre: typeof o.nombre === 'string' ? o.nombre : null,
+    }
+  }
+  return null
 }
 
 /** Filas de `cont_config` (clave, valor jsonb) → CtbConfig, con defaults. */
 export function configDeFilas(filas: { clave: string; valor: unknown }[]): CtbConfig {
   const out: CtbConfig = { ...CONFIG_DEFAULT }
   for (const f of filas) {
-    if (f.clave in out) (out as unknown as Record<string, unknown>)[f.clave] = f.valor ?? null
+    if (f.clave === 'bu_titulo_rubros') out.bu_titulo_rubros = tituloDeValor(f.valor)
+    else if (f.clave in out) (out as unknown as Record<string, unknown>)[f.clave] = f.valor ?? null
   }
   return out
 }
@@ -91,7 +113,15 @@ export const automaticosService = {
   async config(db: SupabaseClient = supabase): Promise<CtbConfig> {
     const { data, error } = await db.from('cont_config').select('clave, valor')
     if (error) throw mapRpcError(error as PgError)
-    return configDeFilas((data ?? []) as { clave: string; valor: unknown }[])
+    const out = configDeFilas((data ?? []) as { clave: string; valor: unknown }[])
+    // La fila guarda solo el id: se completan código y nombre para la pantalla.
+    const t = out.bu_titulo_rubros
+    if (t && t.codigo === null) {
+      const { data: cta, error: e2 } = await db.from('cont_cuentas').select('codigo, nombre').eq('id', t.cuenta_id).maybeSingle()
+      if (e2) throw mapRpcError(e2 as PgError)
+      if (cta) out.bu_titulo_rubros = { cuenta_id: t.cuenta_id, codigo: cta.codigo as string, nombre: cta.nombre as string }
+    }
+    return out
   },
 
   async pendientes(q: PendientesQuery, db: SupabaseClient = supabase) {

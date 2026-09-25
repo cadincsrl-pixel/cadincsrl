@@ -315,6 +315,9 @@ export const ConfigSchema = z.object({
   bu_frecuencia:          z.enum(BU_FRECUENCIAS).optional(),
   bu_criterio_alta:       z.enum(BU_CRITERIOS).optional(),
   bu_corte_inicial:       FechaISO.optional(),
+  // 20260929h: cuenta título de los rubros de bienes de uso. La base valida
+  // que sea un título del activo y que no deje bienes afuera.
+  bu_titulo_rubros:       z.coerce.number().int().positive().optional(),
 }).strict().refine((b) => Object.keys(b).length > 0, { message: 'CONFIG_INVALIDA', path: [] })
 export type ConfigDto = z.infer<typeof ConfigSchema>
 
