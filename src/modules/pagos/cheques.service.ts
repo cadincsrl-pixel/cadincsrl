@@ -103,7 +103,11 @@ export function propuestaDeCheque(l: LecturaChequeIA): { propuesta: PropuestaChe
     librador_cuit = null
   }
   const librador = txt(l.librador, 120)
-  const es_propio: boolean | null = librador_cuit ? librador_cuit === CUIT_CADINC
+  // Un cheque endosado lo libró OTRO: CADINC lo recibió y lo transfiere
+  // (2026-09-25). El comprobante del Galicia sólo trae endosante y
+  // endosatario, así que el librador suele venir vacío.
+  const es_propio: boolean | null = l.es_endoso === true ? false
+    : librador_cuit ? librador_cuit === CUIT_CADINC
     : librador ? /\bcadinc\b/i.test(librador)
     : null
 
@@ -254,6 +258,7 @@ export const chequesService = {
     const provs = (padron ?? []) as PadronProveedor[]
     const cheques = await Promise.all(legibles.map(async (l) => {
       const { propuesta, avisos } = propuestaDeCheque(l)
+      if (l.es_endoso === true && !propuesta.librador) await libradorDelEndoso(propuesta, avisos)
       await avisarSiYaEntregado(propuesta, avisos)
       const orden = { error: 0, advertencia: 1, info: 2 } as const
       return {
@@ -269,6 +274,36 @@ export const chequesService = {
       modelo: ia.modelo,
     }
   },
+}
+
+/** Lo que se pone cuando el comprobante del endoso no dice quién libró el cheque (así se cargaron los de la OP-0241). */
+export const LIBRADOR_NO_INFORMADO = 'No informado en el detalle del endoso'
+
+/**
+ * El librador de un cheque endosado, que el comprobante del banco no trae:
+ * se busca entre los cheques RECIBIDOS en los cobros de Ventas por el número
+ * (sin ceros a la izquierda). Si no está, queda «No informado…» y un aviso
+ * para completarlo a mano. (2026-09-25; los cobros de Logística todavía no
+ * registran cheques.)
+ */
+async function libradorDelEndoso(p: PropuestaCheque, avisos: AvisoCheque[]): Promise<void> {
+  const corto = (p.numero ?? '').replace(/^0+/, '')
+  if (corto) {
+    const { data } = await supabase.from('ventas_cobro_medios')
+      .select('cheque_numero, cheque_banco, cheque_librador').ilike('cheque_numero', `%${corto}%`).limit(20)
+    const r = ((data ?? []) as { cheque_numero: string | null; cheque_banco: string | null; cheque_librador: string | null }[])
+      .find((x) => (x.cheque_numero ?? '').replace(/\D/g, '').replace(/^0+/, '') === corto && x.cheque_librador?.trim())
+    if (r) {
+      p.librador = r.cheque_librador!.trim()
+      if (!p.banco && r.cheque_banco?.trim()) p.banco = r.cheque_banco.trim()
+      avisos.push({ campo: 'librador', severidad: 'info', codigo: 'LIBRADOR_DEL_COBRO',
+        mensaje: `Librador tomado del cobro donde se recibió el cheque: ${p.librador}.` })
+      return
+    }
+  }
+  p.librador = LIBRADOR_NO_INFORMADO
+  avisos.push({ campo: 'librador', severidad: 'advertencia', codigo: 'LIBRADOR_NO_INFORMADO',
+    mensaje: 'Es un endoso y el comprobante no dice quién libró el cheque: si lo sabés, completalo.' })
 }
 
 export interface PadronProveedor { id: number; razon_social: string; cuit: string | null }

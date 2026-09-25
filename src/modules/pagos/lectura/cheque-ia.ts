@@ -31,6 +31,7 @@ export const LecturaChequeIASchema = z.object({
   librador_cuit: Txt,
   es_echeq: z.boolean().nullable(),
   es_diferido: z.boolean().nullable(),
+  es_endoso: z.boolean().nullable(),
   a_la_orden_de: Txt,
   entregado_a: Txt,
   entregado_a_cuit: Txt,
@@ -70,6 +71,7 @@ Para cada cheque:
 - librador: quién firma o emite el cheque (titular de la cuenta, razón social o nombre). librador_cuit: su CUIT/CUIL, sólo los 11 dígitos, si está impreso.
 - es_echeq: true si es un e-cheq (captura de home banking, comprobante electrónico) y no un cheque de papel.
 - es_diferido: true si es un cheque de pago diferido (dice "Cheque de pago diferido" o tiene una fecha de pago posterior a la de emisión).
+- es_endoso: true si el comprobante es de un ENDOSO (CADINC transfiere un cheque que recibió de otro); false si es una emisión o un cheque de papel.
 - a_la_orden_de: a quién está hecho, si figura.
 - entregado_a: a quién se le ENTREGA este cheque ahora. En un cheque o e-cheq emitido, el beneficiario (a la orden de). En un comprobante de ENDOSO, el ENDOSATARIO (a quién se endosó), nunca el endosante ni el librador. entregado_a_cuit: su CUIT si figura, sólo los 11 dígitos.
 - notas: en una o dos frases, cualquier cosa rara de ESE cheque (tachaduras, enmiendas, falta la firma, "no a la orden"); no hace falta contar que hay otros. null si no hay nada que decir.

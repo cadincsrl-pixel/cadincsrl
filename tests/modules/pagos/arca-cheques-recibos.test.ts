@@ -230,7 +230,7 @@ describe('leer la foto de un cheque', () => {
     legible: true, numero: 'N° 12345678', banco: 'Banco de Galicia', sucursal: null,
     fecha_emision: '2026-09-20', fecha_pago: '2026-10-20', importe: 1250000.5, importe_en_letras: 'un millón…',
     importe_letras_coincide: true, librador: 'Constructora Sur SA', librador_cuit: CUIT_OK,
-    es_echeq: false, es_diferido: null, a_la_orden_de: null, entregado_a: null, entregado_a_cuit: null, notas: null,
+    es_echeq: false, es_diferido: null, es_endoso: null, a_la_orden_de: null, entregado_a: null, entregado_a_cuit: null, notas: null,
   }
 
   it('pide lectura + registrar_pagos + tab facturas o pagos', async () => {
@@ -263,6 +263,16 @@ describe('leer la foto de un cheque', () => {
     expect(body.avisos).toEqual([])
     expect(rpcMock).not.toHaveBeenCalled()
     expect(state.updates).toEqual([])
+  })
+
+  it('un endoso sin librador → de tercero, con «No informado en el detalle del endoso» y un aviso', async () => {
+    state.profile = CONTADOR
+    iaChequeMock.mockResolvedValue({ ok: true, modelo: 'm', lecturas: [
+      { ...LEIDO, numero: '14575840', librador: null, librador_cuit: null, es_echeq: true, es_endoso: true },
+    ] })
+    const body = await (await post('/cheques/leer', BODY)).json()
+    expect(body.propuesta).toMatchObject({ es_propio: false, librador: 'No informado en el detalle del endoso' })
+    expect(body.avisos.map((a: Fila) => a.codigo)).toContain('LIBRADOR_NO_INFORMADO')
   })
 
   it('un archivo con varios cheques (PDF del banco con endosos) → uno por cheque, sin los ilegibles', async () => {
