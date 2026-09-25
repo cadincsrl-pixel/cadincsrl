@@ -42,7 +42,7 @@ export const lidComprasService = {
     // 2026-09-25 (clase = 'nota_credito', con su código 003/008/013/…): entran
     // solas por esta misma query y `armarLibroCompras` las resta por el tipo.
     const facturas = await todasLasFilas<FilaFacturaCompra>((d, h) => db.from('pagos_facturas')
-      .select('id, tipo_comprobante, cbte_tipo_arca, numero, fecha, neto, iva, no_gravado, exento, total, estado, paga_cliente, desglose_a_revisar, periodo_iva, tributos_a_revisar, proveedor:pagos_proveedores(razon_social, cuit), iva_detalle:pagos_factura_iva(alicuota_id, base_imp, importe), tributos:pagos_factura_tributos(tipo, importe)')
+      .select('id, tipo_comprobante, cbte_tipo_arca, numero, fecha, neto, iva, no_gravado, exento, total, estado, paga_cliente, desglose_a_revisar, periodo_iva, tributos_a_revisar, proveedor:pagos_proveedores(razon_social, cuit, icl_computa_pago_a_cuenta), iva_detalle:pagos_factura_iva(alicuota_id, base_imp, importe), tributos:pagos_factura_tributos(tipo, importe)')
       .neq('estado', 'anulada')
       // Por período IVA (día 1 del mes), no por fecha: una factura de agosto
       // informada en septiembre entra en el libro de septiembre.
@@ -77,6 +77,7 @@ export const lidComprasService = {
       credito: compras.resumen.credito_fiscal,
       percepciones: compras.resumen.perc_iva,
       retenciones,
+      itc: compras.resumen.itc_computable,
       excluidosVentas: ventas.resumen.excluidos,
       excluidosCompras: compras.resumen.excluidos,
     })

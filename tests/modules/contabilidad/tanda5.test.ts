@@ -383,6 +383,13 @@ describe('IVA: diferencias mayor vs libros', () => {
     ])
   })
 
+  it('pago a cuenta ITC: compara solo si los libros lo traen (20261001b)', () => {
+    expect(diferenciasIva({ debito_fiscal: 1000, credito_fiscal: 400, pagos_a_cuenta: 75, itc_mes: 90 }, FISCAL)).toEqual([])
+    expect(diferenciasIva({ debito_fiscal: 1000, credito_fiscal: 400, pagos_a_cuenta: 75, itc_mes: 90 }, { ...FISCAL, pago_a_cuenta_itc: 100 }))
+      .toEqual([{ componente: 'itc', contable: 90, fiscal: 100, diferencia: -10 }])
+    expect(diferenciasIva({ debito_fiscal: 1000, credito_fiscal: 400, pagos_a_cuenta: 75 }, { ...FISCAL, pago_a_cuenta_itc: 0 })).toEqual([])
+  })
+
   it('periodoDeFecha y ddjjBloqueaCierre', () => {
     expect(periodoDeFecha('2026-08-01')).toBe('2026-08')
     expect(ddjjBloqueaCierre({ estado: 'desactualizado', registro: { id: 1 } })).toBe(true)

@@ -208,7 +208,13 @@ export function alicuotaIdDe(pct: number | null | undefined): number | null {
   return null
 }
 
+/**
+ * `icl` = Impuesto sobre los Combustibles Líquidos (ICL/ITC) e `idc` = Impuesto
+ * al Dióxido de Carbono (20261001a). No son percepciones: van a `otros`, al
+ * costo de la obra, y al LID como «otros tributos». El 45 % del ICL de un
+ * proveedor con `icl_computa_pago_a_cuenta` es pago a cuenta de IVA.
+ */
 export const TIPOS_TRIBUTO = ['percepcion_iva', 'percepcion_iibb', 'percepcion_ganancias',
-  'percepcion_municipal', 'impuestos_internos', 'otro'] as const
+  'percepcion_municipal', 'impuestos_internos', 'icl', 'idc', 'otro'] as const
 export type TipoTributo = (typeof TIPOS_TRIBUTO)[number]
 export const esPercepcion = (t: string) => t.startsWith('percepcion_')

@@ -129,7 +129,7 @@ Importes (números con punto decimal, sin separador de miles: 24994.52)
 - neto_gravado_total: la suma del neto gravado (en A = el "Subtotal" o "Importe neto gravado"; en B/C sin IVA discriminado, el subtotal o el total sin otros tributos).
 - no_gravado: "Importe no gravado" / "Conceptos no gravados". exento: "Importe exento". null si no figuran.
 - tributos: cada percepción o impuesto que se suma al total, uno por fila:
-  percepcion_iva (Percepción IVA, RG 2408/3337), percepcion_iibb (Percepción Ingresos Brutos, con la provincia en jurisdiccion: "Tucumán", "Buenos Aires", "CABA", "Córdoba"…), percepcion_ganancias, percepcion_municipal (tasas municipales, con el municipio en jurisdiccion), impuestos_internos, otro (cualquier otro tributo sumado al total). descripcion = el texto tal como figura. alicuota_pct y base_imponible si están impresas.
+  percepcion_iva (Percepción IVA, RG 2408/3337), percepcion_iibb (Percepción Ingresos Brutos, con la provincia en jurisdiccion: "Tucumán", "Buenos Aires", "CABA", "Córdoba"…), percepcion_ganancias, percepcion_municipal (percepciones municipales, con el municipio en jurisdiccion), impuestos_internos (también la «Tasa Vial» municipal de las facturas de combustible: es costo, no percepción), icl (Impuesto sobre los Combustibles Líquidos, ICL o ITC, en facturas de combustible), idc (Impuesto al Dióxido de Carbono, IDC), otro (cualquier otro tributo sumado al total). descripcion = el texto tal como figura. alicuota_pct y base_imponible si están impresas.
   No pongas en tributos el IVA común ni descuentos.
 - total: el IMPORTE TOTAL final del comprobante (en una nota de crédito, también en positivo).
 

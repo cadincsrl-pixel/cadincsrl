@@ -832,6 +832,8 @@ export const CreateProveedorSchema = z.object({
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   /** Cómo se le paga normalmente (20260930a): la forma con que nacen sus facturas. Null = transferencia. */
   forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
+  /** El 45 % del ICL de sus facturas es pago a cuenta de IVA (gasoil de camiones, 20261001a). */
+  icl_computa_pago_a_cuenta: z.boolean().optional(),
   ...Habituales,
   contacto:        Texto(120).optional().default(''),
   telefono:        Texto(40).optional().default(''),
@@ -852,6 +854,7 @@ export const UpdateProveedorSchema = z.object({
   vencimiento_modo: z.enum(VENCIMIENTO_MODOS).optional(),
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
+  icl_computa_pago_a_cuenta: z.boolean().optional(),
   ...Habituales,
   contacto:        Texto(120).optional(),
   telefono:        Texto(40).optional(),
@@ -864,7 +867,7 @@ export type UpdateProveedorDto = z.infer<typeof UpdateProveedorSchema>
 /** La puerta del contador: solo datos de pago, ni razón social ni CUIT. */
 export const DatosPagoSchema = UpdateProveedorSchema.omit({
   razon_social: true, cuit: true, obs: true, domicilio: true, provincia: true, condicion_iva_id: true,
-  concepto_habitual_id: true, obra_habitual_cod: true,
+  concepto_habitual_id: true, obra_habitual_cod: true, icl_computa_pago_a_cuenta: true,
 }).strict()
 export type DatosPagoDto = z.infer<typeof DatosPagoSchema>
 

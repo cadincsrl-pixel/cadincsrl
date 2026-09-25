@@ -31,9 +31,14 @@
  * septiembre con SU fecha (campo 1 = fecha del comprobante): el detalle lo
  * marca `fuera_de_mes` y suma una validación `info`.
  *
- * La posición de IVA (débito − crédito − percepciones − retenciones) es una
- * AYUDA para el contador, no la DDJJ: no arrastra saldos a favor de meses
- * anteriores (el LID los toma de la declaración anterior).
+ * La posición de IVA (débito − crédito − pago a cuenta ITC − percepciones −
+ * retenciones) es una AYUDA para el contador, no la DDJJ: no arrastra saldos
+ * a favor de meses anteriores (el LID los toma de la declaración anterior).
+ *
+ * ICL / IDC (20261001a): se informan en «otros tributos» (campo 22), igual
+ * que cuando se cargaban como `otro`. El 45 % del ICL de un proveedor con
+ * `icl_computa_pago_a_cuenta` (gasoil de camiones, Ley 23.966) es pago a
+ * cuenta de IVA: no cambia el libro, entra en la posición.
  */
 import {
   ALICUOTAS_LID, TOLERANCIA_ALICUOTA, aCentavos, campoFecha, campoImporte, campoNum, campoTexto,
@@ -96,7 +101,10 @@ export interface CompraLid {
   perc_iibb: number
   perc_municipales: number
   impuestos_internos: number
+  /** Campo 22: `otro` + `icl` + `idc`. */
   otros_tributos: number
+  /** 45 % de cada ICL (redondeado por fila) si el proveedor lo computa; si no, 0. No va al archivo. */
+  itc_computable: number
   alicuotas: AlicuotaLid[]
   estado: string
   paga_cliente: boolean
@@ -111,12 +119,24 @@ export interface FilaFacturaCompra {
   periodo_iva: string
   /** «Otros tributos» de ARCA sin clasificar (importadas de Mis Comprobantes Recibidos, 20260927b). */
   tributos_a_revisar?: boolean | null
-  proveedor: { razon_social: string | null; cuit: string | null } | null
+  proveedor: { razon_social: string | null; cuit: string | null; icl_computa_pago_a_cuenta?: boolean | null } | null
   iva_detalle: Array<{ alicuota_id: number; base_imp: number | string; importe: number | string }>
   tributos: Array<{ tipo: string; importe: number | string }>
 }
 
 const num = (v: unknown) => (v === null || v === undefined || v === '' ? 0 : Number(v))
+
+/** Parte del ICL que se computa como pago a cuenta de IVA (Ley 23.966, transporte de carga). */
+export const PORCENTAJE_ITC_COMPUTABLE = 45
+
+/** 45 % de un ICL, en centavos, redondeado como `round(importe * 0.45, 2)` de la base (positivos: mitad hacia arriba). */
+export const itcComputableCentavos = (importe: number) => Math.round(aCentavos(importe) * PORCENTAJE_ITC_COMPUTABLE / 100)
+
+/** Pago a cuenta ITC de un comprobante: 45 % de cada fila `icl`, solo si el proveedor lo computa. */
+export function itcComputableDe(f: Pick<FilaFacturaCompra, 'tributos' | 'proveedor'>): number {
+  if (!f.proveedor?.icl_computa_pago_a_cuenta) return 0
+  return (f.tributos ?? []).filter(t => t.tipo === 'icl').reduce((s, t) => s + itcComputableCentavos(num(t.importe)), 0) / 100
+}
 
 /** 'YYYY-MM-DD' → 'YYYY-MM-01'. */
 export const mesDe = (fecha: string) => `${fecha.slice(0, 7)}-01`
@@ -151,7 +171,10 @@ export function desdeFacturaCompra(f: FilaFacturaCompra): { c: CompraLid | null;
       cuit: String(f.proveedor?.cuit ?? '').replace(/\D/g, ''), nombre: f.proveedor?.razon_social ?? '',
       total: num(f.total), neto: num(f.neto), iva: num(f.iva), no_gravado: num(f.no_gravado), exento: num(f.exento),
       perc_iva: trib('percepcion_iva'), perc_nacionales: trib('percepcion_ganancias'), perc_iibb: trib('percepcion_iibb'),
-      perc_municipales: trib('percepcion_municipal'), impuestos_internos: trib('impuestos_internos'), otros_tributos: trib('otro'),
+      perc_municipales: trib('percepcion_municipal'), impuestos_internos: trib('impuestos_internos'),
+      // ICL e IDC se informan como «otros tributos», igual que antes de tener tipo propio.
+      otros_tributos: trib('otro') + trib('icl') + trib('idc'),
+      itc_computable: itcComputableDe(f),
       alicuotas: (f.iva_detalle ?? []).map(a => ({ codigo: a.alicuota_id, neto: num(a.base_imp), iva: num(a.importe) })),
       estado: f.estado, paga_cliente: !!f.paga_cliente, desglose_a_revisar: !!f.desglose_a_revisar,
     },
@@ -337,6 +360,8 @@ export interface LibroCompras {
     no_gravado: number; exento: number
     perc_iva: number; perc_iibb: number; perc_nacionales: number; perc_municipales: number
     impuestos_internos: number; otros_tributos: number
+    /** Pago a cuenta ITC (45 % del ICL de los proveedores que lo computan), de los comprobantes incluidos. */
+    itc_computable: number
     por_alicuota: Array<{ codigo: number; alicuota: string; neto: number; iva: number; registros: number }>
     por_tipo: Array<{ cbte_tipo: number; tipo: string; cantidad: number; neto: number; iva: number; total: number }>
     /** Quedaron FUERA por un problema a resolver: la posición está incompleta. No cuenta tickets ni duplicados. */
@@ -365,7 +390,7 @@ export function armarLibroCompras(
   const lineasA: string[] = []
   const porAl = new Map<number, { neto: number; iva: number; registros: number }>()
   const porTipo = new Map<number, { cantidad: number; neto: number; iva: number; total: number }>()
-  const t = { n: 0, neto: 0, iva: 0, cf: 0, total: 0, ng: 0, ex: 0, piva: 0, piibb: 0, pnac: 0, pmun: 0, int: 0, trib: 0 }
+  const t = { n: 0, neto: 0, iva: 0, cf: 0, total: 0, ng: 0, ex: 0, piva: 0, piibb: 0, pnac: 0, pmun: 0, int: 0, trib: 0, itc: 0 }
   let excluidos = 0
   const ce = aCentavos
 
@@ -454,6 +479,7 @@ export function armarLibroCompras(
     t.ng += s * ce(c.no_gravado); t.ex += s * ce(c.exento)
     t.piva += s * ce(c.perc_iva); t.piibb += s * ce(c.perc_iibb); t.pnac += s * ce(c.perc_nacionales)
     t.pmun += s * ce(c.perc_municipales); t.int += s * ce(c.impuestos_internos); t.trib += s * ce(c.otros_tributos)
+    t.itc += s * ce(c.itc_computable)
     for (const a of alicuotasCompraParaArchivo(c)) {
       const acc = porAl.get(a.codigo) ?? { neto: 0, iva: 0, registros: 0 }
       acc.neto += s * ce(a.neto); acc.iva += s * ce(a.iva); acc.registros++
@@ -473,7 +499,7 @@ export function armarLibroCompras(
       comprobantes: t.n, neto: r2(t.neto), iva: r2(t.iva), credito_fiscal: r2(t.cf), total: r2(t.total),
       no_gravado: r2(t.ng), exento: r2(t.ex),
       perc_iva: r2(t.piva), perc_iibb: r2(t.piibb), perc_nacionales: r2(t.pnac), perc_municipales: r2(t.pmun),
-      impuestos_internos: r2(t.int), otros_tributos: r2(t.trib),
+      impuestos_internos: r2(t.int), otros_tributos: r2(t.trib), itc_computable: r2(t.itc),
       por_alicuota: [...porAl.entries()].sort((a, b) => a[0] - b[0]).map(([codigo, a]) => ({
         codigo, alicuota: ALICUOTAS_LID[codigo]?.label ?? String(codigo), neto: r2(a.neto), iva: r2(a.iva), registros: a.registros,
       })),
@@ -503,6 +529,12 @@ export interface PosicionIva {
   /** débito − crédito: positivo = impuesto determinado; negativo = saldo técnico a favor. */
   impuesto_determinado: number
   saldo_tecnico_a_favor: number
+  /** Pago a cuenta ITC del mes: 45 % del ICL de gasoil de los proveedores que lo computan (20261001b). */
+  pago_a_cuenta_itc: number
+  /** Lo que se usa contra el impuesto determinado (va antes que percepciones y retenciones). */
+  itc_computado: number
+  /** Lo que sobra: queda en «ITC computable» para los meses siguientes (no es libre disponibilidad). */
+  itc_remanente: number
   percepciones_iva: number
   retenciones_iva: number
   /** Lo que queda para pagar después de percepciones y retenciones. */
@@ -516,28 +548,39 @@ export interface PosicionIva {
 }
 
 /**
- * Débito − crédito − pagos a cuenta (percepciones sufridas + retenciones
- * sufridas). Los pagos a cuenta primero cancelan el impuesto determinado; lo
- * que sobra es libre disponibilidad. NO arrastra saldos de meses anteriores.
+ * Débito − crédito − pago a cuenta ITC − pagos a cuenta (percepciones
+ * sufridas + retenciones sufridas). El ITC va primero y solo hasta el
+ * impuesto determinado: lo que sobra se traslada a los meses siguientes en su
+ * cuenta (misma regla que el asiento mensual de IVA, `_cont_iva_calculo`).
+ * Después, percepciones y retenciones; lo que sobra de ellas es libre
+ * disponibilidad. NO arrastra saldos de meses anteriores (tampoco de ITC).
  */
 export function posicionIva(periodo: string, x: {
   debito: number; credito: number; percepciones: number; retenciones: number; excluidosVentas: number; excluidosCompras: number
+  /** Pago a cuenta ITC del mes (default 0). */
+  itc?: number
 }): PosicionIva {
   const ce = aCentavos
-  const deb = ce(x.debito), cred = ce(x.credito), perc = ce(x.percepciones), ret = ce(x.retenciones)
+  const deb = ce(x.debito), cred = ce(x.credito), perc = ce(x.percepciones), ret = ce(x.retenciones), itc = ce(x.itc ?? 0)
   const det = deb - cred
+  const itcUsado = Math.min(itc, Math.max(det, 0))
+  const resto = det - itcUsado
   const aCuenta = perc + ret
-  const aPagar = det > 0 ? Math.max(0, det - aCuenta) : 0
-  const libre = det > 0 ? Math.max(0, aCuenta - det) : aCuenta
+  const aPagar = resto > 0 ? Math.max(0, resto - aCuenta) : 0
+  const libre = resto > 0 ? Math.max(0, aCuenta - resto) : aCuenta
   const avisos: string[] = [
-    'No incluye saldos a favor de meses anteriores (técnico ni de libre disponibilidad): el formulario los toma de la declaración anterior.',
+    'No incluye saldos a favor de meses anteriores (técnico, de libre disponibilidad ni remanente de ITC): el formulario los toma de la declaración anterior.',
   ]
+  if (itc > itcUsado) {
+    avisos.push(`El pago a cuenta ITC que no se usa este mes ($ ${r2(itc - itcUsado).toFixed(2)}) se traslada a los meses siguientes: no es saldo de libre disponibilidad.`)
+  }
   if (x.excluidosVentas) avisos.push(`${x.excluidosVentas} comprobante(s) de VENTAS quedaron fuera del libro: la posición está incompleta hasta resolverlos.`)
   if (x.excluidosCompras) avisos.push(`${x.excluidosCompras} comprobante(s) de COMPRAS quedaron fuera del libro: la posición está incompleta hasta resolverlos.`)
   return {
     periodo,
     debito_fiscal: r2(deb), credito_fiscal: r2(cred),
     impuesto_determinado: r2(det), saldo_tecnico_a_favor: r2(det < 0 ? -det : 0),
+    pago_a_cuenta_itc: r2(itc), itc_computado: r2(itcUsado), itc_remanente: r2(itc - itcUsado),
     percepciones_iva: r2(perc), retenciones_iva: r2(ret),
     a_pagar: r2(aPagar), libre_disponibilidad: r2(libre),
     excluidos_ventas: x.excluidosVentas, excluidos_compras: x.excluidosCompras,

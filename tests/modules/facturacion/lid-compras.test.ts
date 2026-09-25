@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   armarLibroCompras, desdeFacturaCompra, lineaCbteCompra, lineasAlicuotasCompra, partirNumero, posicionIva,
-  tipoLidDe, type FilaFacturaCompra,
+  tipoLidDe, itcComputableDe, type FilaFacturaCompra,
 } from '../../../src/modules/facturacion/lid-compras.js'
 
 // La factura 11 real (Cencosud, 18/09): 21 % + percepción IVA + IIBB Tucumán.
@@ -183,6 +183,53 @@ describe('posicionIva', () => {
   it('pagos a cuenta que superan el determinado: el sobrante es libre disponibilidad', () => {
     const p = posicionIva('2026-09', { debito: 10000, credito: 8000, percepciones: 3000, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0 })
     expect(p).toMatchObject({ a_pagar: 0, libre_disponibilidad: 1000 })
+  })
+})
+
+describe('ICL / IDC y pago a cuenta ITC (20261001a/b)', () => {
+  // YPF 01420-00284841 (15/08), sin la Tasa Vial: ICL 4.794.943,13 e IDC 530.296,55.
+  const YPF: FilaFacturaCompra = {
+    id: 532, tipo_comprobante: 'A', cbte_tipo_arca: 1, numero: '01420-00284841', fecha: '2026-08-15',
+    neto: '27659148.84', iva: '5808421.26', no_gravado: null, exento: null, total: '39713960.07',
+    estado: 'pagada', paga_cliente: false, desglose_a_revisar: false, periodo_iva: '2026-08-01',
+    proveedor: { razon_social: 'YPF SOCIEDAD ANONIMA', cuit: '30546689979', icl_computa_pago_a_cuenta: true },
+    iva_detalle: [{ alicuota_id: 5, base_imp: 27659148.84, importe: 5808421.26 }],
+    tributos: [
+      { tipo: 'icl', importe: '4794943.13' }, { tipo: 'idc', importe: '530296.55' },
+      { tipo: 'percepcion_iva', importe: '829774.48' }, { tipo: 'percepcion_iibb', importe: '91375.81' },
+    ],
+  }
+  const comoOtro: FilaFacturaCompra = { ...YPF, tributos: YPF.tributos.map(t => (t.tipo === 'icl' || t.tipo === 'idc' ? { ...t, tipo: 'otro' } : t)) }
+
+  it('el LID sale idéntico a cuando ICL e IDC eran «otro» (campo 22)', () => {
+    const a = armarLibroCompras('2026-08', [conFila(YPF)])
+    const b = armarLibroCompras('2026-08', [conFila(comoOtro)])
+    expect(a.archivos).toEqual(b.archivos)
+    expect(a.resumen.otros_tributos).toBe(5325239.68)
+    expect(a.validaciones.filter(v => v.severidad === 'error')).toEqual([])
+  })
+
+  it('45 % del ICL por fila, solo si el proveedor lo computa; el IDC nunca', () => {
+    expect(itcComputableDe(YPF)).toBe(2157724.41)
+    expect(itcComputableDe({ ...YPF, proveedor: { razon_social: 'X', cuit: '30546689979', icl_computa_pago_a_cuenta: false } })).toBe(0)
+    expect(itcComputableDe({ ...YPF, tributos: [{ tipo: 'icl', importe: 0.01 }, { tipo: 'icl', importe: 0.01 }] })).toBe(0)
+    expect(armarLibroCompras('2026-08', [conFila(YPF)]).resumen.itc_computable).toBe(2157724.41)
+    expect(armarLibroCompras('2026-08', [conFila(comoOtro)]).resumen.itc_computable).toBe(0)
+  })
+
+  it('la posición resta el ITC antes que percepciones; el sobrante se traslada, no es libre disponibilidad', () => {
+    const p = posicionIva('2026-08', { debito: 100000, credito: 60000, percepciones: 5000, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0, itc: 10000 })
+    expect(p).toMatchObject({ impuesto_determinado: 40000, pago_a_cuenta_itc: 10000, itc_computado: 10000, itc_remanente: 0, a_pagar: 25000, libre_disponibilidad: 0 })
+    const q = posicionIva('2026-08', { debito: 100000, credito: 95000, percepciones: 2000, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0, itc: 8000 })
+    expect(q).toMatchObject({ itc_computado: 5000, itc_remanente: 3000, a_pagar: 0, libre_disponibilidad: 2000 })
+    expect(q.avisos.some(a => /ITC/.test(a) && /meses siguientes/.test(a))).toBe(true)
+    const r = posicionIva('2026-08', { debito: 1000, credito: 3000, percepciones: 0, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0, itc: 500 })
+    expect(r).toMatchObject({ saldo_tecnico_a_favor: 2000, itc_computado: 0, itc_remanente: 500, libre_disponibilidad: 0 })
+  })
+
+  it('agosto 2026 real: DF − CF − ITC − percepciones', () => {
+    const p = posicionIva('2026-08', { debito: 61932549.48, credito: 28881925.78, percepciones: 1375068.54, retenciones: 0, excluidosVentas: 0, excluidosCompras: 0, itc: 3545511.23 })
+    expect(p).toMatchObject({ impuesto_determinado: 33050623.70, itc_computado: 3545511.23, a_pagar: 28130043.93 })
   })
 })
 

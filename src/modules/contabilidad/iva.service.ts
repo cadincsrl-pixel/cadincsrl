@@ -33,13 +33,15 @@ export type IvaEstado = 'sin_generar' | 'al_dia' | 'desactualizado' | 'sin_movim
 export interface IvaContable {
   periodo_id: number; desde: string; hasta: string
   debito_fiscal: number; credito_fiscal: number; pagos_a_cuenta: number
+  /** ITC computable que entró en el mes (20261001b); sin mapeo de la cuenta, 0. */
+  itc_mes?: number
   estado: IvaEstado
   registro: Record<string, unknown> | null
   [k: string]: unknown
 }
 
 export interface IvaDiferencia {
-  componente: 'debito' | 'credito' | 'pagos_a_cuenta' | 'excluidos'
+  componente: 'debito' | 'credito' | 'pagos_a_cuenta' | 'itc' | 'excluidos'
   contable: number; fiscal: number; diferencia: number
 }
 
@@ -49,14 +51,15 @@ export interface IvaPosicion { contable: IvaContable; fiscal: PosicionIva; difer
 export const periodoDeFecha = (fecha: string) => fecha.slice(0, 7)
 
 /**
- * Mayor vs libros, con la misma regla que `cont_iva_generar`: débito, crédito
- * y pagos a cuenta (percepciones + retenciones de IVA) con tolerancia de
- * $0,05, más los comprobantes que quedaron FUERA de algún libro (con ellos la
- * posición fiscal está incompleta). Puro.
+ * Mayor vs libros, con la misma regla que `cont_iva_generar`: débito, crédito,
+ * pagos a cuenta (percepciones + retenciones de IVA) y pago a cuenta ITC del
+ * mes (20261001b) con tolerancia de $0,05, más los comprobantes que quedaron
+ * FUERA de algún libro (con ellos la posición fiscal está incompleta). Puro.
  */
 export function diferenciasIva(
-  contable: Pick<IvaContable, 'debito_fiscal' | 'credito_fiscal' | 'pagos_a_cuenta'>,
-  fiscal: Pick<PosicionIva, 'debito_fiscal' | 'credito_fiscal' | 'percepciones_iva' | 'retenciones_iva' | 'excluidos_ventas' | 'excluidos_compras'>,
+  contable: Pick<IvaContable, 'debito_fiscal' | 'credito_fiscal' | 'pagos_a_cuenta' | 'itc_mes'>,
+  fiscal: Pick<PosicionIva, 'debito_fiscal' | 'credito_fiscal' | 'percepciones_iva' | 'retenciones_iva' | 'excluidos_ventas' | 'excluidos_compras'>
+    & Partial<Pick<PosicionIva, 'pago_a_cuenta_itc'>>,
   tolerancia = TOLERANCIA_IVA,
 ): IvaDiferencia[] {
   const out: IvaDiferencia[] = []
@@ -68,6 +71,7 @@ export function diferenciasIva(
   par('debito', contable.debito_fiscal, fiscal.debito_fiscal)
   par('credito', contable.credito_fiscal, fiscal.credito_fiscal)
   par('pagos_a_cuenta', contable.pagos_a_cuenta, Number(fiscal.percepciones_iva ?? 0) + Number(fiscal.retenciones_iva ?? 0))
+  if (fiscal.pago_a_cuenta_itc !== undefined) par('itc', Number(contable.itc_mes ?? 0), Number(fiscal.pago_a_cuenta_itc ?? 0))
   const excluidos = Number(fiscal.excluidos_ventas ?? 0) + Number(fiscal.excluidos_compras ?? 0)
   if (excluidos > 0) out.push({ componente: 'excluidos', contable: 0, fiscal: excluidos, diferencia: -excluidos })
   return out
