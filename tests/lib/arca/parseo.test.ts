@@ -8,7 +8,7 @@ import path from 'node:path'
 import { parsearLoginCms } from '../../../src/lib/arca/wsaa.js'
 import {
   parsearFECAESolicitar, parsearUltimoAutorizado, parsearFECompConsultar,
-  parsearCondicionIvaReceptor, parsearTiposIva, parsearFEDummy,
+  parsearCondicionIvaReceptor, parsearTiposIva, parsearFEDummy, parsearPtosVenta,
 } from '../../../src/lib/arca/wsfe.js'
 import { ArcaError } from '../../../src/lib/arca/errores.js'
 
@@ -141,5 +141,33 @@ describe('parámetros', () => {
 
   it('FEDummy', () => {
     expect(parsearFEDummy(fx('FEDummy.xml'))).toEqual({ appServer: 'OK', dbServer: 'OK', authServer: 'OK' })
+  })
+})
+
+// Sintético: formato documentado de FEParamGetPtosVenta (manual WSFEv1).
+const ptosVenta = (inner: string) => envolver(
+  '<FEParamGetPtosVentaResponse xmlns="http://ar.gov.afip.dif.FEV1/"><FEParamGetPtosVentaResult>' + inner +
+  '</FEParamGetPtosVentaResult></FEParamGetPtosVentaResponse>')
+
+describe('parsearPtosVenta', () => {
+  it('lista con bloqueado y fecha de baja', () => {
+    const xml = ptosVenta(
+      '<ResultGet>' +
+      '<PtoVenta><Nro>4</Nro><EmisionTipo>CAE - Ws</EmisionTipo><Bloqueado>N</Bloqueado><FchBaja>NULL</FchBaja></PtoVenta>' +
+      '<PtoVenta><Nro>7</Nro><EmisionTipo>CAEA - Ws</EmisionTipo><Bloqueado>S</Bloqueado><FchBaja>20260131</FchBaja></PtoVenta>' +
+      '</ResultGet>')
+    expect(parsearPtosVenta(xml)).toEqual([
+      { nro: 4, emisionTipo: 'CAE - Ws', bloqueado: false, fchBaja: null },
+      { nro: 7, emisionTipo: 'CAEA - Ws', bloqueado: true, fchBaja: '2026-01-31' },
+    ])
+  })
+
+  it('602 «Sin Resultados» (homologación) → []', () => {
+    expect(parsearPtosVenta(ptosVenta('<Errors><Err><Code>602</Code><Msg>Sin Resultados: - Metodo FEParamGetPtosVenta</Msg></Err></Errors>'))).toEqual([])
+  })
+
+  it('otro error → ArcaError', () => {
+    const e = capturar(() => parsearPtosVenta(ptosVenta('<Errors><Err><Code>600</Code><Msg>ValidacionDeToken</Msg></Err></Errors>')))
+    expect(e.codigo).toBe('ARCA_ERROR')
   })
 })

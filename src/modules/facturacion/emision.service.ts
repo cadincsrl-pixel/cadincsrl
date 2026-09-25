@@ -34,13 +34,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase.js'
 import {
   ArcaError, arcaConfig, arcaLoQueFalta, obtenerTA, ultimoAutorizado, solicitarCAE, consultarComprobante, feDummy,
-  configurarTaStore, configurarTrazaXml, crearTaStoreSupabase,
+  configurarTaStore, configurarTrazaXml, crearTaStoreSupabase, certificadoDelProceso,
   type ArcaConfig, type ResultadoCAE, type TrazaXml,
 } from '../../lib/arca/index.js'
 import { FacturacionHttpError, errorArca, mapRpcError, type PgError } from './facturacion.errors.js'
 import { ambienteProceso, leerFJ, rpc, talonarioProceso } from './comun.js'
 import { armarComprobante, coincideConsultado, pResDeCAE, pResDeConsultado, type FJ, type PRes } from './reglas.js'
 import { fceService } from './fce.service.js'
+import { puntosVentaService } from './puntos-venta.service.js'
 
 // ── Traza: cada intercambio con WSFE a ventas_facturas_arca_log ─────────────
 
@@ -178,10 +179,16 @@ export const emisionService = {
     // días). Antes de tocar la factura, igual que el ticket.
     {
       const { data: cab, error: eCab } = await db.from('ventas_facturas')
-        .select('cliente_id, cbte_tipo, imp_total, fecha_cbte, estado').eq('id', id).maybeSingle()
+        .select('cliente_id, cbte_tipo, imp_total, fecha_cbte, estado, pto_vta').eq('id', id).maybeSingle()
       if (eCab) throw mapRpcError(eCab as PgError)
-      const c = cab as { cliente_id: number; cbte_tipo: number; imp_total: number; fecha_cbte: string; estado: string } | null
+      const c = cab as { cliente_id: number; cbte_tipo: number; imp_total: number; fecha_cbte: string; estado: string; pto_vta: number } | null
       if (c && c.estado === 'borrador') {
+        // 20260929d: un PV desactivado después de guardar el borrador no emite.
+        // Con la tabla vacía para el ambiente no se chequea (base de antes).
+        const pvs = await puntosVentaService.listar(cfg.ambiente, db)
+        if (pvs.length && !pvs.some((p) => p.activo && Number(p.numero) === Number(c.pto_vta))) {
+          throw new FacturacionHttpError(409, 'PTO_VTA_NO_HABILITADO', { campo: 'pto_vta', pto_vta: c.pto_vta, ambiente: cfg.ambiente })
+        }
         await fceService.exigirTipoFce({
           clienteId: Number(c.cliente_id), tipo: Number(c.cbte_tipo), total: Number(c.imp_total), fecha: c.fecha_cbte, forzar,
         }, db)
@@ -357,45 +364,73 @@ export const emisionService = {
    * segundos, y el cartel aparecía tarde y corría la página justo cuando
    * alguien iba a tocar «Nueva factura» (2026-09-23).
    */
-  ambiente() {
+  async ambiente(db: SupabaseClient = supabase) {
     const falta = arcaLoQueFalta()
-    return { ambiente: ambienteProceso(), configurado: falta.length === 0, falta, pto_vta: talonarioSeguro() }
+    const amb = ambienteProceso()
+    // 20260929d: los PV activos del ambiente y el por defecto de la tabla (o
+    // el del env si está vacía). Y el vencimiento del certificado: solo
+    // fechas y el sujeto, nunca el PEM.
+    const pvs = amb ? (await puntosVentaService.listarCache(amb, db)).filter((p) => p.activo) : []
+    const def = pvs.find((p) => p.por_defecto)
+    const cert = certificadoDelProceso()
+    return {
+      ambiente: amb, configurado: falta.length === 0, falta,
+      pto_vta: def ? Number(def.numero) : talonarioSeguro(),
+      puntos_venta: pvs.map((p) => ({ numero: Number(p.numero), nombre: p.nombre, por_defecto: p.por_defecto, producto_ids: p.producto_ids })),
+      certificado: cert.certificado,
+      certificado_error: cert.certificado ? null : cert.error,
+    }
   },
 
   /**
    * Estado completo: FEDummy + último autorizado de 6 tipos = 7 llamadas a ARCA.
    * Se cachea 60 s para no repetirlas cada vez que alguien abre Facturación.
    */
-  async estado() {
+  async estado(db: SupabaseClient = supabase) {
     const ahora = Date.now()
     if (cacheEstado && ahora - cacheEstado.at < ESTADO_TTL_MS) return cacheEstado.valor
-    const valor = await this.estadoSinCache()
+    const valor = await this.estadoSinCache(db)
     cacheEstado = { at: ahora, valor }
     return valor
   },
 
-  async estadoSinCache() {
-    const base = this.ambiente()
+  async estadoSinCache(db: SupabaseClient = supabase) {
+    const base = await this.ambiente(db)
     const falta = base.falta
-    if (falta.length) return { ...base, dummy: null, ultimo: null, error: null }
+    if (falta.length) return { ...base, dummy: null, ultimo: null, ultimo_por_pv: null, error: null }
     const cfg = arcaConfig()
     let dummy: { appServer: string; dbServer: string; authServer: string } | null = null
-    let ultimo: Record<'1' | '3' | '6' | '8' | '201' | '203', number> | null = null
+    let ultimo: UltimoPorTipo | null = null
+    let ultimoPorPv: Record<string, UltimoPorTipo> | null = null
     const errores: string[] = []
     try {
       dummy = await feDummy({ config: cfg })
     } catch (e) {
       errores.push(`FEDummy: ${mensajeDe(e)}`)
     }
-    try {
-      const [a, nca, b, ncb, fce, ncfce] = await Promise.all([1, 3, 6, 8, 201, 203].map((t) => ultimoAutorizado(cfg.ptoVta, t, { config: cfg })))
-      ultimo = { '1': a!.numero, '3': nca!.numero, '6': b!.numero, '8': ncb!.numero, '201': fce!.numero, '203': ncfce!.numero }
-    } catch (e) {
-      errores.push(`Último autorizado: ${mensajeDe(e)}`)
+    // Último autorizado por cada PV activo (20260929d). `ultimo` sigue siendo
+    // el del PV por defecto, como antes.
+    const pvs = [...new Set([base.pto_vta, ...base.puntos_venta.map((p) => p.numero)])]
+    const res = await Promise.all(pvs.map(async (pv) => {
+      try {
+        const n = await Promise.all(TIPOS_ESTADO.map((t) => ultimoAutorizado(pv, t, { config: cfg })))
+        return [pv, Object.fromEntries(TIPOS_ESTADO.map((t, i) => [String(t), n[i]!.numero])) as UltimoPorTipo] as const
+      } catch (e) {
+        errores.push(`Último autorizado (PV ${pv}): ${mensajeDe(e)}`)
+        return [pv, null] as const
+      }
+    }))
+    for (const [pv, u] of res) {
+      if (!u) continue
+      ultimoPorPv = { ...(ultimoPorPv ?? {}), [String(pv)]: u }
+      if (pv === base.pto_vta) ultimo = u
     }
-    return { ...base, dummy, ultimo, error: errores.length ? errores.join(' · ') : null }
+    return { ...base, dummy, ultimo, ultimo_por_pv: ultimoPorPv, error: errores.length ? errores.join(' · ') : null }
   },
 }
+
+const TIPOS_ESTADO = [1, 3, 6, 8, 201, 203] as const
+type UltimoPorTipo = Record<'1' | '3' | '6' | '8' | '201' | '203', number>
 
 const ESTADO_TTL_MS = 60_000
 let cacheEstado: { at: number; valor: Awaited<ReturnType<typeof emisionService.estadoSinCache>> } | null = null

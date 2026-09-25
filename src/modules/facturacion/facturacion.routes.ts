@@ -25,7 +25,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requirePermisoOr, requireFlag, requireTab, tieneFlag } from '../../middleware/permission.js'
 import { perfilDe, esAdmin } from '../pagos/pagos.service.js'
 import { FacturacionHttpError, cuerpoError } from './facturacion.errors.js'
-import { dbDe } from './comun.js'
+import { ambienteProceso, dbDe } from './comun.js'
 import { clientesService } from './clientes.service.js'
 import { facturasService } from './facturas.service.js'
 import { emisionService } from './emision.service.js'
@@ -39,6 +39,7 @@ import { lidVentasService } from './lid-ventas.service.js'
 import { aAnsi, nombreArchivo } from './lid-ventas.js'
 import { lidComprasService } from './lid-compras.service.js'
 import { productosService } from './productos.service.js'
+import { puntosVentaService } from './puntos-venta.service.js'
 import { nombreArchivoCompras } from './lid-compras.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
@@ -51,6 +52,7 @@ import {
   PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
   CreateExternoSchema, UpdateExternoSchema, LiquidoExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
   ProductoCreateSchema, ProductoUpdateSchema, ListProductosQuerySchema,
+  PuntoVentaCreateSchema, PuntoVentaUpdateSchema, ListPuntosVentaQuerySchema,
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
@@ -145,8 +147,8 @@ async function exigirFlagEmision(c: any, id: number): Promise<void> {
 
 // ═══════════════════════════════════ Estado y catálogos ═════════════════════
 
-fact.get('/arca/ambiente', lectura, handler(async () => emisionService.ambiente()))
-fact.get('/arca/estado', lectura, tabCatalogos, handler(async () => emisionService.estado()))
+fact.get('/arca/ambiente', lectura, handler(async (c) => emisionService.ambiente(db(c))))
+fact.get('/arca/estado', lectura, tabCatalogos, handler(async (c) => emisionService.estado(db(c))))
 
 fact.get('/condiciones-iva', lectura, tabCatalogos, handler(async () => CONDICIONES_IVA))
 
@@ -176,6 +178,34 @@ fact.post('/productos', lectura, tabConfiguracion, configurar, validaProducto(Pr
 
 fact.patch('/productos/:id', lectura, tabConfiguracion, configurar, validaProducto(ProductoUpdateSchema), handler(async (c) =>
   productosService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+// ═══════════════════════════════════ Puntos de venta (20260929d) ════════════
+// GET sin tab (lo lee el formulario de la factura). Escribir: tab
+// configuracion + flag configurar. El ambiente es siempre el del proceso;
+// sin DELETE (se desactivan). Validación → 400 PV_INVALIDO.
+
+function validaPv<T extends ZodType>(schema: T) {
+  return zValidator('json', schema, (r, c) => {
+    if (!r.success) {
+      const issue = r.error.issues[0]
+      const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
+      const campo = claves[0] ?? (issue?.path?.join('.') || null)
+      return c.json({ error: 'PV_INVALIDO', campo, detail: { campo, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+    }
+  })
+}
+
+fact.get('/puntos-venta', lectura, valida('query', ListPuntosVentaQuerySchema), handler(async (c) =>
+  puntosVentaService.listar(c.req.valid('query').ambiente ?? ambienteProceso(), db(c))))
+
+fact.post('/puntos-venta', lectura, tabConfiguracion, configurar, validaPv(PuntoVentaCreateSchema), handler(async (c) =>
+  c.json(await puntosVentaService.crear(c.req.valid('json'), uid(c), db(c)), 201)))
+
+fact.patch('/puntos-venta/:id', lectura, tabConfiguracion, configurar, validaPv(PuntoVentaUpdateSchema), handler(async (c) =>
+  puntosVentaService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+fact.post('/puntos-venta/:id/verificar', lectura, tabConfiguracion, configurar, handler(async (c) =>
+  puntosVentaService.verificar(idParam(c), uid(c), db(c))))
 
 // ═══════════════════════════════════ Clientes ═══════════════════════════════
 

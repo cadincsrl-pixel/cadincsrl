@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabase.js'
 import { todasLasFilas } from '../../lib/paginar.js'
 import { normTxt } from '../../lib/norm-txt.js'
 import { FacturacionHttpError, mapRpcError, type PgError } from './facturacion.errors.js'
-import { ambienteProceso, leerFJ, rpc, talonarioProceso } from './comun.js'
+import { ambienteProceso, leerFJ, rpc, talonario, talonarioProceso } from './comun.js'
 import {
   TIPOS_HABILITADOS, TOPE_CF_IDENTIFICACION, calcularTotales, esFce, esNC, letraDe, letraDeTipo, requiereIdentificacion,
   resumir, tipoPara, type FJ, type FacturaVista, type FilaParaResumen,
@@ -183,16 +183,21 @@ export const facturasService = {
       throw new FacturacionHttpError(400, 'TIPO_NO_HABILITADO', { campo: 'cbte_tipo', cbte_tipo: pedido, habilitados: [...TIPOS_HABILITADOS] })
     }
     if (dto.forzar && !esAdmin) throw new FacturacionHttpError(403, 'FORZAR_SOLO_ADMIN')
-    const { ambiente, ptoVta } = talonarioProceso()
+    const { ambiente } = talonarioProceso()
 
+    let pvAnterior: number | null = null
     if (id != null) {
-      const { data, error } = await db.from('ventas_facturas').select('id, ambiente, estado').eq('id', id).maybeSingle()
+      const { data, error } = await db.from('ventas_facturas').select('id, ambiente, estado, pto_vta').eq('id', id).maybeSingle()
       if (error) throw mapRpcError(error as PgError)
       if (!data) throw new FacturacionHttpError(404, 'FACTURA_NO_EXISTE', { factura_id: id })
-      const f = data as { ambiente: string; estado: string }
+      const f = data as { ambiente: string; estado: string; pto_vta: number | null }
       if (f.ambiente !== ambiente) throw new FacturacionHttpError(409, 'AMBIENTE_NO_COINCIDE', { esperado: ambiente, factura: f.ambiente })
       if (f.estado !== 'borrador') throw new FacturacionHttpError(409, 'FACTURA_NO_EDITABLE', { factura_id: id, estado: f.estado })
+      pvAnterior = f.pto_vta
     }
+    // Punto de venta (20260929d): el elegido en la factura, el que ya tenía el
+    // borrador, el por defecto de la tabla o, con la tabla vacía, el del env.
+    const { ptoVta } = await talonario(db, dto.factura.pto_vta ?? null, pvAnterior)
 
     const f = dto.factura
     const tipo = await resolverTipo(f, dto.renglones, db, { forzar: !!dto.forzar })

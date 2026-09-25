@@ -135,6 +135,10 @@ export const FacturaCabeceraSchema = z.object({
   // lo pida (PERIODO_REQUERIDO); con concepto 1 la RPC lo anula.
   fch_serv_desde: fechaIso.optional().nullable(),
   fch_serv_hasta: fechaIso.optional().nullable(),
+  // Punto de venta (20260929d). Opcional: sin él, el backend usa el que ya
+  // tenía el borrador, el por defecto de Ventas › Configuración o ARCA_PTO_VTA.
+  // Si viene, tiene que estar activo (409 PTO_VTA_NO_HABILITADO).
+  pto_vta: z.coerce.number().int().min(1).max(99998).optional().nullable(),
   // La obra ES el centro de costo (23/09): obligatoria en AVANCE DE OBRA (lo
   // valida la RPC: OBRA_REQUERIDA). `centro_costo` lo deriva la base; si un
   // cliente viejo lo manda, zod lo descarta.
@@ -214,6 +218,31 @@ export const ProductoUpdateSchema = z.object({
 export type ProductoUpdateDto = z.infer<typeof ProductoUpdateSchema>
 
 export const ListProductosQuerySchema = z.object({ incluir_inactivos: z.string().optional() })
+
+// ── Puntos de venta (20260929d) ────────────────────────────────────────────
+// El ambiente lo pone el backend (el del proceso). Duplicados, «por defecto»
+// y número no editable los valida la RPC.
+const nombrePv = z.string().trim().max(60)
+const productoIds = z.array(z.coerce.number().int().positive()).max(50)
+export const PuntoVentaCreateSchema = z.object({
+  numero: z.coerce.number().int().min(1, 'número de 1 a 99998').max(99998, 'número de 1 a 99998'),
+  nombre: nombrePv.optional(),
+  por_defecto: z.boolean().optional(),
+  producto_ids: productoIds.optional(),
+  /** Guardar aunque ARCA no haya podido confirmarlo (PV_NO_VERIFICADO). */
+  forzar: z.boolean().optional().default(false),
+}).strict()
+export type PuntoVentaCreateDto = z.infer<typeof PuntoVentaCreateSchema>
+
+export const PuntoVentaUpdateSchema = z.object({
+  nombre: nombrePv.optional(),
+  activo: z.boolean().optional(),
+  por_defecto: z.boolean().optional(),
+  producto_ids: productoIds.optional(),
+}).strict().refine((d) => Object.keys(d).length > 0, 'nada para cambiar')
+export type PuntoVentaUpdateDto = z.infer<typeof PuntoVentaUpdateSchema>
+
+export const ListPuntosVentaQuerySchema = z.object({ ambiente: z.enum(['homo', 'prod']).optional() })
 
 export const EmitirSchema = z.object({ forzar: z.boolean().optional().default(false) })
 export const MotivoSchema = z.object({ motivo: z.string().max(1000).optional().nullable() })

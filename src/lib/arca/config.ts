@@ -144,3 +144,14 @@ export function arcaCredenciales(env: Env = process.env): ArcaCredenciales {
     keyPem: leerPem('clave', limpio(env.ARCA_KEY_B64), limpio(env.ARCA_KEY_PATH), /-----BEGIN (RSA |EC |ENCRYPTED )?PRIVATE KEY-----/),
   }
 }
+
+/**
+ * Solo el certificado (PEM), sin la clave: para leer su vencimiento
+ * (`certificado.ts`). NUNCA devolverlo por la API ni loguearlo.
+ */
+export function arcaCertificadoPem(env: Env = process.env): string {
+  const b64 = limpio(env.ARCA_CERT_B64)
+  const path = limpio(env.ARCA_CERT_PATH)
+  if (!b64 && !path) throw noConfigurado('falta ARCA_CERT_B64 o ARCA_CERT_PATH')
+  return leerPem('certificado', b64, path, /-----BEGIN CERTIFICATE-----/)
+}

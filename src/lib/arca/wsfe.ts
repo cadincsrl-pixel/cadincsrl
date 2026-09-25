@@ -161,6 +161,16 @@ export interface EstadoServidores {
   authServer: string
 }
 
+/** Un punto de venta según FEParamGetPtosVenta. */
+export interface PuntoVentaArca {
+  nro: number
+  /** p. ej. «CAE - Ws» o «CAEA - Ws». */
+  emisionTipo: string
+  bloqueado: boolean
+  /** YYYY-MM-DD, o null si no está dado de baja. */
+  fchBaja: string | null
+}
+
 export interface OpcionesWsfe {
   config?: ArcaConfig
   /** Para scripts/tests; si no, `obtenerTA('wsfe')`. */
@@ -453,6 +463,26 @@ export function parsearTiposIva(xml: string, httpStatus?: number): TipoIva[] {
   }))
 }
 
+/**
+ * FEParamGetPtosVenta. El error 602 («Sin Resultados», típico de
+ * homologación, donde no hay PV dados de alta por web) vuelve como `[]`.
+ */
+export function parsearPtosVenta(xml: string, httpStatus?: number): PuntoVentaArca[] {
+  const r = resultadoDe(cuerpoSoap(xml, 'WSFE FEParamGetPtosVenta', httpStatus), 'FEParamGetPtosVenta')
+  const errores = erroresDe(r, 'Errors', 'Err')
+  if (errores.length && errores.every((e) => e.code === 602)) return []
+  lanzarSiErrores(r, 'FEParamGetPtosVenta')
+  return lista(nodo(r.ResultGet)?.PtoVenta).map((p) => {
+    const baja = texto(p.FchBaja)
+    return {
+      nro: num(p.Nro),
+      emisionTipo: texto(p.EmisionTipo),
+      bloqueado: texto(p.Bloqueado).toUpperCase() === 'S',
+      fchBaja: /^\d{8}$/.test(baja) ? `${baja.slice(0, 4)}-${baja.slice(4, 6)}-${baja.slice(6, 8)}` : null,
+    }
+  })
+}
+
 export function parsearFEDummy(xml: string, httpStatus?: number): EstadoServidores {
   const r = resultadoDe(cuerpoSoap(xml, 'WSFE FEDummy', httpStatus), 'FEDummy')
   return { appServer: texto(r.AppServer), dbServer: texto(r.DbServer), authServer: texto(r.AuthServer) }
@@ -551,4 +581,12 @@ export async function paramTiposIva(opts: OpcionesWsfe = {}): Promise<TipoIva[]>
   const s = sobre(`<ar:FEParamGetTiposIva>${auth(ta, cfg.cuit)}</ar:FEParamGetTiposIva>`)
   const { status, xml } = await llamar('FEParamGetTiposIva', s, cfg)
   return parsearTiposIva(xml, status)
+}
+
+/** Puntos de venta habilitados para webservice en ARCA ([] si no hay ninguno). */
+export async function paramPuntosVenta(opts: OpcionesWsfe = {}): Promise<PuntoVentaArca[]> {
+  const { cfg, ta } = await contexto(opts)
+  const s = sobre(`<ar:FEParamGetPtosVenta>${auth(ta, cfg.cuit)}</ar:FEParamGetPtosVenta>`)
+  const { status, xml } = await llamar('FEParamGetPtosVenta', s, cfg)
+  return parsearPtosVenta(xml, status)
 }

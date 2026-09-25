@@ -93,6 +93,8 @@ export const VERBOS: Record<string, string> = {
   siguiente: 'abrir el siguiente',
   // Contabilidad tanda 5: asiento de IVA del mes y bienes de uso (20260928o–q).
   generar: 'generar', amortizar: 'amortizar', 'revertir-baja': 'revertir baja',
+  // Ventas › Configuración › Puntos de venta (20260929d).
+  verificar: 'verificar en ARCA',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
@@ -172,6 +174,8 @@ export const ENTIDADES: Record<string, string> = {
   'facturacion/cuentas': 'cuenta bancaria (FCE)',
   // Tanda 6 (20260929b): Ventas › Configuración › Productos.
   'facturacion/productos': 'producto de venta',
+  // Tanda 6 (20260929d): Ventas › Configuración › Puntos de venta.
+  'facturacion/puntos-venta': 'punto de venta',
   // Cobranzas: POST /facturacion/cobros/5/imputar → «imputar cobro 5»;
   // una compensación con NC crea imputaciones.
   'facturacion/cobros': 'cobro', 'facturacion/cobros/retenciones': 'certificado de retención',
