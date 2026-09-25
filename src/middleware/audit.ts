@@ -190,6 +190,10 @@ export const ENTIDADES: Record<string, string> = {
   // una compensación con NC crea imputaciones.
   'facturacion/cobros': 'cobro', 'facturacion/cobros/retenciones': 'certificado de retención',
   'facturacion/cobros/adjuntos': 'adjunto del cobro',
+  // 20260930k: POST /facturacion/cobros/liquidacion/leer → «leer comprobante liquidación del cliente»
+  // (no crea nada); Ventas › Configuración › Gastos descontados.
+  'facturacion/cobros/liquidacion': 'liquidación del cliente',
+  'facturacion/cobro-gasto-conceptos': 'concepto de gasto de cobro',
   'facturacion/imputaciones': 'imputación', 'facturacion/compensaciones': 'imputación',
   'facturacion/externos': 'comprobante externo',
   // Contabilidad (fase 1). POST /contabilidad/periodos/3/cerrar → «cerrar período contable 3»;

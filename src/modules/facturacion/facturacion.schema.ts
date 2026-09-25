@@ -295,6 +295,25 @@ export type RetencionTipoUpdateDto = z.infer<typeof RetencionTipoUpdateSchema>
 
 export const ListRetencionTiposQuerySchema = z.object({ incluir_inactivos: z.string().optional() })
 
+// ── Conceptos de gastos descontados en cobros (20260930k) ──────────────────
+// Sinónimos: textos de la liquidación del cliente que reconocen el concepto
+// (la base los guarda en norm_txt; un sinónimo no puede ser de dos conceptos activos).
+const aliasGasto = z.array(z.string().trim().min(3, 'sinónimo: al menos 3 letras').max(60)).max(30)
+export const GastoConceptoCreateSchema = z.object({
+  nombre: z.string().trim().min(2, 'nombre muy corto').max(80),
+  alias: aliasGasto.optional().default([]),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+}).strict()
+export type GastoConceptoCreateDto = z.infer<typeof GastoConceptoCreateSchema>
+
+export const GastoConceptoUpdateSchema = z.object({
+  nombre: z.string().trim().min(2, 'nombre muy corto').max(80).optional(),
+  alias: aliasGasto.optional(),
+  activo: z.boolean().optional(),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+}).strict().refine((d) => Object.keys(d).length > 0, 'nada para cambiar')
+export type GastoConceptoUpdateDto = z.infer<typeof GastoConceptoUpdateSchema>
+
 // ── Configuración de Ventas (ventas_config, 20260929g) ─────────────────────
 // Valores por defecto de la factura (20260929j): la base repite cada regla.
 const textoUnaLinea = (max: number) => z.string().transform((s) => s.replace(/\s+/g, ' ').trim())
@@ -340,6 +359,10 @@ export const MedioCobroSchema = z.object({
   cheque_banco: textoOpc(100),
   cheque_librador: textoOpc(200),
   cheque_fecha_cobro: fechaIso.optional().nullable(),
+  /** 20260930k: CUIT del librador (11 dígitos, con o sin guiones). */
+  cheque_librador_cuit: z.string().trim().max(20)
+    .refine((v) => v === '' || v.replace(/\D/g, '').length === 11, 'CUIT del librador: 11 dígitos')
+    .optional().nullable(),
   obs: textoOpc(1000),
 })
 
@@ -374,7 +397,7 @@ export const ItemImputacionSchema = z.object({
 export type ItemImputacionDto = z.infer<typeof ItemImputacionSchema>
 
 /** Documentación del cliente en el cobro (20260924q): comprobante de pago, orden de pago del cliente u otro. */
-export const TIPOS_ADJUNTO_COBRO = ['comprobante_pago', 'orden_pago', 'otro'] as const
+export const TIPOS_ADJUNTO_COBRO = ['comprobante_pago', 'orden_pago', 'liquidacion', 'otro'] as const
 export const AdjuntoCobroSchema = z.object({
   tipo: z.enum(TIPOS_ADJUNTO_COBRO),
   /** Subido antes con POST /cobros/adjuntos/upload-url (cobros/pendientes/…). */
@@ -385,19 +408,50 @@ export const AdjuntoCobroSchema = z.object({
 })
 export type AdjuntoCobroDto = z.infer<typeof AdjuntoCobroSchema>
 
+/**
+ * Gasto que el cliente descontó al pagar (20260930k): Recupero Ley 25413,
+ * seguro de carga… El concepto sale de `ventas_cobro_gasto_conceptos`
+ * (activo; lo valida la RPC → GASTO_INVALIDO { campo: 'concepto_id' }).
+ */
+export const GastoCobroSchema = z.object({
+  concepto_id: idPos,
+  importe,
+  obs: textoOpc(300),
+})
+export type GastoCobroDto = z.infer<typeof GastoCobroSchema>
+
+/** Número de la liquidación del cliente (único por cliente entre los cobros vigentes). */
+export const LIQUIDACION_NUMERO_RE = /^[0-9A-Za-z][0-9A-Za-z./ -]{0,29}$/
+
 export const RegistrarCobroSchema = z.object({
   cobro: z.object({
     fecha: fechaIso.optional().nullable(),
     cliente_id: idPos,
     obs: textoOpc(2000),
     ambiente: AmbienteCobranzaSchema.optional(),
+    liquidacion_numero: z.string().trim().regex(LIQUIDACION_NUMERO_RE, 'número de liquidación inválido').optional().nullable(),
   }),
   medios: z.array(MedioCobroSchema).max(50).optional().default([]),
   retenciones: z.array(RetencionCobroSchema).max(50).optional().default([]),
+  gastos: z.array(GastoCobroSchema).max(50).optional().default([]),
   imputaciones: z.array(ItemImputacionSchema).max(500).optional().default([]),
   adjuntos: z.array(AdjuntoCobroSchema).max(20).optional().default([]),
 })
 export type RegistrarCobroDto = z.infer<typeof RegistrarCobroSchema>
+
+/**
+ * Cargar liquidación (20260930k): el PDF ya subido a `cobros/pendientes/` y,
+ * si el navegador pudo sacarlo, su texto. No crea nada: devuelve la propuesta.
+ */
+export const LeerLiquidacionSchema = z.object({
+  storage_path: z.string().min(1).max(300),
+  nombre_archivo: z.string().trim().min(1).max(255),
+  mime: z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']),
+  texto: z.string().max(200_000).optional().nullable(),
+  /** Si el CUIT de la liquidación no es de ningún cliente. */
+  cliente_id: idPos.optional().nullable(),
+})
+export type LeerLiquidacionDto = z.infer<typeof LeerLiquidacionSchema>
 
 export const ImputarSchema = z.object({
   items: z.array(ItemImputacionSchema).min(1, 'al menos una imputación').max(500),

@@ -47,6 +47,8 @@ export interface CobroDetalle {
   cobro: Record<string, unknown> & { id: number }
   medios: Array<Record<string, unknown>>
   retenciones: Array<Record<string, unknown> & { id: number; adjunto_path: string | null }>
+  /** Gastos descontados (20260930k), con `concepto_nombre`. */
+  gastos?: Array<Record<string, unknown>>
   imputaciones: Array<Record<string, unknown>>
   adjuntos?: AdjuntoCobro[]
 }
@@ -55,7 +57,7 @@ export interface CobroDetalle {
 export interface AdjuntoCobro {
   id: number
   cobro_id: number
-  tipo: 'comprobante_pago' | 'orden_pago' | 'otro'
+  tipo: 'comprobante_pago' | 'orden_pago' | 'liquidacion' | 'otro'
   storage_path: string
   nombre_archivo: string
   mime: string | null
@@ -166,6 +168,22 @@ async function hashDelBucket(path: string): Promise<{ hash: string; size: number
   return { hash: createHash('sha256').update(buf).digest('hex'), size: dl.data.size }
 }
 
+/**
+ * Un archivo subido bajo `cobros/pendientes/` (Cargar liquidación, 20260930k):
+ * bytes, sha256 y tamaño. 400 PATH_INVALIDO / ARCHIVO_NO_SUBIDO / TAMANO_INVALIDO.
+ */
+export async function descargarAdjuntoPendiente(path: string): Promise<{ buf: Buffer; hash: string; size: number }> {
+  const p = path.trim()
+  if (!pathPendienteValido(p, PREFIJO_ADJUNTO_PENDIENTE)) {
+    throw new FacturacionHttpError(400, 'PATH_INVALIDO', { campo: 'storage_path', storage_path: p })
+  }
+  const dl = await supabase.storage.from(BUCKET_VENTAS).download(p)
+  if (dl.error || !dl.data) throw new FacturacionHttpError(400, 'ARCHIVO_NO_SUBIDO', { storage_path: p, message: dl.error?.message })
+  const buf = Buffer.from(await dl.data.arrayBuffer())
+  if (buf.length > MAX_ADJUNTO_BYTES) throw new FacturacionHttpError(400, 'TAMANO_INVALIDO', { campo: 'storage_path', size: buf.length, max: MAX_ADJUNTO_BYTES })
+  return { buf, hash: createHash('sha256').update(buf).digest('hex'), size: buf.length }
+}
+
 /** Retenciones del body → forma de la RPC, con hash/tamaño calculados sobre lo que quedó en el bucket. */
 export async function prepararRetenciones(rets: RetencionCobroDto[]): Promise<Array<Record<string, unknown>>> {
   const out: Array<Record<string, unknown>> = []
@@ -263,10 +281,17 @@ export const cobrosService = {
     const medios = (dto.medios ?? []).map((m) => ({
       forma: m.forma, importe: m.importe, cuenta_bancaria_id: m.cuenta_bancaria_id ?? null,
       cheque_numero: m.cheque_numero ?? null, cheque_banco: m.cheque_banco ?? null, cheque_librador: m.cheque_librador ?? null,
-      cheque_fecha_cobro: m.cheque_fecha_cobro ?? null, obs: m.obs ?? '',
+      cheque_fecha_cobro: m.cheque_fecha_cobro ?? null,
+      cheque_librador_cuit: m.cheque_librador_cuit ? m.cheque_librador_cuit.replace(/\D/g, '') : null,
+      obs: m.obs ?? '',
     }))
+    // Gastos descontados (20260930k): viajan DENTRO de p_cobro (sin parámetro nuevo).
+    const gastos = (dto.gastos ?? []).map((g) => ({ concepto_id: g.concepto_id, importe: g.importe, obs: g.obs ?? '' }))
     const res = await db.rpc('ventas_registrar_cobro', {
-      p_cobro: { fecha: dto.cobro.fecha ?? null, cliente_id: dto.cobro.cliente_id, obs: dto.cobro.obs ?? '', ambiente },
+      p_cobro: {
+        fecha: dto.cobro.fecha ?? null, cliente_id: dto.cobro.cliente_id, obs: dto.cobro.obs ?? '', ambiente,
+        gastos, liquidacion_numero: dto.cobro.liquidacion_numero ?? null,
+      },
       p_medios: medios,
       p_retenciones: retenciones,
       p_imputaciones: itemsRpc(dto.imputaciones ?? []),
@@ -276,6 +301,10 @@ export const cobrosService = {
       const pg = res.error as PgError
       // Índice único (cobro_id, adjunto_hash): el mismo archivo dos veces en el mismo cobro.
       if (pg.code === '23505' && /adjunto_hash|hash_uidx/.test(pg.message ?? '')) throw new FacturacionHttpError(409, 'RETENCION_ADJUNTO_DUPLICADO')
+      // Dos cargas simultáneas de la misma liquidación: la segunda choca con el índice único.
+      if (pg.code === '23505' && /liquidacion_uidx/.test(pg.message ?? '')) {
+        throw new FacturacionHttpError(409, 'LIQUIDACION_DUPLICADA', { liquidacion_numero: dto.cobro.liquidacion_numero ?? null })
+      }
       throw mapRpcError(pg)
     }
     const d = res.data as CobroDetalle

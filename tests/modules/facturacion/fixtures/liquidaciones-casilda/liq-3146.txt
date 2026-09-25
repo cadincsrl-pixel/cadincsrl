@@ -1,0 +1,35 @@
+Hoja: 1
+CASILDA COMBUSTIBLES S.R.L.
+Domicilio: RUTA 33 KM 744,5 - CP: 2170 - Casilda - Santa Fe - Cel. (3464-445589)
+LIQUIDACIÓN
+Transportista: CADINC SRL ( 150 ) Liquidación Nro.: 3146
+Domicilio: MAIPU 396 DPTO 3
+Localidad: SAN MIGUEL DE TUCUMAN,TUC Fecha: 31/08/2026
+Nro. CUIT : 33717191949 C.U.I.T.: 30-71567526-5
+Nro. I.Brutos: 0
+Comprobantes Liquidados
+Fecha Comprobante Cliente/Socio Total
+Compr. Transp. 23/08/2026 C.LIQ 0010 00000215 Casilda Combustibles S.R.L. 1543665.60
+Compr. Cas.Comb. 23/08/2026 CTA.A 0010 00000215 150 CADINC SRL -116640.00
+Subtotal: 1427025.60
+Recupero Ley 25413: -8500.00
+Descuentos
+Fecha Concepto Unidad Comprobante Detalle Importe
+19/08/2026 PAGO SEGUR 5 7781 PAGO SEGURO DE CARGA - 1 VIAJE -4000.00
+Total Descuentos: -4000.00
+Total Liquidación: 1414525.60
+Saldo Neto: 1414525.60
+Rendición practicada de conformidad a los Art. 361 a 366 de la ley 19550 T.O. en 1984
+Presto mi conformidad al saldo que arroja mi cuenta corriente en esta institución.
+Recibí de CASILDA COMBUSTIBLES S.R.L.
+SON PESOS: UN MILLON CUATROCIENTOS CATORCE MIL QUINIENTOS VEINTICINCO c/60/100 -----------
+-------------------------------------------------------------------------------
+Detalle de Pagos
+Detalle Nro. Interno Nro. Comprobante Banco Fecha Vto. Importe Tipo
+CH/PROP 14380135 ICBC 01/10/2026 280000.00 - PAGO
+CH/PROP 14380136 ICBC 03/10/2026 280000.00 - PAGO
+CH/PROP 14380137 ICBC 05/10/2026 280000.00 - PAGO
+CH/PROP 14380138 ICBC 07/10/2026 280000.00 - PAGO
+CH/PROP 14380139 ICBC 09/10/2026 294525.60 - PAGO
+................................
+Recibí Conforme

@@ -42,6 +42,8 @@ import { productosService } from './productos.service.js'
 import { puntosVentaService } from './puntos-venta.service.js'
 import { parametrosService } from './parametros.service.js'
 import { retencionTiposService, ventasConfigService } from './retencion-tipos.service.js'
+import { gastoConceptosService } from './gasto-conceptos.service.js'
+import { liquidacionService } from './liquidacion.service.js'
 import { nombreArchivoCompras } from './lid-compras.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
@@ -57,7 +59,7 @@ import {
   PuntoVentaCreateSchema, PuntoVentaUpdateSchema, ListPuntosVentaQuerySchema,
   ParametroCreateSchema, ListParametrosQuerySchema, ParametrosVigentesQuerySchema,
   RetencionTipoCreateSchema, RetencionTipoUpdateSchema, ListRetencionTiposQuerySchema, VentasConfigPatchSchema,
-  CLAVE_RETENCION_RE,
+  CLAVE_RETENCION_RE, GastoConceptoCreateSchema, GastoConceptoUpdateSchema, LeerLiquidacionSchema,
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
@@ -274,6 +276,32 @@ fact.post('/retencion-tipos', lectura, tabConfiguracion, configurar, validaRetTi
 fact.patch('/retencion-tipos/:clave', lectura, tabConfiguracion, configurar, validaRetTipo(RetencionTipoUpdateSchema), handler(async (c) =>
   retencionTiposService.editar(claveParam(c), c.req.valid('json'), uid(c), db(c))))
 
+// ═══════════════════════════════ Gastos descontados en cobros (20260930k) ═══
+// Mismo molde que los tipos de retención: GET con lectura (el modal de cobro y
+// «Cargar liquidación» leen los activos); POST/PATCH con tab configuracion +
+// flag configurar (la RPC lo vuelve a chequear). Sin DELETE: se desactivan.
+// Validación → 400 GASTO_CONCEPTO_INVALIDO.
+
+function validaGastoConcepto<T extends ZodType>(schema: T) {
+  return zValidator('json', schema, (r, c) => {
+    if (!r.success) {
+      const issue = r.error.issues[0]
+      const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
+      const campo = claves[0] ?? (issue?.path?.[0] != null ? String(issue.path[0]) : null)
+      return c.json({ error: 'GASTO_CONCEPTO_INVALIDO', campo, detail: { campo, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+    }
+  })
+}
+
+fact.get('/cobro-gasto-conceptos', lectura, valida('query', ListRetencionTiposQuerySchema), handler(async (c) =>
+  gastoConceptosService.listar(esBoolQ(c.req.valid('query').incluir_inactivos), db(c))))
+
+fact.post('/cobro-gasto-conceptos', lectura, tabConfiguracion, configurar, validaGastoConcepto(GastoConceptoCreateSchema), handler(async (c) =>
+  c.json(await gastoConceptosService.crear(c.req.valid('json'), uid(c), db(c)), 201)))
+
+fact.patch('/cobro-gasto-conceptos/:id', lectura, tabConfiguracion, configurar, validaGastoConcepto(GastoConceptoUpdateSchema), handler(async (c) =>
+  gastoConceptosService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
 // ═══════════════════════════════════ Configuración de Ventas (20260929g) ════
 // `retencion_tipo_default` y los valores por defecto de la factura
 // (condición de pago, provincia, unidad y leyenda de la FCE, 20260929j). El
@@ -454,6 +482,11 @@ fact.delete('/cobros/adjuntos/:id', lectura, tabCobranzas, handler(async (c) => 
   if (!puede) throw new FacturacionHttpError(403, 'SIN_PERMISO', { flag: 'registrar_cobros|anular_cobros' })
   return cobrosService.borrarAdjunto(idParam(c), uid(c), db(c))
 }))
+
+// Cargar liquidación (20260930k): lee el PDF ya subido (texto del navegador o
+// IA) y devuelve la propuesta del cobro. NO crea nada; se confirma con POST /cobros.
+fact.post('/cobros/liquidacion/leer', lectura, registrarCobros, tabCobranzas, valida('json', LeerLiquidacionSchema), handler(async (c) =>
+  liquidacionService.leer(c.req.valid('json'), db(c))))
 
 fact.get('/cobros/:id/adjuntos', lectura, tabLeerCobros, handler(async (c) =>
   cobrosService.listarAdjuntos(idParam(c), db(c))))
