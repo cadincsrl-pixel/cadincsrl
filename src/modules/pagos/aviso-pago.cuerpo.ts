@@ -213,3 +213,17 @@ export function armarPrueba(empresa: string, pieConfig?: string | null): CuerpoM
 </div>`
   return { asunto, texto, html }
 }
+
+/**
+ * Los archivos que prueban el pago y viajan en el aviso (al proveedor y al
+ * contador). Siempre el `comprobante_pago`; con cheque o e-cheq, además el
+ * archivo de cada cheque (adjunto `cheque`): en un e-cheq ÉSE es el
+ * comprobante (20260929w, dueño: «el comprobante del echeq y del pago es el
+ * mismo»). Hasta ese día el mail de OP-0250, pagada con el PDF del e-cheq
+ * 3079, salía sin ningún papel. Nunca van el recibo del proveedor, la NC ni
+ * «otro»: no son la prueba de que salió la plata.
+ */
+export function comprobantesDelAviso<T extends { tipo: string }>(formaPago: string | null | undefined, adjuntos: readonly T[]): T[] {
+  const conCheques = formaPago === 'cheque' || formaPago === 'echeq'
+  return adjuntos.filter((a) => a.tipo === 'comprobante_pago' || (conCheques && a.tipo === 'cheque'))
+}

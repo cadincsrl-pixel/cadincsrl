@@ -440,7 +440,7 @@ describe('foto del cheque al emitir la OP', () => {
     expect(cheques[0]).toMatchObject({ numero: '12345678', monto: 100, foto_path: 'ordenes/pendientes/ch.jpg' })
   })
 
-  it('echeq: si CADA echeq trae su archivo, el comprobante aparte es opcional (20260929u)', async () => {
+  it('echeq: si CADA echeq trae su archivo, no hace falta nada más (20260929u/w)', async () => {
     state.profile = CONTADOR
     state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const res = await post('/ordenes', {
@@ -456,7 +456,7 @@ describe('foto del cheque al emitir la OP', () => {
     expect(((args.p_orden as Fila).cheques as Fila[]).map((c) => c.foto_path)).toEqual(['ordenes/pendientes/e1.pdf', 'ordenes/pendientes/e2.pdf'])
   })
 
-  it('echeq: si a uno le falta el archivo y no hay comprobante, COMPROBANTE_REQUERIDO dice cuál', async () => {
+  it('echeq: si a uno le falta el archivo, ECHEQ_SIN_ARCHIVO dice cuál (20260929w)', async () => {
     state.profile = CONTADOR
     state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const res = await post('/ordenes', {
@@ -467,16 +467,29 @@ describe('foto del cheque al emitir la OP', () => {
       ],
     })
     expect(res.status).toBe(400)
-    expect(await res.json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', detail: { forma_pago: 'echeq', cheques_sin_archivo: ['2'] } })
+    expect(await res.json()).toMatchObject({ error: 'ECHEQ_SIN_ARCHIVO', detail: { campo: 'cheques', forma_pago: 'echeq', cheques_sin_archivo: ['2'] } })
     expect(llamada('pagos_registrar_orden')).toBeUndefined()
   })
 
-  it('echeq con un echeq sin archivo pero CON comprobante: pasa (como siempre)', async () => {
+  it('echeq con un echeq sin archivo pero CON comprobante aparte: ya NO pasa, el comprobante aparte no lo reemplaza (20260929w)', async () => {
     state.profile = CONTADOR
     state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const res = await post('/ordenes', {
       proveedor_id: 1, fecha: HOY, forma_pago: 'echeq', lineas: [{ factura_id: 5, monto: 100 }],
       cheques: [{ numero: '1', fecha_cobro: HOY, monto: 100 }],
+      adjuntos: [{ tipo: 'comprobante_pago', storage_path: 'ordenes/pendientes/c.pdf', nombre_archivo: 'c.pdf', mime_type: 'application/pdf' }],
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'ECHEQ_SIN_ARCHIVO', detail: { cheques_sin_archivo: ['1'] } })
+    expect(llamada('pagos_registrar_orden')).toBeUndefined()
+  })
+
+  it('echeq con su archivo Y un comprobante aparte: se acepta (el aparte no molesta)', async () => {
+    state.profile = CONTADOR
+    state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
+    const res = await post('/ordenes', {
+      proveedor_id: 1, fecha: HOY, forma_pago: 'echeq', lineas: [{ factura_id: 5, monto: 100 }],
+      cheques: [{ numero: '1', fecha_cobro: HOY, monto: 100, foto_path: 'ordenes/pendientes/e1.pdf' }],
       adjuntos: [{ tipo: 'comprobante_pago', storage_path: 'ordenes/pendientes/c.pdf', nombre_archivo: 'c.pdf', mime_type: 'application/pdf' }],
     })
     expect(res.status).toBe(200)
@@ -497,9 +510,13 @@ describe('foto del cheque al emitir la OP', () => {
 
   it('comprobanteFaltante: la regla pura', () => {
     expect(comprobanteFaltante('echeq', false, [{ numero: '1', foto_path: 'a' }])).toBeNull()
-    expect(comprobanteFaltante('echeq', false, [])).toEqual({ forma_pago: 'echeq', cheques_sin_archivo: [] })
-    expect(comprobanteFaltante('echeq', true, [{ numero: '1' }])).toBeNull()
-    expect(comprobanteFaltante('transferencia', false, [])).toEqual({ forma_pago: 'transferencia' })
+    expect(comprobanteFaltante('echeq', true, [{ numero: '1', foto_path: 'a' }])).toBeNull()
+    expect(comprobanteFaltante('echeq', false, [])).toEqual({ codigo: 'ECHEQ_SIN_ARCHIVO', detalle: { forma_pago: 'echeq', cheques_sin_archivo: [] } })
+    // 20260929w: el comprobante aparte ya no reemplaza el archivo de cada echeq.
+    expect(comprobanteFaltante('echeq', true, [{ numero: '1' }, { numero: '2', foto_path: ' ' }]))
+      .toEqual({ codigo: 'ECHEQ_SIN_ARCHIVO', detalle: { forma_pago: 'echeq', cheques_sin_archivo: ['1', '2'] } })
+    expect(comprobanteFaltante('transferencia', false, [])).toEqual({ codigo: 'COMPROBANTE_REQUERIDO', detalle: { forma_pago: 'transferencia' } })
+    expect(comprobanteFaltante('transferencia', true, [])).toBeNull()
     expect(comprobanteFaltante('cheque', false, [{ numero: '1' }])).toBeNull()
     expect(comprobanteFaltante('efectivo', false, undefined)).toBeNull()
   })
@@ -513,7 +530,7 @@ describe('foto del cheque al emitir la OP', () => {
     const conFoto = await post('/facturas', { ...base, orden: { fecha: HOY, forma_pago: 'echeq', cheques: [{ numero: '9', fecha_cobro: HOY, monto: 100, foto_path: 'ordenes/pendientes/e9.pdf' }] } })
     expect(conFoto.status).toBe(200)
     const sinFoto = await post('/facturas', { ...base, numero: '0001-00000008', orden: { fecha: HOY, forma_pago: 'echeq', cheques: [{ numero: '9', fecha_cobro: HOY, monto: 100 }] } })
-    expect(await sinFoto.json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', detail: { campo: 'orden.comprobante', cheques_sin_archivo: ['9'] } })
+    expect(await sinFoto.json()).toMatchObject({ error: 'ECHEQ_SIN_ARCHIVO', detail: { campo: 'orden.cheques', cheques_sin_archivo: ['9'] } })
   })
 
   it('chocaConEmitido: el mismo criterio que fn_pagos_cheque_unico (número + banco + librador)', () => {

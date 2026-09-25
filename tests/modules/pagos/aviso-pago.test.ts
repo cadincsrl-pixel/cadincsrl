@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { armarCuerpo, armarPrueba, pieConCbu } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
 import { esEmailValido, parsearFrom, armarFrom, fromComoTexto } from '../../../src/lib/mail.js'
-import { destinatariosProveedor } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
+import { comprobantesDelAviso, destinatariosProveedor } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
 
 // El aviso de pago sale a TERCEROS (proveedor y estudio contable), así que lo
 // que dice el cuerpo se testea: es lo único del sistema que ve alguien de
@@ -175,5 +175,26 @@ describe('From del mail', () => {
     const f = armarFrom('pagos@cadinc.com.ar', 'X\r\nBcc: robo@x.com "<otro@x.com>"')
     expect(f.address).toBe('pagos@cadinc.com.ar')
     expect(f.name).not.toMatch(/[\r\n<>"]/)
+  })
+})
+
+describe('comprobantesDelAviso (20260929w)', () => {
+  const ADJ = [
+    { tipo: 'cheque', nombre_archivo: 'cheque-3079.pdf' },
+    { tipo: 'recibo_proveedor', nombre_archivo: 'recibo.pdf' },
+    { tipo: 'otro', nombre_archivo: 'otro.pdf' },
+    { tipo: 'nota_credito', nombre_archivo: 'nc.pdf' },
+  ]
+  it('e-cheq pagado solo con el PDF del echeq (caso OP-0250): el mail lleva ese PDF como comprobante', () => {
+    expect(comprobantesDelAviso('echeq', ADJ).map((a) => a.nombre_archivo)).toEqual(['cheque-3079.pdf'])
+  })
+  it('cheque físico: la foto del cheque también es la prueba del pago', () => {
+    expect(comprobantesDelAviso('cheque', [...ADJ, { tipo: 'comprobante_pago', nombre_archivo: 'c.pdf' }]).map((a) => a.nombre_archivo))
+      .toEqual(['cheque-3079.pdf', 'c.pdf'])
+  })
+  it('transferencia: solo el comprobante; nunca el recibo, la NC ni «otro»', () => {
+    expect(comprobantesDelAviso('transferencia', [...ADJ, { tipo: 'comprobante_pago', nombre_archivo: 'c.pdf' }]).map((a) => a.nombre_archivo))
+      .toEqual(['c.pdf'])
+    expect(comprobantesDelAviso(null, ADJ)).toEqual([])
   })
 })

@@ -40,7 +40,11 @@ export const FORMAS_PREVISTAS = ['efectivo', 'transferencia', 'tarjeta', 'cheque
 export const FORMAS_PAGO_OP = ['efectivo', 'transferencia', 'cheque', 'echeq', 'tarjeta', 'debito_automatico', 'otro'] as const
 /** Lo que puede tener guardado una OP (el CHECK de la tabla): las de entrada + `nota_credito`, histórica (hoy 0 filas). */
 export const FORMAS_PAGO_OP_GUARDADAS = [...FORMAS_PAGO_OP, 'nota_credito'] as const
-/** Comprobante de pago obligatorio por forma, solo si `monto_pagado > 0`. */
+/**
+ * Formas cuya OP tiene que llevar la prueba del pago, solo si `monto_pagado > 0`:
+ * transferencia → el `comprobante_pago`; e-cheq → el archivo de CADA echeq
+ * (adjunto `cheque`, 20260929w). Ver `comprobanteFaltante`.
+ */
 export const FORMAS_CON_COMPROBANTE_OBLIGATORIO = ['transferencia', 'echeq'] as const
 export const FORMAS_CON_FECHA_COBRO = ['cheque', 'echeq'] as const
 /** La RPC copia `cbu`/`alias_cbu` del padrón a la OP para estas formas. */

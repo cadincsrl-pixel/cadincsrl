@@ -29,9 +29,9 @@ import { enviarMail, esEmailValido, estaConfigurado, loQueFalta, type AdjuntoMai
 import { BUCKET } from './adjuntos.service.js'
 import { PagosHttpError } from './pagos.errors.js'
 import { getEmpresa } from '../../lib/empresa.js'
-import { armarCuerpo, armarPrueba, destinatariosProveedor, type Destinatario } from './aviso-pago.cuerpo.js'
+import { armarCuerpo, armarPrueba, comprobantesDelAviso, destinatariosProveedor, type Destinatario } from './aviso-pago.cuerpo.js'
 import { nombreRemitenteEfectivo, pagosConfigService, responderAEfectivo } from './config.service.js'
-export { armarCuerpo, destinatariosProveedor } from './aviso-pago.cuerpo.js'
+export { armarCuerpo, comprobantesDelAviso, destinatariosProveedor } from './aviso-pago.cuerpo.js'
 export type { Destinatario } from './aviso-pago.cuerpo.js'
 
 export type EstadoAviso = 'enviado' | 'fallado' | 'omitido'
@@ -133,7 +133,9 @@ export const avisoPagoService = {
       return out
     }
 
-    const comprobantes = ((adjOrden.data ?? []) as any[]).filter((a) => a.tipo === 'comprobante_pago')
+    // Lo que prueba el pago: el comprobante y, con cheque/e-cheq, el archivo de
+    // cada cheque (20260929w: en un e-cheq ése ES el comprobante).
+    const comprobantes = comprobantesDelAviso(orden.forma_pago as string | null, (adjOrden.data ?? []) as any[])
     // Nombre de fantasía de empresa_config; EMPRESA_NOMBRE del env queda como fallback (en getEmpresa).
     const empresa = (await getEmpresa()).nombre_fantasia
     // Configuración de Compras (20260929i): a quién le llega el del contador

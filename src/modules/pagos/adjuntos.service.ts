@@ -289,9 +289,15 @@ export const pagosAdjuntosService = {
   },
 
   /**
-   * Soft delete. En una OP emitida cuya forma exige comprobante, el
-   * `comprobante_pago` solo se borra si queda otro vigente (reemplazar el
-   * equivocado); si no, 409 ADJUNTO_REQUERIDO.
+   * Soft delete. En una OP emitida que tiene que llevar la prueba del pago
+   * (FORMAS_CON_COMPROBANTE_OBLIGATORIO) no se puede dejarla sin ella; si no,
+   * 409 ADJUNTO_REQUERIDO. Se reemplaza subiendo el nuevo y borrando el viejo.
+   *   · transferencia: el `comprobante_pago` solo se borra si queda otro.
+   *   · e-cheq (20260929w): la prueba es el archivo de cada echeq (adjunto
+   *     `cheque`) o, en las OP viejas, un `comprobante_pago`. Se puede borrar
+   *     cualquiera de los dos mientras quede un `comprobante_pago` o tantos
+   *     archivos `cheque` como cheques (el mismo criterio de conteo que
+   *     `v_pagos_ordenes.tiene_comprobante`).
    */
   async softDelete(entidad: Entidad, id: number, adjId: number, userId: string, token: string) {
     const cfg = CFG[entidad]
@@ -300,16 +306,25 @@ export const pagosAdjuntosService = {
       .from(cfg.tabla).select('id, tipo').eq('id', adjId).eq(cfg.fk, id).is('deleted_at', null).maybeSingle()
     if (e0) throw new PagosHttpError(500, 'DB_ERROR', e0.message)
     if (!adj) throw new PagosHttpError(404, 'ADJ_NO_EXISTE')
+    const tipoAdj = (adj as { tipo: string }).tipo
 
-    if (entidad === 'ordenes' && (adj as any).tipo === 'comprobante_pago') {
+    if (entidad === 'ordenes' && (tipoAdj === 'comprobante_pago' || tipoAdj === 'cheque')) {
       const { data: orden } = await sb.from('pagos_ordenes').select('estado, forma_pago, monto_pagado').eq('id', id).maybeSingle()
       const o = orden as { estado: string; forma_pago: string | null; monto_pagado: number } | null
       const requerido = !!o && o.estado === 'emitida' && Number(o.monto_pagado) > 0
         && (FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(o.forma_pago ?? '')
-      if (requerido) {
-        const { count } = await sb.from(cfg.tabla).select('id', { count: 'exact', head: true })
-          .eq(cfg.fk, id).eq('tipo', 'comprobante_pago').is('deleted_at', null).neq('id', adjId)
-        if (!count) throw new PagosHttpError(409, 'ADJUNTO_REQUERIDO', { forma_pago: o!.forma_pago })
+      if (requerido && !(o!.forma_pago === 'transferencia' && tipoAdj === 'cheque')) {
+        const quedan = async (tipo: string) => {
+          const { count } = await sb.from(cfg.tabla).select('id', { count: 'exact', head: true })
+            .eq(cfg.fk, id).eq('tipo', tipo).is('deleted_at', null).neq('id', adjId)
+          return count ?? 0
+        }
+        let cubierta = (await quedan('comprobante_pago')) > 0
+        if (!cubierta && o!.forma_pago === 'echeq') {
+          const { count: cheques } = await sb.from('pagos_cheques').select('id', { count: 'exact', head: true }).eq('orden_id', id)
+          cubierta = (cheques ?? 0) > 0 && (await quedan('cheque')) >= (cheques ?? 0)
+        }
+        if (!cubierta) throw new PagosHttpError(409, 'ADJUNTO_REQUERIDO', { forma_pago: o!.forma_pago })
       }
     }
 

@@ -40,7 +40,7 @@ import {
 } from './pagos.util.js'
 import {
   esBoolQ, ESTADOS_FACTURA, CAMPOS_CONGELADOS, CAMPOS_QUE_DESAPRUEBAN,
-  FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
+  FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
   type CreateOrdenDto, type LoteOrdenesDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
   type ImputacionDto, type RegistrarFinnegansDto, type AplicarNcDto, sumaAplicaA,
@@ -282,23 +282,33 @@ export function validarCheques(forma: string, cheques: ChequeDto[] | undefined, 
 }
 
 /**
- * ¿Falta el comprobante de pago? (null = no falta). Transferencia y e-cheq lo
- * piden (FORMAS_CON_COMPROBANTE_OBLIGATORIO), con una excepción (20260929u,
- * pedido del dueño): en un E-CHEQ el PDF/foto de cada echeq ES el
- * comprobante, así que si TODOS los cheques traen su archivo (`foto_path`)
- * el comprobante aparte es opcional. Si alguno no lo trae, sigue faltando, y
- * el detalle dice cuáles. Espejo de `_pagos_emitir_orden`, que es la que
- * manda; y de `comprobanteObligatorio` en el frontend.
+ * ¿Falta el comprobante del pago? (null = no falta). Espejo de
+ * `_pagos_emitir_orden`, que es la que manda, y de `chequesSinComprobante` /
+ * `comprobanteObligatorio` en el frontend.
+ *
+ *   · transferencia → el comprobante (`comprobante_pago`) es obligatorio:
+ *     COMPROBANTE_REQUERIDO.
+ *   · e-cheq (20260929w, pedido del dueño: «en cada línea echeq deberíamos
+ *     subir comprobante») → el archivo de CADA echeq (`foto_path`) ES el
+ *     comprobante del pago, y uno aparte ya NO lo reemplaza (si viene, se
+ *     acepta igual). Si a alguno le falta: ECHEQ_SIN_ARCHIVO con los números.
+ *     Hasta 20260929u alcanzaba con el comprobante aparte.
+ *   · cheque físico y el resto → no se pide (el archivo por cheque es
+ *     opcional).
  */
 export function comprobanteFaltante(
   forma: string, tieneComprobante: boolean, cheques: readonly Pick<ChequeDto, 'numero' | 'foto_path'>[] | undefined,
-): { forma_pago: string; cheques_sin_archivo?: string[] } | null {
-  if (!(FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(forma) || tieneComprobante) return null
-  if (forma !== 'echeq') return { forma_pago: forma }
-  const lista = cheques ?? []
-  const sinArchivo = lista.filter((c) => !c.foto_path?.trim()).map((c) => c.numero)
-  if (lista.length > 0 && sinArchivo.length === 0) return null
-  return { forma_pago: forma, cheques_sin_archivo: sinArchivo }
+): { codigo: 'COMPROBANTE_REQUERIDO'; detalle: { forma_pago: string } }
+  | { codigo: 'ECHEQ_SIN_ARCHIVO'; detalle: { forma_pago: string; cheques_sin_archivo: string[] } }
+  | null {
+  if (forma === 'echeq') {
+    const lista = cheques ?? []
+    const sinArchivo = lista.filter((c) => !c.foto_path?.trim()).map((c) => c.numero)
+    if (lista.length > 0 && sinArchivo.length === 0) return null
+    return { codigo: 'ECHEQ_SIN_ARCHIVO', detalle: { forma_pago: forma, cheques_sin_archivo: sinArchivo } }
+  }
+  if (forma === 'transferencia' && !tieneComprobante) return { codigo: 'COMPROBANTE_REQUERIDO', detalle: { forma_pago: forma } }
+  return null
 }
 
 /**
@@ -320,7 +330,8 @@ export async function validarOrden(dto: CreateOrdenDto, userId: string, perfil: 
   validarCheques(formaPago, dto.cheques, dto.fecha, montoPagado)
   const tipos = new Set(dto.adjuntos.map((a) => a.tipo))
   const falta = comprobanteFaltante(formaPago, tipos.has('comprobante_pago'), dto.cheques)
-  if (falta) throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { ...falta, tipo: 'comprobante_pago' })
+  if (falta?.codigo === 'ECHEQ_SIN_ARCHIVO') throw errorDeCampo(falta.codigo, 'cheques', falta.detalle)
+  if (falta) throw errorDeCampo(falta.codigo, 'adjuntos', { ...falta.detalle, tipo: 'comprobante_pago' })
 
   // Separación de funciones, por factura, antes de la RPC (admin exento).
   const facturaIds = [...new Set(dto.lineas.map((l) => l.factura_id).filter((x): x is number => x != null))]
@@ -399,7 +410,11 @@ function aplicarFiltrosOrdenes(q: any, f: Omit<ListOrdenesQuery, 'limit' | 'offs
   if (f.estado) q = q.eq('estado', f.estado)
   if (f.desde) q = q.gte('fecha', f.desde)
   if (f.hasta) q = q.lte('fecha', f.hasta)
-  if (esBoolQ(f.sin_comprobante)) q = q.eq('tiene_comprobante', false)
+  // «Sin comprobante» = lo que la pantalla marca en rojo: forma que lo pide
+  // (transferencia, e-cheq) y sin prueba del pago. En cheque/e-cheq la prueba
+  // puede ser el archivo de cada cheque (v_pagos_ordenes.tiene_comprobante,
+  // 20260929w).
+  if (esBoolQ(f.sin_comprobante)) q = q.eq('comprobante_requerido', true).eq('tiene_comprobante', false)
   // Emitidas sin recibo del proveedor (20260925q): una anulada no espera recibo.
   if (esBoolQ(f.sin_recibo)) q = q.eq('tiene_recibo', false).eq('estado', 'emitida')
   if (esBoolQ(f.en_cartera)) q = q.eq('en_cartera', true)
@@ -739,7 +754,7 @@ export const pagosService = {
       validarCheques(o.forma_pago, o.cheques, o.fecha, dto.total, 'orden.')
       if (o.fecha_cobro && o.fecha_cobro < o.fecha) throw errorDeCampo('FECHA_COBRO_INVALIDA', 'orden.fecha_cobro')
       const falta = comprobanteFaltante(o.forma_pago, !!o.comprobante, o.cheques)
-      if (falta) throw errorDeCampo('COMPROBANTE_REQUERIDO', 'orden.comprobante', falta)
+      if (falta) throw errorDeCampo(falta.codigo, falta.codigo === 'ECHEQ_SIN_ARCHIVO' ? 'orden.cheques' : 'orden.comprobante', falta.detalle)
       const comprobantes = o.comprobante ? [{ ...o.comprobante, tipo: 'comprobante_pago' as const }] : []
       const fotos = adjuntosDeCheques(o.cheques, comprobantes)
       const reemplazos = new Map<string, string>()
@@ -1384,7 +1399,8 @@ export const pagosService = {
     const { montoPagado, formaPago } = await validarOrden(dto, userId, perfil)
 
     // Las fotos de los cheques (20260925p) van como adjuntos tipo `cheque`.
-    // No cuentan como comprobante_pago: la transferencia/echeq lo sigue pidiendo.
+    // En un e-cheq ESE archivo es el comprobante (20260929w); la
+    // transferencia sigue pidiendo el `comprobante_pago`.
     const reemplazos = new Map<string, string>()
     const adjuntos = await procesarPendientes(adjuntosPendientesDeOrden(dto), reemplazos)
     const avisos: Aviso[] = []
