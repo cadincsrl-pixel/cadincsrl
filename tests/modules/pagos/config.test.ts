@@ -176,6 +176,43 @@ describe('PATCH /config — avisos y plazos (20260929i)', () => {
   })
 })
 
+describe('tolerancia de saldo (20260930e)', () => {
+  beforeEach(() => { state.profile = perfil({ lectura: true, tabs: ['configuracion'], configurar: true }) })
+  it('GET: sin valor en la base → 1; con valor → el guardado', async () => {
+    expect((await pagosConfigService.obtener()).saldos).toEqual({ tolerancia: 1 })
+    pagosConfigService.olvidarCache()
+    state.config = { tributo_jurisdiccion_default_id: 24, tolerancia_saldo: 0.5 }
+    expect((await pagosConfigService.obtener()).saldos).toEqual({ tolerancia: 0.5 })
+  })
+  it('baseDesdeJson: 0 vale; basura o fuera de rango → 1', () => {
+    expect(baseDesdeJson({ tolerancia_saldo: 0 }).tolerancia_saldo).toBe(0)
+    expect(baseDesdeJson({ tolerancia_saldo: '2.5' }).tolerancia_saldo).toBe(2.5)
+    for (const t of [null, 'x', -1, 101]) expect(baseDesdeJson({ tolerancia_saldo: t }).tolerancia_saldo).toBe(1)
+  })
+  it('PATCH: va a la clave tolerancia_saldo y vuelve en saldos', async () => {
+    const r = await patch({ tolerancia_saldo: 2.5 })
+    expect(r.status).toBe(200)
+    expect(state.rpcs.find((x) => x.fn === 'pagos_guardar_config')?.args).toEqual({ p_user_id: 'u-1', p_cambios: { tolerancia_saldo: 2.5 } })
+    expect((await r.json()).saldos).toEqual({ tolerancia: 2.5 })
+    expect((await patch({ tolerancia_saldo: 0 })).status).toBe(200)
+    expect((await patch({ tolerancia_saldo: 100 })).status).toBe(200)
+  })
+  it('PATCH: negativa, > 100, 3 decimales, texto o null → 400 CONFIG_INVALIDA sin llegar a la RPC', async () => {
+    for (const t of [-0.01, 100.01, 0.005, '1', null]) {
+      const r = await patch({ tolerancia_saldo: t })
+      expect(r.status).toBe(400)
+      expect(await r.json()).toMatchObject({ error: 'CONFIG_INVALIDA', campo: 'tolerancia_saldo' })
+    }
+    expect(state.rpcs.find((x) => x.fn === 'pagos_guardar_config')).toBeUndefined()
+  })
+  it('el error de la base vuelve con la clave de la API', async () => {
+    state.error = { message: 'CONFIG_INVALIDA', details: '{"clave":"tolerancia_saldo","motivo":"tolerancia_invalida"}' }
+    const r = await patch({ tolerancia_saldo: 3 })
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({ error: 'CONFIG_INVALIDA', campo: 'tolerancia_saldo' })
+  })
+})
+
 describe('probar-mail', () => {
   it('mismo guard que PATCH', async () => {
     state.profile = perfil({ lectura: true, tabs: ['configuracion'] })

@@ -9,6 +9,10 @@
  *   · `aviso_compras_email` (20260929x): copia a Compras del aviso de pago;
  *     recibe el mismo paquete que el contador. Sin fallback a env ni perfil.
  *   · `plazos_cheque` (20260929i): los días que ofrece el alta de un cheque.
+ *   · `tolerancia_saldo` (20260930e): montos menores no cuentan como deuda ni
+ *     como saldo a favor en «Deuda por proveedor» ni como vencidos. La aplican
+ *     las vistas (`v_pagos_proveedor_saldo`, `v_pagos_facturas.vencida`); acá
+ *     solo se lee y se guarda. 0 a 100, dos decimales, default 1.
  *
  * La API habla con nombres cortos (`contador_email`, `plazos_cheque`…) y este
  * archivo los traduce a las claves de la base. La respuesta de GET conserva
@@ -29,6 +33,12 @@ import { pieConCbu } from './aviso-pago.cuerpo.js'
 
 /** Los plazos de hoy: fallback si la base no trae la lista. */
 export const PLAZOS_CHEQUE_DEFAULT = [0, 7, 15, 30, 45, 60, 90] as const
+/** Tolerancia de saldo si la base no la trae (mismo default que la RPC). */
+export const TOLERANCIA_SALDO_DEFAULT = 1
+export const TOLERANCIA_SALDO_MAX = 100
+
+/** A lo sumo dos decimales (la base rechaza 0,005). */
+const dosDecimales = (n: number) => Math.abs(Math.round(n * 100) - n * 100) < 1e-6
 
 // ── Validación de la API (la base repite todo; esto da el error lindo) ────
 const emailONull = z.string().trim().max(254)
@@ -56,6 +66,10 @@ export const PagosConfigPatchSchema = z.object({
     .min(1).max(12)
     .refine((a) => new Set(a).size === a.length, { message: 'PLAZOS_REPETIDOS' })
     .optional(),
+  tolerancia_saldo: z.number({ message: 'TOLERANCIA_INVALIDA' })
+    .min(0, { message: 'TOLERANCIA_INVALIDA' }).max(TOLERANCIA_SALDO_MAX, { message: 'TOLERANCIA_INVALIDA' })
+    .refine(dosDecimales, { message: 'TOLERANCIA_INVALIDA' })
+    .optional(),
 }).strict().refine((o) => Object.keys(o).length > 0, { message: 'SIN_CAMBIOS' })
 export type PagosConfigPatch = z.infer<typeof PagosConfigPatchSchema>
 
@@ -68,6 +82,7 @@ const CLAVE_DB: Record<keyof PagosConfigPatch, string> = {
   nombre_remitente: 'aviso_nombre_remitente',
   pie_texto: 'aviso_pie_texto',
   plazos_cheque: 'plazos_cheque',
+  tolerancia_saldo: 'tolerancia_saldo',
 }
 const CLAVE_API: Record<string, string> = Object.fromEntries(Object.entries(CLAVE_DB).map(([a, d]) => [d, a]))
 
@@ -91,6 +106,7 @@ export interface PagosConfigBase {
   aviso_nombre_remitente: string | null
   aviso_pie_texto: string | null
   plazos_cheque: number[]
+  tolerancia_saldo: number
 }
 
 export type FuenteContador = 'config' | 'env' | 'perfil' | null
@@ -111,6 +127,8 @@ export interface PagosConfig {
     smtp: { configurado: boolean; falta: string[] }
   }
   cheques: { plazos: number[] }
+  /** «Deuda por proveedor» (20260930e): por debajo, ni deuda ni saldo a favor. */
+  saldos: { tolerancia: number }
   tributos: { jurisdiccion_default_id: number | null }
 }
 
@@ -126,6 +144,7 @@ export function baseDesdeJson(raw: unknown): PagosConfigBase {
   const plazos = Array.isArray(r.plazos_cheque)
     ? [...new Set(r.plazos_cheque.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 365))].sort((a, b) => a - b)
     : []
+  const tol = Number(r.tolerancia_saldo)
   return {
     tributo_jurisdiccion_default_id: Number.isInteger(id) && id > 0 ? id : null,
     aviso_contador_email: texto(r.aviso_contador_email),
@@ -134,6 +153,8 @@ export function baseDesdeJson(raw: unknown): PagosConfigBase {
     aviso_nombre_remitente: texto(r.aviso_nombre_remitente),
     aviso_pie_texto: texto(r.aviso_pie_texto),
     plazos_cheque: plazos.length ? plazos : [...PLAZOS_CHEQUE_DEFAULT],
+    tolerancia_saldo: r.tolerancia_saldo != null && Number.isFinite(tol) && tol >= 0 && tol <= TOLERANCIA_SALDO_MAX
+      ? tol : TOLERANCIA_SALDO_DEFAULT,
   }
 }
 
@@ -201,6 +222,7 @@ async function armar(base: PagosConfigBase): Promise<PagosConfig> {
       smtp: { configurado: estaConfigurado(), falta: loQueFalta() },
     },
     cheques: { plazos: base.plazos_cheque },
+    saldos: { tolerancia: base.tolerancia_saldo },
     tributos: { jurisdiccion_default_id: base.tributo_jurisdiccion_default_id },
   }
 }
