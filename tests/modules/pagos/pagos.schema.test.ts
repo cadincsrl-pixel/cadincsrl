@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   UpdateFacturaSchema, CreateFacturaSchema, CreateOrdenSchema, LineaOrdenSchema, UpdateOrdenSchema,
-  DatosPagoSchema, UpdateProveedorSchema, CAMPOS_QUE_DESAPRUEBAN, CAMPOS_CONGELADOS,
+  DatosPagoSchema, UpdateProveedorSchema, CreateProveedorSchema, CAMPOS_QUE_DESAPRUEBAN, CAMPOS_CONGELADOS,
   FORMAS_PAGO_OP, FORMAS_PAGO_OP_GUARDADAS, FORMAS_PREVISTAS, TIPOS_LINEA, TIPOS_LINEA_ENTRADA, TIPOS_ADJ_ORDEN, ListFacturasQuerySchema,
   AplicarNcSchema, CLASES, FacturasResumenQuerySchema,
 } from '../../../src/modules/pagos/pagos.schema.js'
@@ -221,6 +221,14 @@ describe('proveedores', () => {
   it('UpdateProveedorSchema rechaza activo/baja_*', () => {
     expect(UpdateProveedorSchema.safeParse({ activo: false }).success).toBe(false)
     expect(UpdateProveedorSchema.safeParse({ baja_motivo: 'x' }).success).toBe(false)
+  })
+  it('concepto y obra habituales (20260930p): opcionales, null borra, id positivo', () => {
+    expect(UpdateProveedorSchema.safeParse({ concepto_habitual_id: 4, obra_habitual_cod: 'CC-020' }).success).toBe(true)
+    expect(UpdateProveedorSchema.safeParse({ concepto_habitual_id: null, obra_habitual_cod: null }).success).toBe(true)
+    expect(UpdateProveedorSchema.safeParse({ concepto_habitual_id: 0 }).success).toBe(false)
+    expect(UpdateProveedorSchema.safeParse({ concepto_habitual_id: 1.5 }).success).toBe(false)
+    expect(CreateProveedorSchema.parse({ razon_social: 'Truck NOA SA', concepto_habitual_id: 4, obra_habitual_cod: 'CC-020' }))
+      .toMatchObject({ concepto_habitual_id: 4, obra_habitual_cod: 'CC-020' })
   })
 })
 

@@ -811,6 +811,16 @@ const DatosFiscales = {
   condicion_iva_id: z.number().int().min(1).max(16).nullable().optional(),
 }
 
+/**
+ * Concepto y centro de costo (obra) habituales (20260930p): la carga a mano
+ * los precarga y el importador de ARCA deja imputado lo suyo. Null = sin
+ * preferencia. El service valida que el concepto esté activo y la obra exista.
+ */
+const Habituales = {
+  concepto_habitual_id: z.number().int('CONCEPTO_INVALIDO').positive('CONCEPTO_INVALIDO').nullable().optional(),
+  obra_habitual_cod:    Texto(20).nullable().optional(),
+}
+
 export const CreateProveedorSchema = z.object({
   razon_social:    Texto(200).min(3),
   cuit:            Texto(20).nullable().optional(),
@@ -822,6 +832,7 @@ export const CreateProveedorSchema = z.object({
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   /** Cómo se le paga normalmente (20260930a): la forma con que nacen sus facturas. Null = transferencia. */
   forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
+  ...Habituales,
   contacto:        Texto(120).optional().default(''),
   telefono:        Texto(40).optional().default(''),
   email:           Texto(120).optional().default(''),
@@ -841,6 +852,7 @@ export const UpdateProveedorSchema = z.object({
   vencimiento_modo: z.enum(VENCIMIENTO_MODOS).optional(),
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
+  ...Habituales,
   contacto:        Texto(120).optional(),
   telefono:        Texto(40).optional(),
   email:           Texto(120).optional(),
@@ -852,6 +864,7 @@ export type UpdateProveedorDto = z.infer<typeof UpdateProveedorSchema>
 /** La puerta del contador: solo datos de pago, ni razón social ni CUIT. */
 export const DatosPagoSchema = UpdateProveedorSchema.omit({
   razon_social: true, cuit: true, obs: true, domicilio: true, provincia: true, condicion_iva_id: true,
+  concepto_habitual_id: true, obra_habitual_cod: true,
 }).strict()
 export type DatosPagoDto = z.infer<typeof DatosPagoSchema>
 

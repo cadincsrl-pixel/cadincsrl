@@ -26,7 +26,7 @@ import { padronJson, precargaPadron, type PrecargaPadron } from '../../lib/arca/
 import { CONDICIONES_IVA_IDS } from './condicion-iva.js'
 import { esBoolQ, type ContactoProveedorDto, type CreateProveedorDto, type UpdateProveedorDto, type DatosPagoDto, type ListProveedoresQuery } from './pagos.schema.js'
 
-const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, forma_pago_habitual, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by, domicilio, provincia, condicion_iva_id, tipo_persona, actividad_principal, padron_consultado_at'
+const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, forma_pago_habitual, concepto_habitual_id, obra_habitual_cod, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by, domicilio, provincia, condicion_iva_id, tipo_persona, actividad_principal, padron_consultado_at'
 
 export interface Aviso { code: string; [k: string]: unknown }
 
@@ -84,7 +84,35 @@ function normalizar(dto: Partial<CreateProveedorDto>): Record<string, unknown> {
   // mismo UPDATE o el constraint rebota con el valor viejo.
   if (dto.vencimiento_modo === 'dias') out.cierre_dia = null
   else if (dto.cierre_dia !== undefined) out.cierre_dia = dto.cierre_dia
+  // Habituales (20260930p): vacío = null (sin preferencia).
+  if (dto.concepto_habitual_id !== undefined) out.concepto_habitual_id = dto.concepto_habitual_id
+  if (dto.obra_habitual_cod !== undefined) out.obra_habitual_cod = dto.obra_habitual_cod?.trim() || null
   return out
+}
+
+/**
+ * Concepto habitual activo y obra habitual existente y no archivada
+ * (20260930p). Los mismos códigos que rebota la imputación:
+ * CONCEPTO_INVALIDO, OBRA_INEXISTENTE, OBRA_ARCHIVADA (400 con `campo`).
+ */
+async function validarHabituales(valores: Record<string, unknown>): Promise<void> {
+  const conceptoId = valores.concepto_habitual_id
+  if (conceptoId != null) {
+    const { data, error } = await supabase.from('pagos_conceptos').select('id, activo').eq('id', conceptoId as number).maybeSingle()
+    if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
+    if (!data || !(data as { activo: boolean }).activo) {
+      throw errorDeCampo('CONCEPTO_INVALIDO', 'concepto_habitual_id', { concepto_id: conceptoId })
+    }
+  }
+  const obraCod = valores.obra_habitual_cod
+  if (obraCod != null) {
+    const { data, error } = await supabase.from('obras').select('cod, archivada').eq('cod', obraCod as string).maybeSingle()
+    if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
+    if (!data) throw errorDeCampo('OBRA_INEXISTENTE', 'obra_habitual_cod', { obra_cod: obraCod })
+    if ((data as { archivada: boolean | null }).archivada) {
+      throw errorDeCampo('OBRA_ARCHIVADA', 'obra_habitual_cod', { obra_cod: obraCod })
+    }
+  }
 }
 
 /**
@@ -123,6 +151,7 @@ async function aprobadasDe(proveedorId: number): Promise<number[]> {
 
 async function actualizar(id: number, dto: Partial<CreateProveedorDto>, userId: string, token: string) {
   const cambios = normalizar(dto)
+  await validarHabituales(cambios)
   const sb = createSupabaseClient(token)
   const { data: actual, error: e0 } = await sb.from('pagos_proveedores').select('id, cbu, alias_cbu, activo').eq('id', id).maybeSingle()
   if (e0) throw new PagosHttpError(500, 'DB_ERROR', e0.message)
@@ -336,6 +365,7 @@ export const proveedoresService = {
    */
   async crear(dto: CreateProveedorDto, userId: string, forzar: boolean, token: string) {
     const valores = normalizar(dto)
+    await validarHabituales(valores)
     const avisos: Aviso[] = []
     if (!forzar) {
       // Parecidos por palabra (≥ 4 letras) sobre razon_social_norm: «Silva» y
