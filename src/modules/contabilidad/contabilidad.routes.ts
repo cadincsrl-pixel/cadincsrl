@@ -37,6 +37,7 @@ import { cuentasService } from './cuentas.service.js'
 import { periodosService } from './periodos.service.js'
 import { reportesService } from './reportes.service.js'
 import { tesoreriaService } from './tesoreria.service.js'
+import { chequesRecibidosService } from './cheques-recibidos.service.js'
 import { catalogosService } from './catalogos.service.js'
 import { automaticosService } from './automaticos.service.js'
 import { mapeosService } from './mapeos.service.js'
@@ -52,6 +53,7 @@ import {
   TesoreriaSchema, UpdateTesoreriaSchema, ListTesoreriaQuerySchema, AuxiliaresQuerySchema,
   PendientesQuerySchema, PropuestaQuerySchema, ContabilizarSchema, GuardarMapeosSchema, ConfigSchema, CerrarPeriodoSchema,
   TesMovimientoSchema, TesMovimientosQuerySchema, TesConceptoSchema, UpdateTesConceptoSchema, TesConceptosQuerySchema,
+  ChequesRecibidosQuerySchema, ChequesRecibidosAManoSchema,
   TesAdjUploadUrlSchema, TesAdjRegistrarSchema, IvaEstadosQuerySchema, IvaGenerarSchema,
   BienSchema, BajaBienSchema, BienesQuerySchema, ImportarBienesSchema, CuadroBienesQuerySchema, CorridasQuerySchema, AmortizarSchema,
 } from './contabilidad.schema.js'
@@ -264,6 +266,14 @@ ctb.patch('/config', lectura, actualizacion, tabMapeos, flagMapeos, valida('json
 
 // ═══════════════════════════════════ Movimientos de fondos (tanda 5) ════════
 // Tab `tesoreria`. Literales (`/fondos/conceptos`) antes de `/fondos/movimientos/:id`.
+
+// Cartera de cheques recibidos (20260930n). Leer = tab tesorería; cargar a
+// mano = además crear + flag de movimientos de fondos.
+ctb.get('/cheques-recibidos', lectura, tabTesoreria, valida('query', ChequesRecibidosQuerySchema), handler(async (c) =>
+  chequesRecibidosService.listar(c.req.valid('query'), db(c))))
+
+ctb.post('/cheques-recibidos', lectura, creacion, tabTesoreria, flagFondos, valida('json', ChequesRecibidosAManoSchema), handler(async (c) =>
+  chequesRecibidosService.altaManual(c.req.valid('json').cheques, uid(c), db(c))))
 
 ctb.get('/fondos/conceptos', lectura, tabTesoreria, valida('query', TesConceptosQuerySchema), handler(async (c) =>
   fondosService.conceptos(esBoolQ(c.req.valid('query').incluir_inactivos), db(c))))

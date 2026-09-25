@@ -235,6 +235,22 @@ export function chocaConEmitido(
 }
 
 export const chequesService = {
+  /**
+   * Los cheques de terceros EN CARTERA (20260930n), para «Elegir de la
+   * cartera» al pagar: sirve sobre todo para cheques físicos (Global), que no
+   * tienen un PDF de endoso para leer. Compras sólo LEE la cartera; el endoso
+   * lo marca el trigger al emitir la OP.
+   */
+  async cartera() {
+    const { data, error } = await supabase.from('v_cheques_recibidos')
+      .select('id, numero, banco, librador, librador_cuit, fecha_cobro, importe, es_echeq, recibido_de, recibido_el, vencido')
+      .eq('estado', 'en_cartera')
+      .order('fecha_cobro', { ascending: true, nullsFirst: false }).order('id')
+      .limit(500)
+    if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
+    return data ?? []
+  },
+
   async leer(dto: LeerChequeDto) {
     validarPathPendiente(dto.storage_path)
     const dl = await supabase.storage.from(BUCKET).download(dto.storage_path)

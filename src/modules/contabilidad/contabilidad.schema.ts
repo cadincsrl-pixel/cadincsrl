@@ -485,3 +485,30 @@ export type ImportarBienesDto = z.infer<typeof ImportarBienesSchema>
 export const CuadroBienesQuerySchema = z.object({ hasta: FechaISO })
 export const CorridasQuerySchema = z.object({ ejercicio_id: IdQ.optional() })
 export const AmortizarSchema = z.object({ hasta: FechaISO }).strict()
+
+// ── Cartera de cheques recibidos (20260930n) ────────────────────────────────
+
+export const ChequesRecibidosQuerySchema = z.object({
+  /** `vencidos` / `por_vencer` = en cartera con la fecha de cobro pasada / por venir. Sin estado = todos. */
+  estado: z.enum(['en_cartera', 'endosado', 'depositado', 'rechazado', 'recuperado', 'vencidos', 'por_vencer', 'todos']).optional(),
+  origen: z.enum(['logistica_cobro', 'ventas_cobro', 'manual']).optional(),
+  desde:  FechaISO.optional(),
+  hasta:  FechaISO.optional(),
+  q:      z.string().trim().max(200).optional(),
+  limit:  z.coerce.number().int().min(1).max(200).optional().default(50),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+})
+export type ChequesRecibidosQuery = z.infer<typeof ChequesRecibidosQuerySchema>
+
+export const ChequeRecibidoAManoSchema = z.object({
+  numero:        z.string().trim().min(1).max(40),
+  banco:         z.string().trim().max(80).nullable().optional(),
+  librador:      z.string().trim().min(1).max(160),
+  librador_cuit: z.string().trim().max(20).nullable().optional(),
+  fecha_cobro:   FechaISO.nullable().optional(),
+  importe:       z.number().positive(),
+  es_echeq:      z.boolean().nullable().optional(),
+  obs:           z.string().trim().max(300).nullable().optional(),
+})
+export type ChequeRecibidoAManoDto = z.infer<typeof ChequeRecibidoAManoSchema>
+export const ChequesRecibidosAManoSchema = z.object({ cheques: z.array(ChequeRecibidoAManoSchema).min(1).max(60) })

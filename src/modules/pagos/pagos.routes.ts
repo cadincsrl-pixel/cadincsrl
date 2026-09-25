@@ -306,6 +306,9 @@ pagos.delete('/ordenes/comprobante-pendiente', lectura, registrarPagos, tabPago,
 // (tipo 'cheque') y se lee acá. NO crea nada; 422 CHEQUE_ILEGIBLE si la IA no
 // puede. Mismas guardias que subir el comprobante: quien registra pagos, desde
 // pagos o desde «Ya está pagada» en facturas.
+pagos.get('/cheques/cartera', lectura, registrarPagos, tabPago, handler(async () =>
+  chequesService.cartera()))
+
 pagos.post('/cheques/leer', lectura, registrarPagos, tabPago, zValidator('json', LeerChequeSchema), handler(async (c) =>
   chequesService.leer(c.req.valid('json'))))
 
