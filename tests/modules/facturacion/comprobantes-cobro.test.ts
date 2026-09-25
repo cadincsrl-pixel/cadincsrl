@@ -92,6 +92,9 @@ describe('el saneo de la lectura (documentoDeLectura)', () => {
       medios: [{ forma: 'deposito', importe: 1000, numero: null, banco: null, fecha_cobro: null, librador: null, librador_cuit: null, cuenta_destino: 'Banco Nación' }] }), CLIENTES, CUENTAS)
     expect(sin.medios[0]).toMatchObject({ forma: 'transferencia', cuenta_bancaria_id: null })
     expect(sin.medios[0]!.avisos.map((a) => a.codigo)).toContain('CUENTA_NO_RECONOCIDA')
+    const noDice = documentoDeLectura(lectura({ tipo_documento: 'orden_pago',
+      medios: [{ forma: 'transferencia', importe: 1000, numero: null, banco: 'BANCO MACRO', fecha_cobro: null, librador: null, librador_cuit: null, cuenta_destino: null }] }), CLIENTES, CUENTAS)
+    expect(noDice.medios[0]!.avisos).toEqual([expect.objectContaining({ codigo: 'CUENTA_NO_INFORMADA', severidad: 'info' })])
   })
 
   it('orden de pago: medios, retenciones con su tipo y las facturas que paga; avisa si el total no cierra', () => {

@@ -192,8 +192,11 @@ export function documentoDeLectura(
     const cuentaTexto = forma === 'transferencia' ? txt(m.cuenta_destino, 120) : null
     const cuenta = forma === 'transferencia' ? cuentaDeTransferencia(cuentaTexto, cuentas) : null
     if (forma === 'transferencia' && !cuenta) {
-      av.push({ severidad: 'advertencia', codigo: 'CUENTA_NO_RECONOCIDA',
-        mensaje: `No se reconoció la cuenta de CADINC donde entró${cuentaTexto ? ` («${cuentaTexto}»)` : ''}: elegila en el cobro.` })
+      av.push(cuentaTexto
+        ? { severidad: 'advertencia', codigo: 'CUENTA_NO_RECONOCIDA',
+            mensaje: `No se reconoció la cuenta de CADINC donde entró («${cuentaTexto}»): elegila en el cobro.` }
+        : { severidad: 'info', codigo: 'CUENTA_NO_INFORMADA',
+            mensaje: 'El comprobante no dice a qué cuenta de CADINC entró: el cobro arranca con la cuenta por defecto; revisala.' })
     }
     return [{
       forma, importe: imp, numero, banco: txt(m.banco, 80), fecha_cobro: fecha,
