@@ -115,7 +115,8 @@ export const facturasService = {
     if (tipos.length) s = s.in('cbte_tipo', tipos)
     if (q.cliente_id) s = s.eq('cliente_id', q.cliente_id)
     if (q.obra_cod) s = s.eq('obra_cod', q.obra_cod.trim())
-    if (q.producto) s = s.eq('producto', q.producto)
+    if (q.producto_id) s = s.eq('producto_id', q.producto_id)
+    else if (q.producto) s = s.eq('producto', q.producto)
     if (q.desde) s = s.gte('fecha_cbte', q.desde)
     if (q.hasta) s = s.lte('fecha_cbte', q.hasta)
     if (q.finnegans === 'pendiente') s = s.eq('pendiente_finnegans', true)
@@ -199,7 +200,12 @@ export const facturasService = {
       ...(id != null ? { id } : {}),
       ambiente, pto_vta: ptoVta, cbte_tipo: tipo,
       cliente_id: f.cliente_id,
-      producto: f.producto,
+      // Catálogo (20260929b): el id manda; el nombre queda para la RPC vieja
+      // y como respaldo. Sin ninguno, la RPC usa AVANCE DE OBRA.
+      producto: f.producto ?? null,
+      producto_id: f.producto_id ?? null,
+      fch_serv_desde: f.fch_serv_desde || null,
+      fch_serv_hasta: f.fch_serv_hasta || null,
       obra_cod: f.obra_cod?.trim() || null,
       fecha_cbte: f.fecha_cbte || null,
       provincia_origen: f.provincia_origen ?? null,

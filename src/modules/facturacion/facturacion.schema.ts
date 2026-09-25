@@ -126,7 +126,15 @@ export const FacturaCabeceraSchema = z.object({
   // asociada en una NC). Si viene, tiene que ser de esa letra.
   cbte_tipo: z.coerce.number().int().optional().nullable(),
   cliente_id: z.coerce.number().int().positive(),
-  producto: z.enum(['AVANCE DE OBRA', 'TRANSPORTE']).optional().default('AVANCE DE OBRA'),
+  // Catálogo de productos (20260929b). `producto_id` manda; si no viene, la RPC
+  // busca por el nombre (frontend viejo) y, sin ninguno, usa AVANCE DE OBRA.
+  // Sin default acá: la RPC tiene el suyo.
+  producto: z.string().trim().min(1).max(100).optional(),
+  producto_id: z.coerce.number().int().positive().optional().nullable(),
+  // Período de servicio (FchServDesde/Hasta). Opcional salvo que el producto
+  // lo pida (PERIODO_REQUERIDO); con concepto 1 la RPC lo anula.
+  fch_serv_desde: fechaIso.optional().nullable(),
+  fch_serv_hasta: fechaIso.optional().nullable(),
   // La obra ES el centro de costo (23/09): obligatoria en AVANCE DE OBRA (lo
   // valida la RPC: OBRA_REQUERIDA). `centro_costo` lo deriva la base; si un
   // cliente viejo lo manda, zod lo descarta.
@@ -162,7 +170,8 @@ export const ListFacturasQuerySchema = z.object({
   cbte_tipo: z.string().regex(/^[\d,]*$/).optional(),
   cliente_id: z.coerce.number().int().positive().optional(),
   obra_cod: z.string().max(100).optional(),
-  producto: z.enum(['AVANCE DE OBRA', 'TRANSPORTE']).optional(),
+  producto: z.string().max(100).optional(),
+  producto_id: z.coerce.number().int().positive().optional(),
   desde: fechaIso.optional(),
   hasta: fechaIso.optional(),
   finnegans: z.enum(['pendiente', 'registrada']).optional(),
@@ -179,6 +188,32 @@ export const ResumenQuerySchema = z.object({
   ambiente: z.enum(['homo', 'prod', 'todos']).optional(),
 })
 export type ResumenQuery = z.infer<typeof ResumenQuerySchema>
+
+// ── Productos de venta (20260929b) ─────────────────────────────────────────
+// Solo forma: duplicados, último activo y concepto 1 sin período los valida la RPC.
+const conceptoArca = z.coerce.number().int().refine((n) => n === 1 || n === 2 || n === 3, 'concepto ARCA: 1, 2 o 3')
+export const ProductoCreateSchema = z.object({
+  nombre: z.string().trim().min(2, 'nombre muy corto').max(100),
+  descripcion: z.string().trim().max(500).optional(),
+  concepto_arca: conceptoArca,
+  pide_obra: z.boolean().optional().default(false),
+  pide_periodo: z.boolean().optional().default(false),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+}).strict()
+export type ProductoCreateDto = z.infer<typeof ProductoCreateSchema>
+
+export const ProductoUpdateSchema = z.object({
+  nombre: z.string().trim().min(2, 'nombre muy corto').max(100).optional(),
+  descripcion: z.string().trim().max(500).optional(),
+  concepto_arca: conceptoArca.optional(),
+  pide_obra: z.boolean().optional(),
+  pide_periodo: z.boolean().optional(),
+  activo: z.boolean().optional(),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+}).strict().refine((d) => Object.keys(d).length > 0, 'nada para cambiar')
+export type ProductoUpdateDto = z.infer<typeof ProductoUpdateSchema>
+
+export const ListProductosQuerySchema = z.object({ incluir_inactivos: z.string().optional() })
 
 export const EmitirSchema = z.object({ forzar: z.boolean().optional().default(false) })
 export const MotivoSchema = z.object({ motivo: z.string().max(1000).optional().nullable() })

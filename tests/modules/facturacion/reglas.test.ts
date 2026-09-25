@@ -128,6 +128,11 @@ describe('armarComprobante', () => {
     expect(c.cbtesAsoc).toBeUndefined()
   })
 
+  it('con período de servicio (20260929b): FchServDesde/Hasta del período, VtoPago = CbteFch', () => {
+    const c = armarComprobante(fjBase({ concepto: 2, fch_serv_desde: '2026-09-01', fch_serv_hasta: '2026-09-30' }), 3)
+    expect(c).toMatchObject({ concepto: 2, fchServDesde: '20260901', fchServHasta: '20260930', fchVtoPago: '20260924' })
+  })
+
   it('concepto 1 no manda fechas de servicio', () => {
     const c = armarComprobante(fjBase({ concepto: 1 }), 1)
     expect(c.fchServDesde).toBeUndefined()

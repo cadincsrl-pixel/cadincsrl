@@ -33,6 +33,8 @@ describe('parseRoute — módulo facturacion', () => {
     ['POST',   '/api/facturacion/cuentas',                          { modulo: 'facturacion', entidad: 'cuenta bancaria (FCE)', accion: 'crear' }],
     ['PATCH',  '/api/facturacion/cuentas/2',                        { modulo: 'facturacion', entidad: 'cuenta bancaria (FCE)', accion: 'actualizar', entidadId: '2' }],
     ['POST',   '/api/facturacion/cuentas/2/baja',                   { modulo: 'facturacion', entidad: 'cuenta bancaria (FCE)', accion: 'dar de baja', entidadId: '2' }],
+    ['POST',   '/api/facturacion/productos',                        { modulo: 'facturacion', entidad: 'producto de venta', accion: 'crear' }],
+    ['PATCH',  '/api/facturacion/productos/3',                      { modulo: 'facturacion', entidad: 'producto de venta', accion: 'actualizar', entidadId: '3' }],
   ])('%s %s', (method, path, esperado) => {
     expect(parseRoute(path, method)).toEqual(esperado)
   })

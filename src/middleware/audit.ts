@@ -170,6 +170,8 @@ export const ENTIDADES: Record<string, string> = {
   facturacion: 'factura de venta', 'facturacion/facturas': 'factura de venta',
   'facturacion/clientes': 'cliente', 'facturacion/clientes/obras': 'obras del cliente',
   'facturacion/cuentas': 'cuenta bancaria (FCE)',
+  // Tanda 6 (20260929b): Ventas › Configuración › Productos.
+  'facturacion/productos': 'producto de venta',
   // Cobranzas: POST /facturacion/cobros/5/imputar → «imputar cobro 5»;
   // una compensación con NC crea imputaciones.
   'facturacion/cobros': 'cobro', 'facturacion/cobros/retenciones': 'certificado de retención',

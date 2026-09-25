@@ -82,7 +82,11 @@ export const TOPE_CF_IDENTIFICACION = 10_000_000
  */
 export const CUIT_EMISOR = CUIT_EMPRESA
 
-export type Producto = 'AVANCE DE OBRA' | 'TRANSPORTE'
+/**
+ * Nombre de un producto de venta. Desde 20260929b es un catálogo editable
+ * (`ventas_productos`): la base guarda `producto_id` y el nombre como foto.
+ */
+export type Producto = string
 
 // ── Redondeos y totales ─────────────────────────────────────────────────────
 
@@ -190,8 +194,13 @@ export function deYyyymmdd(s: string | null | undefined): string | null {
 
 // ── Concepto y letra ────────────────────────────────────────────────────────
 
-/** AVANCE DE OBRA → 3 (productos y servicios); TRANSPORTE → 2 (servicios). */
-export function conceptoDe(producto: Producto | string): 2 | 3 {
+/**
+ * AVANCE DE OBRA → 3 (productos y servicios); TRANSPORTE → 2 (servicios).
+ * @deprecated El concepto sale de `ventas_productos.concepto_arca` (20260929b)
+ * y lo fija la RPC al guardar; esto queda para los tests y como documentación
+ * de la semilla.
+ */
+export function conceptoDe(producto: Producto): 2 | 3 {
   return producto === 'TRANSPORTE' ? 2 : 3
 }
 
@@ -285,6 +294,11 @@ export interface FacturaVista {
   rec_doc_nro: string
   rec_condicion_iva_id: number
   producto: string
+  /** Catálogo de productos (20260929b). Null solo en filas previas al backfill. */
+  producto_id?: number | null
+  /** Período de servicio (concepto 2/3). Null = el día del comprobante. */
+  fch_serv_desde?: string | null
+  fch_serv_hasta?: string | null
   centro_costo: string | null
   moneda: string
   cotizacion: number
@@ -308,8 +322,8 @@ export interface FacturaVista {
 
 /**
  * El FECAESolicitar de UN comprobante, desde lo que la base guardó. Con
- * concepto 2/3: FchServDesde = FchServHasta = FchVtoPago = CbteFch (el dueño
- * nunca usa período). NC: CbtesAsoc con el CUIT de CADINC y la fecha de la
+ * concepto 2/3: FchServDesde/Hasta = el período de servicio de la factura si
+ * lo tiene (20260929b), si no CbteFch; FchVtoPago = CbteFch. NC: CbtesAsoc con el CUIT de CADINC y la fecha de la
  * factura. CondicionIVAReceptorId va siempre.
  */
 export function armarComprobante(fj: FJ, numero: number): ComprobanteSolicitud {
@@ -336,8 +350,8 @@ export function armarComprobante(fj: FJ, numero: number): ComprobanteSolicitud {
     iva: fj.alicuotas.map((a) => ({ id: Number(a.alicuota_id), baseImp: Number(a.base_imp), importe: Number(a.importe) })),
   }
   if (concepto !== 1) {
-    c.fchServDesde = cbteFch
-    c.fchServHasta = cbteFch
+    c.fchServDesde = f.fch_serv_desde ? aYyyymmdd(f.fch_serv_desde) : cbteFch
+    c.fchServHasta = f.fch_serv_hasta ? aYyyymmdd(f.fch_serv_hasta) : cbteFch
     c.fchVtoPago = cbteFch
   }
   const opcionales = opcionalesFce(f)

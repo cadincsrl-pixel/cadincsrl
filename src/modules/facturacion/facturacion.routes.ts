@@ -38,6 +38,7 @@ import { deudoresService } from './deudores.service.js'
 import { lidVentasService } from './lid-ventas.service.js'
 import { aAnsi, nombreArchivo } from './lid-ventas.js'
 import { lidComprasService } from './lid-compras.service.js'
+import { productosService } from './productos.service.js'
 import { nombreArchivoCompras } from './lid-compras.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
@@ -49,6 +50,7 @@ import {
   ListCobrosQuerySchema, ListImputacionesQuerySchema, UploadRetencionSchema, AdjuntoRetencionSchema, AdjuntoCobroSchema,
   PendientesQuerySchema, DeudoresQuerySchema, EstadoCuentaQuerySchema, VencimientoSchema,
   CreateExternoSchema, UpdateExternoSchema, LiquidoExternoSchema, ListExternosQuerySchema, ImportarExternosSchema, MarcarExternosSchema,
+  ProductoCreateSchema, ProductoUpdateSchema, ListProductosQuerySchema,
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
@@ -84,6 +86,10 @@ const tabCompensar    = requireTab(MOD, ['cobranzas', 'facturas'])
 const tabImputaciones = requireTab(MOD, ['cobranzas', 'deudores', 'facturas', 'saldos_iniciales'])
 const tabVencimiento  = requireTab(MOD, ['facturas', 'cobranzas', 'deudores'])
 const registrarCobros = requireFlag(MOD, 'registrar_cobros')
+// Configuración (tanda 6, 20260929b…): leer es `lectura` (el formulario de la
+// factura lee el catálogo); escribir pide la tab y el flag `configurar`.
+const tabConfiguracion = requireTab(MOD, 'configuracion')
+const configurar       = requireFlag(MOD, 'configurar')
 const anularCobros    = requireFlag(MOD, 'anular_cobros')
 
 /** Errores tipados → `{ error, campo?, detail?, ...extra }`. Lo demás sube al onError global. */
@@ -145,6 +151,31 @@ fact.get('/arca/estado', lectura, tabCatalogos, handler(async () => emisionServi
 fact.get('/condiciones-iva', lectura, tabCatalogos, handler(async () => CONDICIONES_IVA))
 
 fact.get('/obras', lectura, tabCatalogos, handler(async (c) => clientesService.obras(db(c))))
+
+// ═══════════════════════════════════ Productos de venta (20260929b) ═════════
+// GET sin tab: lo usan el formulario de la factura y los filtros. POST/PATCH:
+// tab configuracion + flag configurar (la RPC vuelve a chequear el flag). Sin
+// DELETE: se desactivan (`activo: false`). Validación → 400 PRODUCTO_INVALIDO.
+
+function validaProducto<T extends ZodType>(schema: T) {
+  return zValidator('json', schema, (r, c) => {
+    if (!r.success) {
+      const issue = r.error.issues[0]
+      const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
+      const campo = claves[0] ?? (issue?.path?.join('.') || null)
+      return c.json({ error: 'PRODUCTO_INVALIDO', campo, detail: { campo, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+    }
+  })
+}
+
+fact.get('/productos', lectura, valida('query', ListProductosQuerySchema), handler(async (c) =>
+  productosService.listar(esBoolQ(c.req.valid('query').incluir_inactivos), db(c))))
+
+fact.post('/productos', lectura, tabConfiguracion, configurar, validaProducto(ProductoCreateSchema), handler(async (c) =>
+  c.json(await productosService.crear(c.req.valid('json'), uid(c), db(c)), 201)))
+
+fact.patch('/productos/:id', lectura, tabConfiguracion, configurar, validaProducto(ProductoUpdateSchema), handler(async (c) =>
+  productosService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
 
 // ═══════════════════════════════════ Clientes ═══════════════════════════════
 
