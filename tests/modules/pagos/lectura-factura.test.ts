@@ -113,6 +113,13 @@ describe('fusionar', () => {
     expect(r.fuente_por_campo.total).toBe('qr')
     expect(r.avisos.some((a) => a.campo === 'total' && a.severidad === 'error')).toBe(true)
   })
+  it('neto vs bases: unos centavos de redondeo no avisan, una diferencia real sí', () => {
+    const dos = [{ alicuota_pct: 21, base_imponible: 147518.84, importe: 30978.96 }, { alicuota_pct: 10.5, base_imponible: 6196.50, importe: 650.63 }]
+    const casi = fusionar(null, { ...iaBase, tributos: [], neto_gravado_total: 153715.32, iva: dos, total: 185344.91 }, { hoy: '2026-09-25' })
+    expect(casi.avisos.some((a) => a.codigo === 'NETO_DISTINTO_DE_BASES')).toBe(false)
+    const lejos = fusionar(null, { ...iaBase, tributos: [], neto_gravado_total: 153000, iva: dos, total: 185344.91 }, { hoy: '2026-09-25' })
+    expect(lejos.avisos.some((a) => a.codigo === 'NETO_DISTINTO_DE_BASES')).toBe(true)
+  })
   it('no cierra → error en total', () => {
     const r = fusionar(null, { ...iaBase, tributos: [] }, { hoy: '2026-09-24' })
     expect(r.estado).toBe('ia')

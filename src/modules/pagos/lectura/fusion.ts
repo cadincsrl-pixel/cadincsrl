@@ -276,7 +276,12 @@ export function fusionar(qr: QrArca | null, ia: LecturaIA | null, opts: { hoy: s
 
   // Neto gravado: si hay alícuotas, es la suma de sus bases (así lo guarda la base).
   const netoGravado = iva.length ? sumaCentavos(iva.map((f) => f.base_imp)) : neto
-  if (iva.length && neto != null && !cuadra(neto, netoGravado ?? 0)) {
+  // Tolerancia de redondeo (25/09, pedido del dueño): cada base por alícuota
+  // puede venir redondeada o reconstruida desde su IVA, y en papeles con dos
+  // alícuotas sumaban $0,02 de más contra el neto impreso (Escudero 4-8615).
+  // Hasta $0,05 por alícuota no es un error de lectura: no se avisa.
+  const tolBases = 0.05 * Math.max(1, iva.length)
+  if (iva.length && neto != null && Math.abs((netoGravado ?? 0) - neto) > tolBases + 1e-9) {
     av('iva', 'advertencia', 'NETO_DISTINTO_DE_BASES',
       `El neto gravado leído (${fmtM(neto)}) no coincide con la suma de las bases por alícuota (${fmtM(netoGravado ?? 0)}).`)
   }
