@@ -568,6 +568,10 @@ export const UploadUrlLecturaSchema = z.object({
   mime_type:      z.enum(MIME_PERMITIDOS),
   size_bytes:     z.number().int().positive().max(MAX_ADJUNTO_BYTES),
 })
+/** «Completar la ya cargada» (20260925): el archivo leído va a una factura que ya existe. */
+export const CompletarConLecturaSchema = z.object({ lectura_id: Id })
+export type CompletarConLecturaDto = z.infer<typeof CompletarConLecturaSchema>
+
 export const LeerFacturaSchema = z.object({
   storage_path:   z.string().min(1).max(500),
   nombre_archivo: z.string().trim().min(1).max(255),

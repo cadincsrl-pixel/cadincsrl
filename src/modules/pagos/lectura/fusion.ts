@@ -30,6 +30,8 @@ export interface AvisoLectura {
   codigo: string
   /** Cuando QR y papel no coinciden: lo que dice el papel, para usarlo con un clic. */
   alternativa?: string | number | null
+  /** FACTURA_YA_CARGADA / ARCHIVO_YA_CARGADO: cuál es, para «Completar la ya cargada». */
+  factura_id?: number
   /**
    * LETRA_NO_COINCIDE_CONDICION (20260925o): el mismo aviso que devuelve el
    * alta de la factura, con `code` (como los `avisos` del alta), la condición
@@ -381,12 +383,12 @@ export interface ContextoLectura {
 export function controlesDeContexto(p: Propuesta, ctx: ContextoLectura): AvisoLectura[] {
   const out: AvisoLectura[] = []
   if (ctx.archivoRepetido) {
-    out.push({ campo: 'archivo', severidad: 'error', codigo: 'ARCHIVO_YA_CARGADO',
+    out.push({ campo: 'archivo', severidad: 'error', codigo: 'ARCHIVO_YA_CARGADO', factura_id: ctx.archivoRepetido.factura_id,
       mensaje: `Este mismo archivo ya está cargado en la factura #${ctx.archivoRepetido.factura_id}.` })
   }
   if (ctx.duplicadas.length) {
     const d = ctx.duplicadas[0]!
-    out.push({ campo: 'numero_comprobante', severidad: 'error', codigo: 'FACTURA_YA_CARGADA',
+    out.push({ campo: 'numero_comprobante', severidad: 'error', codigo: 'FACTURA_YA_CARGADA', factura_id: d.id,
       mensaje: `${p.clase === 'nota_credito' ? 'Esta nota de crédito' : 'Esta factura'} ya está cargada (#${d.id}, ${d.estado}).` })
   }
   if (p.emisor_cuit && !ctx.proveedor) {

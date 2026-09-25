@@ -78,7 +78,7 @@ export const VERBOS: Record<string, string> = {
   'volver-a-borrador': 'volver a borrador', alta: 'dar de alta',
   'actualizar-desde-arca': 'actualizar desde el padrón de ARCA',
   // Cobranzas de Ventas (2026-09-24). `anular` y `upload-url` ya están arriba.
-  imputar: 'imputar', 'pasar-a-deuda': 'pasar a deuda (no se había pagado)', marcar: 'marcar saldo', importar: 'importar', vencimiento: 'cambiar vencimiento',
+  imputar: 'imputar', 'pasar-a-deuda': 'pasar a deuda (no se había pagado)', 'completar-con-lectura': 'adjuntar el archivo leído', marcar: 'marcar saldo', importar: 'importar', vencimiento: 'cambiar vencimiento',
   adjunto: 'adjuntar certificado', 'descartar-pendiente': 'descartar adjunto pendiente',
   // Compras: factura «archivo primero» (20260924u).
   'upload-lectura': 'subir adjunto', leer: 'leer comprobante', 'lectura-pendiente': 'descartar lectura',

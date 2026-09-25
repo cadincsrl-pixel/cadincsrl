@@ -965,6 +965,39 @@ export const pagosService = {
     return enmascararFila(fila, verPii)
   },
 
+  /**
+   * POST /facturas/:id/completar-con-lectura (20260925): la lectura dijo
+   * FACTURA_YA_CARGADA (típico: vino antes del importador de ARCA, sin archivo).
+   * En vez de cargarla de nuevo, el archivo leído pasa a ser el adjunto de ESA
+   * factura, con su control contra el papel. La lectura tiene que ser de la
+   * misma factura: mismo CUIT, clase, número y total (±0,01).
+   */
+  async completarConLectura(id: number, lecturaId: number, userId: string, verPii: boolean) {
+    const l = await lecturaService.tomar(lecturaId)
+    const { data: f, error } = await supabase.from('pagos_facturas')
+      .select('id, clase, numero_norm, total, estado, proveedor_id, pagos_proveedores(cuit)').eq('id', id).maybeSingle()
+    if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
+    if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE', { factura_id: id })
+    const fila = f as unknown as { clase: string; numero_norm: string | null; total: number; estado: string; pagos_proveedores: { cuit: string | null } | null }
+    if (fila.estado === 'anulada') throw new PagosHttpError(409, 'FACTURA_CERRADA', { factura_id: id })
+    const p = l.propuesta
+    const cuit = fila.pagos_proveedores?.cuit ?? null
+    const numLeido = p.numero_comprobante ? normNumeroFactura(`${p.punto_venta ?? ''}-${p.numero_comprobante}`) : null
+    const difiere: string[] = []
+    if (p.emisor_cuit && cuit && p.emisor_cuit !== cuit) difiere.push('proveedor')
+    if (p.clase && p.clase !== fila.clase) difiere.push('clase')
+    if (numLeido && fila.numero_norm && numLeido !== fila.numero_norm) difiere.push('numero')
+    if (p.total != null && Math.abs(Number(p.total) - Number(fila.total)) > 0.01) difiere.push('total')
+    if (difiere.length) throw new PagosHttpError(409, 'LECTURA_NO_COINCIDE', { factura_id: id, campos: difiere })
+    const { data: dup } = await supabase.from('pagos_facturas_adjuntos').select('factura_id')
+      .eq('hash_sha256', l.hash_sha256).eq('tipo', 'factura').is('deleted_at', null).limit(1).maybeSingle()
+    if (dup) throw new PagosHttpError(409, 'ADJ_DUPLICADO', { entidad: 'factura', factura_id: (dup as { factura_id: number }).factura_id })
+    if (!await adjuntarLectura(id, l, userId)) throw new PagosHttpError(500, 'ADJUNTO_NO_GUARDADO', { factura_id: id })
+    console.info(`[pagos] factura ${id}: completada con la lectura ${lecturaId} (user ${userId})`)
+    const { data: v } = await supabase.from('v_pagos_facturas').select('*').eq('id', id).single()
+    return enmascararFila(v as Record<string, unknown>, verPii)
+  },
+
   // ═══════════════════════════════════ Órdenes ════════════════════════════════
 
   // ── Órdenes de pago ──────────────────────────────────────────────────

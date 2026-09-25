@@ -46,7 +46,7 @@ import {
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
-  UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema, LeerChequeSchema,
+  UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema, LeerChequeSchema, CompletarConLecturaSchema,
   CompletarDesgloseSchema, LeerAdjuntoSchema,
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
@@ -217,6 +217,11 @@ pagos.post('/facturas/:id/aplicar-nc', lectura, tabPago, zValidator('json', Apli
   }
   return pagosService.aplicarNc(idParam(c), c.req.valid('json'), userId, verPiiDe(perfil))
 }))
+
+// «Completar la ya cargada» (20260925): el archivo leído va a la factura que
+// ya existía (FACTURA_YA_CARGADA), en vez de cargarla de nuevo.
+pagos.post('/facturas/:id/completar-con-lectura', creacion, tabFactura, zValidator('json', CompletarConLecturaSchema), handler(async (c) =>
+  pagosService.completarConLectura(idParam(c), c.req.valid('json').lectura_id, c.get('user').id, await verPii(c))))
 
 // «Es deuda: no se pagó» (20260929n): la importó el ARCA de meses ya pagados
 // pero se debe. Saca la marca pago_a_reconstruir y vuelve al circuito normal.
