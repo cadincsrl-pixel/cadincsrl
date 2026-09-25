@@ -40,6 +40,12 @@ describe('parseRoute — módulo facturacion', () => {
     ['POST',   '/api/facturacion/puntos-venta/2/verificar',         { modulo: 'facturacion', entidad: 'punto de venta', accion: 'verificar en ARCA', entidadId: '2' }],
     ['POST',   '/api/facturacion/parametros',                       { modulo: 'facturacion', entidad: 'parámetro ARCA', accion: 'crear' }],
     ['DELETE', '/api/facturacion/parametros/7',                     { modulo: 'facturacion', entidad: 'parámetro ARCA', accion: 'eliminar', entidadId: '7' }],
+    ['POST',   '/api/facturacion/retencion-tipos',                  { modulo: 'facturacion', entidad: 'tipo de retención', accion: 'crear' }],
+    ['PATCH',  '/api/facturacion/retencion-tipos/sellos_tuc',       { modulo: 'facturacion', entidad: 'tipo de retención', accion: 'actualizar', entidadId: 'sellos_tuc' }],
+    ['PATCH',  '/api/facturacion/config',                           { modulo: 'facturacion', entidad: 'configuración de ventas', accion: 'actualizar' }],
+    ['POST',   '/api/catalogos/jurisdicciones',                     { modulo: 'catalogos', entidad: 'jurisdicción', accion: 'crear' }],
+    ['PATCH',  '/api/catalogos/jurisdicciones/25',                  { modulo: 'catalogos', entidad: 'jurisdicción', accion: 'actualizar', entidadId: '25' }],
+    ['PATCH',  '/api/pagos/config',                                 { modulo: 'pagos', entidad: 'configuración de compras', accion: 'actualizar' }],
   ])('%s %s', (method, path, esperado) => {
     expect(parseRoute(path, method)).toEqual(esperado)
   })

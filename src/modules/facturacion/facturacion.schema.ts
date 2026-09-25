@@ -263,6 +263,43 @@ export type ParametroCreateDto = z.infer<typeof ParametroCreateSchema>
 export const ListParametrosQuerySchema = z.object({ clave: claveParametro.optional() })
 export const ParametrosVigentesQuerySchema = z.object({ fecha: fechaIso.optional() })
 
+// ── Tipos de retención sufrida (20260929g) ─────────────────────────────────
+// La clave no se edita (la guardan las retenciones). El impuesto `iva` es
+// reservado, y el de un tipo del sistema no cambia: lo valida la RPC.
+export const CLAVE_RETENCION_RE = /^[a-z][a-z0-9_]{1,29}$/
+export const IMPUESTOS_RETENCION = ['iva', 'ganancias', 'iibb', 'suss', 'municipal', 'otro'] as const
+const nombreRet = z.string().trim().min(2, 'nombre muy corto').max(80)
+const cortoRet = z.string().trim().min(1, 'falta el nombre corto').max(20)
+export const RetencionTipoCreateSchema = z.object({
+  clave: z.string().trim().regex(CLAVE_RETENCION_RE, 'minúsculas, números y _, de 2 a 30').optional(),
+  nombre: nombreRet,
+  corto: cortoRet,
+  impuesto: z.enum(IMPUESTOS_RETENCION),
+  pide_jurisdiccion: z.boolean().optional().default(false),
+  jurisdiccion_default_id: z.coerce.number().int().positive().optional().nullable(),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+}).strict()
+export type RetencionTipoCreateDto = z.infer<typeof RetencionTipoCreateSchema>
+
+export const RetencionTipoUpdateSchema = z.object({
+  nombre: nombreRet.optional(),
+  corto: cortoRet.optional(),
+  impuesto: z.enum(IMPUESTOS_RETENCION).optional(),
+  pide_jurisdiccion: z.boolean().optional(),
+  jurisdiccion_default_id: z.coerce.number().int().positive().optional().nullable(),
+  activo: z.boolean().optional(),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+}).strict().refine((d) => Object.keys(d).length > 0, 'nada para cambiar')
+export type RetencionTipoUpdateDto = z.infer<typeof RetencionTipoUpdateSchema>
+
+export const ListRetencionTiposQuerySchema = z.object({ incluir_inactivos: z.string().optional() })
+
+// ── Configuración de Ventas (ventas_config, 20260929g) ─────────────────────
+export const VentasConfigPatchSchema = z.object({
+  retencion_tipo_default: z.string().trim().regex(CLAVE_RETENCION_RE).optional(),
+}).strict().refine((d) => Object.keys(d).length > 0, 'nada para cambiar')
+export type VentasConfigPatch = z.infer<typeof VentasConfigPatchSchema>
+
 export const EmitirSchema = z.object({ forzar: z.boolean().optional().default(false) })
 export const MotivoSchema = z.object({ motivo: z.string().max(1000).optional().nullable() })
 export const RegistrarFinnegansSchema = z.object({
@@ -294,11 +331,18 @@ export const MedioCobroSchema = z.object({
   obs: textoOpc(1000),
 })
 
+/**
+ * Los tipos de la semilla (20260929g). Solo documentación y tests: desde el
+ * catálogo `ventas_retencion_tipos` el tipo es cualquier clave activa, y la
+ * RPC lo valida (RETENCION_INVALIDA { campo: 'tipo' }).
+ */
 export const TIPOS_RETENCION = ['iibb', 'tem', 'suss', 'ganancias', 'iva', 'otra'] as const
 export const RetencionCobroSchema = z.object({
-  tipo: z.enum(TIPOS_RETENCION),
+  tipo: z.string().trim().regex(CLAVE_RETENCION_RE, 'tipo de retención inválido'),
   importe,
   jurisdiccion: textoOpc(100),
+  /** 20260929f: jurisdicción del catálogo (el texto lo completa la base). */
+  jurisdiccion_id: idPos.optional().nullable(),
   certificado_numero: textoOpc(100),
   fecha: fechaIso.optional().nullable(),
   obs: textoOpc(1000),

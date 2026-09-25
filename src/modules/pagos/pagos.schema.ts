@@ -189,6 +189,9 @@ export type IvaDetalleDto = z.infer<typeof IvaDetalleSchema>
 export const TributoSchema = z.object({
   tipo:         z.enum(TIPOS_TRIBUTO),
   jurisdiccion: z.string().trim().max(80).nullable().optional(),
+  // 20260929f: el catálogo. Con id, la base pisa el texto con el nombre;
+  // sin id, lo resuelve desde el texto (si no resuelve, queda el texto).
+  jurisdiccion_id: z.number().int().positive().nullable().optional(),
   descripcion:  z.string().trim().max(200).optional().default(''),
   alicuota:     z.number().min(0).max(100).nullable().optional(),
   base_imp:     MontoNoNeg.nullable().optional(),

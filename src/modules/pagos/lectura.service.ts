@@ -32,7 +32,8 @@ import { hoyAR, normNumeroFactura } from './pagos.util.js'
 import { parsearQrArca, type QrArca } from './lectura/arca.js'
 import { leerFacturaConIA, type ConceptoOfrecido, type ResultadoIA } from './lectura/ia.js'
 import { avisoLetraCondicion } from './condicion-iva.js'
-import { fusionar, controlesDeContexto, type AvisoLectura, type Propuesta } from './lectura/fusion.js'
+import { fusionar, controlesDeContexto, type AvisoLectura, type Propuesta, type TributoPropuesto } from './lectura/fusion.js'
+import { jurisdiccionesService } from '../catalogos/catalogos.service.js'
 
 const MIME_SET = new Set<string>(MIME_PERMITIDOS)
 
@@ -139,6 +140,21 @@ export function conceptoSugerido(ia: ResultadoIA, conceptos: readonly ConceptoOf
 }
 
 /**
+ * La jurisdicción que leyó la IA («TUCUMAN», «Pcia. de Tucumán»…) → id del
+ * catálogo (20260929f), con el nombre canónico. Si no resuelve sin
+ * ambigüedad, queda el texto con id null: al guardar, la base intenta de
+ * nuevo y, si tampoco, el asiento cae al mapeo por tipo. Nunca falla.
+ */
+export async function resolverJurisdiccionesTributos(tributos: TributoPropuesto[] | null | undefined): Promise<void> {
+  if (!tributos?.length || !tributos.some((t) => t.jurisdiccion)) return
+  for (const t of tributos) {
+    const j = await jurisdiccionesService.resolver(t.jurisdiccion)
+    t.jurisdiccion_id = j?.id ?? null
+    if (j) t.jurisdiccion = j.nombre
+  }
+}
+
+/**
  * Lo común de las dos lecturas (archivo nuevo y adjunto ya guardado): QR que
  * mandó el navegador + IA + fusión. Nunca falla por la IA: sin key o con la
  * API caída devuelve lo del QR (o nada) y avisa.
@@ -152,6 +168,7 @@ export async function analizarComprobante(buffer: Buffer, mime: string, qrTexto:
   const concepto = conceptoSugerido(ia, conceptos)
   fusion.propuesta.concepto_id_sugerido = concepto?.id ?? null
   fusion.propuesta.concepto_sugerido = concepto?.nombre ?? null
+  await resolverJurisdiccionesTributos(fusion.propuesta.tributos)
   if (qrIlegible) {
     fusion.avisos.push({ campo: 'qr', severidad: 'advertencia', codigo: 'QR_NO_ES_DE_ARCA',
       mensaje: 'El QR del comprobante no es un QR de factura de ARCA válido: se usó sólo la lectura del papel.' })

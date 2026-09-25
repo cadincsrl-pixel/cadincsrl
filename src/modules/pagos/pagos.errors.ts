@@ -106,6 +106,8 @@ const STATUS_POR_CODIGO: Record<string, number> = {
   IMPORTACION_CON_ERRORES: 422,
   // Pagadas en lote con tarjeta / billetera (20260927h)
   FORMA_NO_COINCIDE_CUENTA: 400, FECHA_ANTERIOR_A_FACTURA: 400, FACTURA_SIN_SALDO: 409, FACTURA_YA_APROBADA: 409,
+  // Jurisdicción del tributo y configuración de Compras (20260929f)
+  JURISDICCION_NO_EXISTE: 400, CONFIG_INVALIDA: 400,
   // 500: nunca deberían llegar al front (guards de la base contra escrituras a mano)
   APROBACION_SOLO_RPC: 500, SIN_IMPUTAR_SOLO_IMPORTADOR: 500, IMPUTAR_SOLO_RPC: 500,
 }

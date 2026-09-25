@@ -178,6 +178,8 @@ export const ENTIDADES: Record<string, string> = {
   'facturacion/puntos-venta': 'punto de venta',
   // Tanda 6 (20260929e): Ventas › Configuración › Montos de ARCA.
   'facturacion/parametros': 'parámetro ARCA',
+  // Tanda 6 (20260929g): Ventas › Configuración › Retenciones y valores por defecto.
+  'facturacion/retencion-tipos': 'tipo de retención', 'facturacion/config': 'configuración de ventas',
   // Cobranzas: POST /facturacion/cobros/5/imputar → «imputar cobro 5»;
   // una compensación con NC crea imputaciones.
   'facturacion/cobros': 'cobro', 'facturacion/cobros/retenciones': 'certificado de retención',
@@ -204,6 +206,8 @@ export const ENTIDADES: Record<string, string> = {
   'pagos/importaciones': 'importación ARCA',
   // Tanda 6 (20260929a): PATCH /empresa → «actualizar datos de la empresa».
   empresa: 'datos de la empresa',
+  // Tanda 6 (20260929f): catálogos compartidos y configuración de Compras.
+  'catalogos/jurisdicciones': 'jurisdicción', 'pagos/config': 'configuración de compras',
 }
 
 /** Palabras que aparecen como segmentos de ruta: nunca son un id. */

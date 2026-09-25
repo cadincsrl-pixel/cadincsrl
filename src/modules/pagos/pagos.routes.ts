@@ -38,6 +38,8 @@ import { chequesService } from './cheques.service.js'
 import { importarArcaService } from './importar-arca.service.js'
 import { imputarService } from './imputar.service.js'
 import { marcarPagadasService } from './marcar-pagadas.service.js'
+import { pagosConfigService, PagosConfigPatchSchema } from './config.service.js'
+import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import {
   TAB_FACTURA, TAB_PAGO, TAB_PROV_LECTURA, esBoolQ,
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
@@ -412,5 +414,28 @@ pagos.get('/catalogos/obras', lectura, handler(async () => pagosService.catalogo
 // De qué cuenta propia sale la plata («Sale de la cuenta», 20260926g). La
 // leen el modal de pago y el de factura ya pagada.
 pagos.get('/cuentas-origen', lectura, tabPago, handler(async (c) => pagosService.cuentasOrigen(c.get('accessToken'))))
+
+// ═══════════════════════════════════ Configuración (20260929f) ══════════════
+// GET: lectura, sin tab (el alta de la factura lee la jurisdicción por
+// defecto del tributo). PATCH: tab configuracion + flag configurar (la RPC
+// vuelve a chequear el flag). Validación → 400 CONFIG_INVALIDA { clave }.
+
+const dbPagos = (c: any) => {
+  const t = c.get('accessToken') as string | undefined
+  return t ? createSupabaseClient(t) : supabase
+}
+
+pagos.get('/config', lectura, handler(async (c) => pagosConfigService.obtener(dbPagos(c))))
+
+pagos.patch('/config', lectura, requireTab('pagos', 'configuracion'), requireFlag('pagos', 'configurar'),
+  zValidator('json', PagosConfigPatchSchema, (r, c) => {
+    if (!r.success) {
+      const issue = r.error.issues[0]
+      const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
+      const clave = claves[0] ?? (issue?.path?.map(String).join('.') || null)
+      return c.json({ error: 'CONFIG_INVALIDA', campo: clave, detail: { clave, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+    }
+  }),
+  handler(async (c) => pagosConfigService.guardar(c.req.valid('json'), c.get('user').id, dbPagos(c))))
 
 export default pagos

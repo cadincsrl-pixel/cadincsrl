@@ -549,7 +549,7 @@ export const pagosService = {
       ultimoControl(id),
       // El desglose como lo pide ARCA (20260924u).
       sb.from('pagos_factura_iva').select('alicuota_id, base_imp, importe').eq('factura_id', id).order('alicuota_id'),
-      sb.from('pagos_factura_tributos').select('id, tipo, jurisdiccion, descripcion, alicuota, base_imp, importe').eq('factura_id', id).order('id'),
+      sb.from('pagos_factura_tributos').select('id, tipo, jurisdiccion, jurisdiccion_id, descripcion, alicuota, base_imp, importe').eq('factura_id', id).order('id'),
       aplicacionesDe((f as { clase?: string }).clase === 'nota_credito' ? 'nc' : 'factura', [id], token),
     ])
     if (imp.error) throw new PagosHttpError(500, 'DB_ERROR', imp.error.message)

@@ -46,6 +46,8 @@ export interface IvaPropuesto { alicuota_id: number; base_imp: number; importe: 
 export interface TributoPropuesto {
   tipo: TipoTributo; jurisdiccion: string | null; descripcion: string
   alicuota: number | null; base_imp: number | null; importe: number
+  /** 20260929f: lo completa analizarComprobante con el catálogo (fusionar es pura y no lo toca). */
+  jurisdiccion_id?: number | null
 }
 
 export interface Propuesta {

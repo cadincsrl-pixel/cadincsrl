@@ -74,6 +74,7 @@ import facturacionRoutes from './modules/facturacion/facturacion.routes.js'
 import contabilidadRoutes from './modules/contabilidad/contabilidad.routes.js'
 import facturacionInternalRoutes from './modules/facturacion/facturacion.internal.routes.js'
 import empresaRoutes from './modules/empresa/empresa.routes.js'
+import catalogosRoutes from './modules/catalogos/catalogos.routes.js'
 import { iniciarArca } from './modules/facturacion/emision.service.js'
 
 
@@ -178,6 +179,8 @@ app.route('/api/facturacion', facturacionRoutes)
 app.route('/api/contabilidad', contabilidadRoutes)
 // Datos de la empresa (tanda 6, 20260929a): GET para todos, PATCH admin.configurar.
 app.route('/api/empresa', empresaRoutes)
+// Catálogos compartidos (tanda 6, 20260929f): jurisdicciones de Compras y Ventas.
+app.route('/api/catalogos', catalogosRoutes)
 
 // ── Manejo global de errores ──
 app.onError((err, c) => {

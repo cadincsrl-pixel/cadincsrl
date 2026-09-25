@@ -174,6 +174,8 @@ export async function prepararRetenciones(rets: RetencionCobroDto[]): Promise<Ar
       tipo: r.tipo, importe: r.importe, jurisdiccion: r.jurisdiccion ?? '', certificado_numero: r.certificado_numero ?? '',
       fecha: r.fecha ?? null, obs: r.obs ?? '',
     }
+    // 20260929f: con id, la base pisa el texto con el nombre del catálogo.
+    if (r.jurisdiccion_id != null) base.jurisdiccion_id = r.jurisdiccion_id
     const path = (r.adjunto_path ?? '').trim()
     if (path) {
       if (!pathPendienteValido(path)) {

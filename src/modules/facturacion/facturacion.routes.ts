@@ -41,6 +41,7 @@ import { lidComprasService } from './lid-compras.service.js'
 import { productosService } from './productos.service.js'
 import { puntosVentaService } from './puntos-venta.service.js'
 import { parametrosService } from './parametros.service.js'
+import { retencionTiposService, ventasConfigService } from './retencion-tipos.service.js'
 import { nombreArchivoCompras } from './lid-compras.js'
 import { CONDICIONES_IVA, esNC } from './reglas.js'
 import {
@@ -55,6 +56,8 @@ import {
   ProductoCreateSchema, ProductoUpdateSchema, ListProductosQuerySchema,
   PuntoVentaCreateSchema, PuntoVentaUpdateSchema, ListPuntosVentaQuerySchema,
   ParametroCreateSchema, ListParametrosQuerySchema, ParametrosVigentesQuerySchema,
+  RetencionTipoCreateSchema, RetencionTipoUpdateSchema, ListRetencionTiposQuerySchema, VentasConfigPatchSchema,
+  CLAVE_RETENCION_RE,
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
@@ -237,6 +240,55 @@ fact.post('/parametros', lectura, tabConfiguracion, configurar, validaParametro(
 
 fact.delete('/parametros/:id', lectura, tabConfiguracion, configurar, handler(async (c) =>
   parametrosService.borrar(idParam(c), uid(c), db(c))))
+
+// ═══════════════════════════════════ Tipos de retención (20260929g) ═════════
+// GET sin tab (el modal de cobro lee los activos). POST/PATCH: tab
+// configuracion + flag configurar (la RPC vuelve a chequear el flag). La
+// clave no se edita; sin DELETE (se desactivan). Validación → 400
+// RETENCION_TIPO_INVALIDA.
+
+function validaRetTipo<T extends ZodType>(schema: T) {
+  return zValidator('json', schema, (r, c) => {
+    if (!r.success) {
+      const issue = r.error.issues[0]
+      const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
+      const campo = claves[0] ?? (issue?.path?.join('.') || null)
+      return c.json({ error: 'RETENCION_TIPO_INVALIDA', campo, detail: { campo, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+    }
+  })
+}
+
+const claveParam = (c: any): string => {
+  const k = String(c.req.param('clave') ?? '')
+  if (!CLAVE_RETENCION_RE.test(k)) throw new FacturacionHttpError(400, 'RETENCION_TIPO_INVALIDA', { campo: 'clave' })
+  return k
+}
+
+fact.get('/retencion-tipos', lectura, valida('query', ListRetencionTiposQuerySchema), handler(async (c) =>
+  retencionTiposService.listar(esBoolQ(c.req.valid('query').incluir_inactivos), db(c))))
+
+fact.post('/retencion-tipos', lectura, tabConfiguracion, configurar, validaRetTipo(RetencionTipoCreateSchema), handler(async (c) =>
+  c.json(await retencionTiposService.crear(c.req.valid('json'), uid(c), db(c)), 201)))
+
+fact.patch('/retencion-tipos/:clave', lectura, tabConfiguracion, configurar, validaRetTipo(RetencionTipoUpdateSchema), handler(async (c) =>
+  retencionTiposService.editar(claveParam(c), c.req.valid('json'), uid(c), db(c))))
+
+// ═══════════════════════════════════ Configuración de Ventas (20260929g) ════
+// Por ahora solo `retencion_tipo_default` (el ítem 9 suma los valores por
+// defecto de la factura). GET: lectura; PATCH: tab + configurar.
+
+fact.get('/config', lectura, handler(async (c) => ventasConfigService.obtener(db(c))))
+
+fact.patch('/config', lectura, tabConfiguracion, configurar,
+  zValidator('json', VentasConfigPatchSchema, (r, c) => {
+    if (!r.success) {
+      const issue = r.error.issues[0]
+      const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
+      const clave = claves[0] ?? (issue?.path?.join('.') || null)
+      return c.json({ error: 'CONFIG_INVALIDA', campo: clave, detail: { clave, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+    }
+  }),
+  handler(async (c) => ventasConfigService.guardar(c.req.valid('json'), uid(c), db(c))))
 
 // ═══════════════════════════════════ Clientes ═══════════════════════════════
 
