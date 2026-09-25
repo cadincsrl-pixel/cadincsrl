@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase } from '../../../lib/supabase.js'
 import { opcionesSignedUrl } from '../../../lib/signed-url.js'
 import { leerChequeConIA } from '../../pagos/lectura/cheque-ia.js'
+import { MODELO_LECTURA_DEFAULT } from '../../pagos/lectura/ia.js'
 import { CUIT_EMPRESA } from '../../../lib/empresa.js'
 
 const BUCKET = 'cobros-docs'
@@ -65,12 +66,11 @@ export function libradorRecibido(
 }
 
 /**
- * La lectura de la cartera usa el modelo barato (pedido del dueño, 25/09:
- * «seguí siempre con IA barata»). Haiku leyó bien número, banco, fecha e
- * importe de las liquidaciones de Casilda y de las fotos, en 8–15 s; el
- * librador lo corrige `libradorRecibido`.
+ * La lectura de la cartera usa el mismo modelo que Compras (Sonnet, por
+ * `PAGOS_LECTURA_MODEL`): el dueño lo prefirió el 25/09 después de probar
+ * Haiku. `CARTERA_LECTURA_MODEL` permite separarlos si hace falta.
  */
-const MODELO_CARTERA = process.env.CARTERA_LECTURA_MODEL ?? 'claude-haiku-4-5-20251001'
+const MODELO_CARTERA = process.env.CARTERA_LECTURA_MODEL ?? process.env.PAGOS_LECTURA_MODEL ?? MODELO_LECTURA_DEFAULT
 /** Un 'leyendo' más viejo que esto se da por caído (reinicio del servidor). */
 const LECTURA_CAIDA_MS = 5 * 60_000
 
