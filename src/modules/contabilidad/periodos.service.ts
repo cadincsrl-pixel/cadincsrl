@@ -115,7 +115,9 @@ export const periodosService = {
    * contabilizar, pendientes, desactualizados o a revertir, frena con 409
    * HAY_PENDIENTES_AUTOMATICOS { cantidad, por_estado } salvo `forzar`.
    * Desde la tanda 5, una DDJJ de IVA generada y desactualizada frena con 409
-   * IVA_DDJJ_DESACTUALIZADA { periodo_id }, con el mismo `forzar`.
+   * IVA_DDJJ_DESACTUALIZADA { periodo_id }, con el mismo `forzar`. Si hay
+   * las dos cosas, el 409 de pendientes trae `iva_ddjj_desactualizada: true`
+   * (20260929q): `forzar` cierra con las dos advertencias.
    */
   async cerrar(id: number, userId: string, db: SupabaseClient = supabase, forzar = false) {
     if (!forzar) {
@@ -126,10 +128,17 @@ export const periodosService = {
         const { desde, hasta } = p as { desde: string; hasta: string }
         const hoy = hoyAR()
         const pend = desde <= hoy ? await automaticosService.pendientesDelRango(desde, hasta < hoy ? hasta : hoy, db) : null
+        // Las dos advertencias se miran juntas (contador, 25/09: «se cierra con
+        // advertencias»): el 409 de pendientes lleva también si el asiento de
+        // IVA quedó desactualizado, así el confirm las lista a las dos y
+        // «Cerrar igual» (forzar) saltea ambas de una vez.
+        const ivaDesactualizada = ddjjBloqueaCierre(await ivaParaCierre(id, db))
         if (pend && pend.total > 0) {
-          throw new ContabilidadHttpError(409, 'HAY_PENDIENTES_AUTOMATICOS', { periodo_id: id, cantidad: pend.total, por_estado: pend.por_estado })
+          throw new ContabilidadHttpError(409, 'HAY_PENDIENTES_AUTOMATICOS', {
+            periodo_id: id, cantidad: pend.total, por_estado: pend.por_estado, iva_ddjj_desactualizada: ivaDesactualizada,
+          })
         }
-        if (ddjjBloqueaCierre(await ivaParaCierre(id, db))) {
+        if (ivaDesactualizada) {
           throw new ContabilidadHttpError(409, 'IVA_DDJJ_DESACTUALIZADA', { periodo_id: id })
         }
       }

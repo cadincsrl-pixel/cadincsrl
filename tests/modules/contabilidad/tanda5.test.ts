@@ -464,6 +464,24 @@ describe('IVA: bloqueo del cierre de período', () => {
     expect((await post('/periodos/2/cerrar', { forzar: true })).status).toBe(200)
   })
 
+  it('pendientes + DDJJ desactualizada → un solo 409 que avisa las dos; forzar cierra igual', async () => {
+    state.profile = MARIANA
+    rpcMock.mockImplementation((n: string) => {
+      if (n === 'cont_pendientes') return chain({ total: 4, resumen: { por_estado: { pendiente: 4 } } })
+      if (n === 'cont_iva_posicion') return chain({ ...CONTABLE, estado: 'desactualizado', registro: { id: 1 } })
+      if (n === 'cont_cerrar_periodo') return chain({ periodo: { id: 2, ejercicio_id: 1, numero: 2, estado: 'cerrado', cant_borradores: 0 }, numerados: 1 })
+      return chain(null)
+    })
+    const r = await post('/periodos/2/cerrar')
+    expect(r.status).toBe(409)
+    expect(await r.json()).toMatchObject({
+      error: 'HAY_PENDIENTES_AUTOMATICOS', detail: { periodo_id: 2, cantidad: 4, iva_ddjj_desactualizada: true },
+    })
+    expect(llamada('cont_cerrar_periodo')).toBeUndefined()
+    expect((await post('/periodos/2/cerrar', { forzar: true })).status).toBe(200)
+    expect(llamada('cont_cerrar_periodo')).toEqual({ p_periodo_id: 2, p_user_id: expect.any(String) })
+  })
+
   it('sin generar no bloquea; la RPC inexistente (migración sin aplicar) tampoco', async () => {
     state.profile = MARIANA
     expect((await post('/periodos/2/cerrar')).status).toBe(200)
