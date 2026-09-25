@@ -223,43 +223,54 @@ export const chequesService = {
     const dl = await supabase.storage.from(BUCKET).download(dto.storage_path)
     if (dl.error || !dl.data) throw new PagosHttpError(400, 'ARCHIVO_NO_SUBIDO', { storage_path: dto.storage_path })
     const ia = await leerChequeConIA(Buffer.from(await dl.data.arrayBuffer()), dto.mime_type)
-    if (!ia.ok || !ia.lectura.legible) {
+    const legibles = ia.ok ? ia.lecturas.filter((l) => l.legible) : []
+    if (!ia.ok || legibles.length === 0) {
       throw new PagosHttpError(422, 'CHEQUE_ILEGIBLE', {
         storage_path: dto.storage_path,
-        motivo: ia.ok ? (ia.lectura.notas ?? 'NO_LEGIBLE') : ia.motivo,
+        motivo: ia.ok ? (ia.lecturas[0]?.notas ?? 'NO_LEGIBLE') : ia.motivo,
       })
     }
-    const { propuesta, avisos } = propuestaDeCheque(ia.lectura)
 
-    // ¿Ya se entregó este cheque en otra OP emitida? EXACTAMENTE el criterio
-    // del trigger trg_pagos_cheque_unico (20260929u): número + banco +
-    // librador normalizados con norm_txt, sólo contra OPs 'emitida'. Antes
-    // miraba sólo el número y avisaba de más: el echeq N° 3080 del Galicia
-    // «chocaba» con el cheque de TERCERO N° 3080 (sin banco, otro librador)
-    // endosado en la OP-0240, que el trigger no frena. Acá sólo avisa; el
-    // trigger es el que frena al emitir.
-    if (propuesta.numero) {
-      const { data } = await supabase.from('pagos_cheques')
-        .select('orden_id, numero, banco, librador, pagos_ordenes!inner(numero, estado)')
-        .ilike('numero', `%${propuesta.numero}%`).eq('pagos_ordenes.estado', 'emitida').limit(50)
-      const iguales = ((data ?? []) as ChequeEmitido[]).filter((c) => chocaConEmitido(propuesta, c))
-      if (iguales.length > 0) {
-        const op = iguales[0]!.pagos_ordenes
-        const numOp = Array.isArray(op) ? op[0]?.numero : op?.numero
-        avisos.unshift({
-          campo: 'numero', severidad: 'error', codigo: 'CHEQUE_YA_ENTREGADO',
-          mensaje: `El cheque N° ${propuesta.numero} ya figura entregado en la OP-${String(numOp ?? '').padStart(4, '0')}.`,
-          orden_ids: [...new Set(iguales.map((c) => c.orden_id))],
-        })
-      }
-    }
-
-    const orden = { error: 0, advertencia: 1, info: 2 } as const
+    // Un archivo puede traer varios cheques (el PDF del Galicia con la
+    // emisión y los endosos, 2026-09-25): uno por cheque, cada uno con su
+    // control. `propuesta`/`avisos` sueltos son el primero, para quien lee
+    // un solo cheque.
+    const cheques = await Promise.all(legibles.map(async (l) => {
+      const { propuesta, avisos } = propuestaDeCheque(l)
+      await avisarSiYaEntregado(propuesta, avisos)
+      const orden = { error: 0, advertencia: 1, info: 2 } as const
+      return { propuesta, avisos: avisos.sort((a, b) => orden[a.severidad] - orden[b.severidad]) }
+    }))
     return {
-      propuesta,
-      avisos: avisos.sort((a, b) => orden[a.severidad] - orden[b.severidad]),
+      ...cheques[0]!,
+      cheques,
       storage_path: dto.storage_path,
       modelo: ia.modelo,
     }
   },
+}
+
+/**
+ * ¿Ya se entregó este cheque en otra OP emitida? EXACTAMENTE el criterio del
+ * trigger trg_pagos_cheque_unico (20260929u): número + banco + librador
+ * normalizados con norm_txt, sólo contra OPs 'emitida'. Antes miraba sólo el
+ * número y avisaba de más: el echeq N° 3080 del Galicia «chocaba» con el
+ * cheque de TERCERO N° 3080 (sin banco, otro librador) endosado en la
+ * OP-0240, que el trigger no frena. Acá sólo avisa; el trigger es el que
+ * frena al emitir.
+ */
+async function avisarSiYaEntregado(propuesta: PropuestaCheque, avisos: AvisoCheque[]): Promise<void> {
+  if (!propuesta.numero) return
+  const { data } = await supabase.from('pagos_cheques')
+    .select('orden_id, numero, banco, librador, pagos_ordenes!inner(numero, estado)')
+    .ilike('numero', `%${propuesta.numero}%`).eq('pagos_ordenes.estado', 'emitida').limit(50)
+  const iguales = ((data ?? []) as ChequeEmitido[]).filter((c) => chocaConEmitido(propuesta, c))
+  if (iguales.length === 0) return
+  const op = iguales[0]!.pagos_ordenes
+  const numOp = Array.isArray(op) ? op[0]?.numero : op?.numero
+  avisos.unshift({
+    campo: 'numero', severidad: 'error', codigo: 'CHEQUE_YA_ENTREGADO',
+    mensaje: `El cheque N° ${propuesta.numero} ya figura entregado en la OP-${String(numOp ?? '').padStart(4, '0')}.`,
+    orden_ids: [...new Set(iguales.map((c) => c.orden_id))],
+  })
 }

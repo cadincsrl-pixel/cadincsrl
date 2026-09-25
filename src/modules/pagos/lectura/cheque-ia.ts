@@ -36,8 +36,16 @@ export const LecturaChequeIASchema = z.object({
 })
 export type LecturaChequeIA = z.infer<typeof LecturaChequeIASchema>
 
+/**
+ * Un archivo puede traer VARIOS cheques (2026-09-25): el PDF que baja el
+ * Galicia con un comprobante por página (la emisión de un e-cheq y los
+ * endosos de cheques de terceros) o una foto con varios. Antes se leía uno
+ * solo y los demás quedaban en la nota.
+ */
+export const LecturaChequesIASchema = z.object({ cheques: z.array(LecturaChequeIASchema) })
+
 export type ResultadoChequeIA =
-  | { ok: true; lectura: LecturaChequeIA; modelo: string }
+  | { ok: true; lecturas: LecturaChequeIA[]; modelo: string }
   | { ok: false; motivo: string; modelo: string | null }
 
 /** El prompt de sistema se arma en cada llamada con los datos de la empresa (tanda 6). */
@@ -45,7 +53,11 @@ export function sistema(emp: Pick<Empresa, 'razon_social' | 'cuit_fmt'>): string
   return `Leés cheques argentinos (papel o captura de un e-cheq) para la tesorería de ${emp.razon_social} (CUIT ${emp.cuit_fmt}), que los ENTREGA para pagarle a un proveedor: pueden ser cheques propios de CADINC o de terceros que CADINC endosa. Cada dato tiene que salir de la imagen tal cual: si algo no se ve con seguridad, devolvé null. Es mucho peor un número inventado que un campo vacío.`
 }
 
-const INSTRUCCIONES = `Extraé los datos del cheque de la imagen.
+const INSTRUCCIONES = `Extraé los datos de CADA cheque del archivo, uno por elemento de "cheques", en el orden en que aparecen.
+
+El archivo puede traer varios: un PDF del banco con un comprobante por página (emisión de un e-cheq, endoso de un cheque de un tercero), o una foto con varios cheques. Cada cheque distinto va una sola vez aunque aparezca en dos páginas. En un comprobante de ENDOSO los datos son los del cheque endosado (su número, su banco, su librador original, su fecha de pago y su importe), no los de la operación de endoso. Si el archivo no trae ningún cheque, devolvé un solo elemento con legible=false.
+
+Para cada cheque:
 
 - numero: el número del cheque (serie impresa, normalmente 8 dígitos, arriba a la derecha o en la banda magnética). Sólo el número, sin la letra de serie ni el código del banco.
 - banco: el nombre del banco emisor tal como figura ("Banco de Galicia", "Banco Macro", "Banco Nación"…). sucursal: si se lee.
@@ -57,10 +69,10 @@ const INSTRUCCIONES = `Extraé los datos del cheque de la imagen.
 - es_echeq: true si es un e-cheq (captura de home banking, comprobante electrónico) y no un cheque de papel.
 - es_diferido: true si es un cheque de pago diferido (dice "Cheque de pago diferido" o tiene una fecha de pago posterior a la de emisión).
 - a_la_orden_de: a quién está hecho, si figura.
-- notas: en una o dos frases, cualquier cosa rara (tachaduras, enmiendas, no es un cheque, falta la firma, "no a la orden"). null si no hay nada que decir.
-- legible: false si la imagen no es un cheque o no se puede leer con confianza.`
+- notas: en una o dos frases, cualquier cosa rara de ESE cheque (tachaduras, enmiendas, falta la firma, "no a la orden"); no hace falta contar que hay otros. null si no hay nada que decir.
+- legible: false si ese cheque no se puede leer con confianza.`
 
-/** Lee la foto del cheque. `archivo` son los bytes tal como están en el bucket. */
+/** Lee los cheques del archivo. `archivo` son los bytes tal como están en el bucket. */
 export async function leerChequeConIA(archivo: Buffer, mime: string): Promise<ResultadoChequeIA> {
   const modelo = process.env.PAGOS_LECTURA_MODEL ?? MODELO_LECTURA_DEFAULT
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, motivo: 'SIN_API_KEY', modelo: null }
@@ -71,18 +83,18 @@ export async function leerChequeConIA(archivo: Buffer, mime: string): Promise<Re
     const client = new Anthropic({ timeout: 120_000, maxRetries: 1 })
     const r = await client.beta.messages.parse({
       model: modelo,
-      max_tokens: 4000,
+      max_tokens: 16000,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       system: sistema(await getEmpresa()),
-      output_config: { format: betaZodOutputFormat(LecturaChequeIASchema) },
+      output_config: { format: betaZodOutputFormat(LecturaChequesIASchema) },
       messages: [{ role: 'user', content: [bloque, { type: 'text', text: INSTRUCCIONES }] }],
     })
     if (r.stop_reason === 'refusal') return { ok: false, motivo: 'RECHAZADO', modelo: r.model }
     if (r.stop_reason === 'max_tokens') return { ok: false, motivo: 'RESPUESTA_CORTADA', modelo: r.model }
-    const lectura = r.parsed_output
-    if (!lectura) return { ok: false, motivo: 'RESPUESTA_INVALIDA', modelo: r.model }
-    return { ok: true, lectura, modelo: r.model }
+    const lecturas = r.parsed_output?.cheques
+    if (!lecturas || lecturas.length === 0) return { ok: false, motivo: 'RESPUESTA_INVALIDA', modelo: r.model }
+    return { ok: true, lecturas, modelo: r.model }
   } catch (e) {
     if (e instanceof Anthropic.RateLimitError) return { ok: false, motivo: 'LIMITE_DE_USO', modelo }
     if (e instanceof Anthropic.APIConnectionTimeoutError) return { ok: false, motivo: 'TIEMPO_AGOTADO', modelo }

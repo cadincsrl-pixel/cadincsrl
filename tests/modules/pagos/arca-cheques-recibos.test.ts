@@ -250,7 +250,7 @@ describe('leer la foto de un cheque', () => {
 
   it('devuelve { propuesta, avisos, storage_path } y no crea nada', async () => {
     state.profile = CONTADOR
-    iaChequeMock.mockResolvedValue({ ok: true, lectura: LEIDO, modelo: 'claude-opus-5' })
+    iaChequeMock.mockResolvedValue({ ok: true, lecturas: [LEIDO], modelo: 'claude-opus-5' })
     const res = await post('/cheques/leer', BODY)
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -265,9 +265,23 @@ describe('leer la foto de un cheque', () => {
     expect(state.updates).toEqual([])
   })
 
+  it('un archivo con varios cheques (PDF del banco con endosos) → uno por cheque, sin los ilegibles', async () => {
+    state.profile = CONTADOR
+    iaChequeMock.mockResolvedValue({ ok: true, modelo: 'm', lecturas: [
+      LEIDO,
+      { ...LEIDO, numero: '00000344', importe: 5868016 },
+      { ...LEIDO, legible: false, numero: null },
+    ] })
+    const body = await (await post('/cheques/leer', BODY)).json()
+    expect(body.cheques.map((c: { propuesta: Fila }) => [c.propuesta.numero, c.propuesta.importe]))
+      .toEqual([['12345678', 1250000.5], ['00000344', 5868016]])
+    // Los campos sueltos son el primero, para quien lee uno solo.
+    expect(body.propuesta.numero).toBe('12345678')
+  })
+
   it('avisa si el cheque ya se entregó en otra OP emitida', async () => {
     state.profile = CONTADOR
-    iaChequeMock.mockResolvedValue({ ok: true, lectura: LEIDO, modelo: 'claude-opus-5' })
+    iaChequeMock.mockResolvedValue({ ok: true, lecturas: [LEIDO], modelo: 'claude-opus-5' })
     // Mismo número, banco y librador (de tercero, como lo guarda la pantalla): lo que frena el trigger.
     state.cheques = [{ orden_id: 9, numero: '12345678', banco: 'Banco de Galicia', librador: `Constructora Sur SA · CUIT ${CUIT_OK}`, pagos_ordenes: { numero: 12, estado: 'emitida' } }]
     const body = await (await post('/cheques/leer', BODY)).json()
@@ -277,7 +291,7 @@ describe('leer la foto de un cheque', () => {
   it('NO avisa por un cheque de tercero con el mismo número pero otro banco y librador (falso positivo de la OP-0240)', async () => {
     state.profile = CONTADOR
     // El echeq propio N° 3080 del Galicia vs. el cheque de TERCERO N° 3080 endosado a El Limón.
-    iaChequeMock.mockResolvedValue({ ok: true, lectura: { ...LEIDO, numero: '3080', librador: 'CADINC SRL', librador_cuit: null, es_echeq: true }, modelo: 'm' })
+    iaChequeMock.mockResolvedValue({ ok: true, lecturas: [{ ...LEIDO, numero: '3080', librador: 'CADINC SRL', librador_cuit: null, es_echeq: true }], modelo: 'm' })
     state.cheques = [{ orden_id: 240, numero: '3080', banco: '', librador: 'No informado en el detalle del endoso', pagos_ordenes: { numero: 240, estado: 'emitida' } }]
     const body = await (await post('/cheques/leer', BODY)).json()
     expect(body.avisos.map((a: Fila) => a.codigo)).not.toContain('CHEQUE_YA_ENTREGADO')
@@ -285,7 +299,7 @@ describe('leer la foto de un cheque', () => {
 
   it('si la IA no puede leer → 422 CHEQUE_ILEGIBLE (con el path, para adjuntarla igual)', async () => {
     state.profile = CONTADOR
-    iaChequeMock.mockResolvedValue({ ok: true, lectura: { ...LEIDO, legible: false, notas: 'borroso' }, modelo: 'm' })
+    iaChequeMock.mockResolvedValue({ ok: true, lecturas: [{ ...LEIDO, legible: false, notas: 'borroso' }], modelo: 'm' })
     let res = await post('/cheques/leer', BODY)
     expect(res.status).toBe(422)
     expect(await res.json()).toEqual({ error: 'CHEQUE_ILEGIBLE', detail: { storage_path: BODY.storage_path, motivo: 'borroso' } })
