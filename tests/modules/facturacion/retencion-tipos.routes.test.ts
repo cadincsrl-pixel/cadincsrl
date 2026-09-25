@@ -50,7 +50,7 @@ vi.mock('../../../src/lib/supabase.js', () => {
 
 import fact from '../../../src/modules/facturacion/facturacion.routes.js'
 import { RetencionCobroSchema } from '../../../src/modules/facturacion/facturacion.schema.js'
-import { ventasConfigDesdeJson } from '../../../src/modules/facturacion/retencion-tipos.service.js'
+import { ventasConfigDesdeJson, LEYENDA_FCE_ARCA } from '../../../src/modules/facturacion/retencion-tipos.service.js'
 
 const perfil = (p: Fila | null, rol = 'operador'): Fila => ({ rol, activo: true, rol_base: null, permisos: p ? { facturacion: p } : {} })
 const LECTOR = perfil({ lectura: true, tabs: ['cobranzas'] })
@@ -71,7 +71,12 @@ describe('GET /retencion-tipos y /config', () => {
     expect((await fact.request('/retencion-tipos?incluir_inactivos=1')).status).toBe(200)
     expect(state.rpcs).toContainEqual({ fn: 'ventas_retencion_tipos_json', args: { p_incluir_inactivos: true } })
     const r = await fact.request('/config')
-    expect(await r.json()).toEqual({ retencion_tipo_default: 'tem' })
+    const j = await r.json()
+    expect(j).toMatchObject({
+      retencion_tipo_default: 'tem', condicion_pago_default: 'Cc Clientes', provincia_default: 'Tucuman',
+      unidad_default: 'Unidades', leyenda_fce: null,
+    })
+    expect(j.leyenda_fce_default).toMatch(/^Luego de su aceptación tácita/)
   })
   it('sin lectura → 403', async () => {
     state.profile = perfil(null)
@@ -135,9 +140,48 @@ describe('PATCH /config', () => {
     expect((await enviar('PATCH', '/config', { retencion_tipo_default: 'nope' })).status).toBe(400)
   })
 
-  it('ventasConfigDesdeJson: default iibb', () => {
-    expect(ventasConfigDesdeJson(null)).toEqual({ retencion_tipo_default: 'iibb' })
-    expect(ventasConfigDesdeJson({ retencion_tipo_default: 'tem' })).toEqual({ retencion_tipo_default: 'tem' })
+  it('ventasConfigDesdeJson: los defaults de siempre y la leyenda de ARCA', () => {
+    expect(ventasConfigDesdeJson(null)).toEqual({
+      retencion_tipo_default: 'iibb', condicion_pago_default: 'Cc Clientes', provincia_default: 'Tucuman',
+      unidad_default: 'Unidades', leyenda_fce: null, leyenda_fce_default: LEYENDA_FCE_ARCA,
+    })
+    expect(ventasConfigDesdeJson({ retencion_tipo_default: 'tem', provincia_default: 'Salta', leyenda_fce: '  ' }))
+      .toMatchObject({ retencion_tipo_default: 'tem', provincia_default: 'Salta', leyenda_fce: null })
+    expect(ventasConfigDesdeJson({ leyenda_fce: 'Otra leyenda' }).leyenda_fce).toBe('Otra leyenda')
+  })
+
+  it('valores por defecto de la factura (20260929j): validación y normalización', async () => {
+    state.profile = CONFIGURADOR
+    const leyenda = 'Leyenda propia de la FCE que el contador pidió cambiar, bien larga.'
+    const r = await enviar('PATCH', '/config', {
+      condicion_pago_default: '  Contado   30 días ', provincia_default: 'Salta', unidad_default: 'Kg', leyenda_fce: leyenda,
+    })
+    expect(r.status).toBe(200)
+    expect(state.rpcs).toContainEqual({ fn: 'ventas_guardar_config', args: {
+      p_cambios: { condicion_pago_default: 'Contado 30 días', provincia_default: 'Salta', unidad_default: 'Kg', leyenda_fce: leyenda },
+      p_user_id: 'u-1',
+    } })
+    // Restaurar la de ARCA: null o vacío llegan como null.
+    state.rpcs.length = 0
+    expect((await enviar('PATCH', '/config', { leyenda_fce: null })).status).toBe(200)
+    expect((await enviar('PATCH', '/config', { leyenda_fce: '   ' })).status).toBe(200)
+    expect(state.rpcs.map((x) => x.args?.p_cambios)).toEqual([{ leyenda_fce: null }, { leyenda_fce: null }])
+
+    const malos: Array<[Record<string, unknown>, string]> = [
+      [{ provincia_default: 'Tucumán' }, 'provincia_default'],
+      [{ provincia_default: 'CABA' }, 'provincia_default'],
+      [{ condicion_pago_default: '   ' }, 'condicion_pago_default'],
+      [{ condicion_pago_default: 'x'.repeat(101) }, 'condicion_pago_default'],
+      [{ unidad_default: 'x'.repeat(51) }, 'unidad_default'],
+      [{ leyenda_fce: 'corta' }, 'leyenda_fce'],
+      [{ leyenda_fce: 'x'.repeat(1001) }, 'leyenda_fce'],
+      [{ otra_cosa: 1 }, 'otra_cosa'],
+    ]
+    for (const [body, campo] of malos) {
+      const rr = await enviar('PATCH', '/config', body)
+      expect(rr.status).toBe(400)
+      expect(await rr.json()).toMatchObject({ error: 'CONFIG_INVALIDA', campo })
+    }
   })
 })
 

@@ -95,6 +95,8 @@ export const VERBOS: Record<string, string> = {
   generar: 'generar', amortizar: 'amortizar', 'revertir-baja': 'revertir baja',
   // Ventas › Configuración › Puntos de venta (20260929d).
   verificar: 'verificar en ARCA',
+  // Compras: deshacer una importación de «Mis Comprobantes» (20260929k).
+  deshacer: 'deshacer',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */

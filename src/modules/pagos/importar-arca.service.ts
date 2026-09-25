@@ -93,17 +93,79 @@ export const importarArcaService = {
     return out
   },
 
-  /** Historial de importaciones (más nueva primero), con quién la hizo. */
+  /**
+   * Historial de importaciones (más nueva primero), con quién la hizo, si se
+   * deshizo (20260929k) y cuántas de sus facturas siguen vigentes.
+   */
   async listar(): Promise<unknown[]> {
     const filas = await todasLasFilas<Record<string, unknown>>((d, h) => supabase.from('pagos_importaciones')
-      .select('id, origen, archivo, hash_sha256, fecha_desde, fecha_hasta, filas, nuevas, duplicadas, proveedores_nuevos, created_at, created_by')
+      .select('id, origen, archivo, hash_sha256, fecha_desde, fecha_hasta, filas, nuevas, duplicadas, proveedores_nuevos, historica, created_at, created_by, deshecha_at, deshecha_por, motivo_deshacer')
       .order('created_at', { ascending: false }).order('id', { ascending: false }).range(d, h))
-    const ids = [...new Set(filas.map((f) => f.created_by).filter((x): x is string => typeof x === 'string'))]
+    const ids = [...new Set(filas.flatMap((f) => [f.created_by, f.deshecha_por]).filter((x): x is string => typeof x === 'string'))]
     const nombres = new Map<string, string>()
     if (ids.length) {
       const { data } = await supabase.from('profiles').select('id, nombre').in('id', ids)
       for (const p of (data ?? []) as { id: string; nombre: string | null }[]) nombres.set(p.id, p.nombre ?? '')
     }
-    return filas.map((f) => ({ ...f, created_by_nombre: typeof f.created_by === 'string' ? (nombres.get(f.created_by) ?? null) : null }))
+    // Conteo por importación con head (sin bajar filas: el cap de 1000 no aplica).
+    const vigentes = await Promise.all(filas.map(async (f) => {
+      const { count, error } = await supabase.from('pagos_facturas').select('id', { count: 'exact', head: true })
+        .eq('importacion_id', f.id as number).neq('estado', 'anulada')
+      return error ? null : (count ?? 0)
+    }))
+    const nombre = (u: unknown) => (typeof u === 'string' ? (nombres.get(u) ?? null) : null)
+    return filas.map((f, i) => ({
+      ...f,
+      created_by_nombre: nombre(f.created_by),
+      deshecha_por_nombre: nombre(f.deshecha_por),
+      facturas_vigentes: vigentes[i],
+    }))
   },
+
+  /**
+   * Vista previa de deshacer una importación (20260929k): cuántas facturas se
+   * anulan, cuántos asientos del motor y qué la bloquea. No escribe nada.
+   */
+  async deshacerVista(importacionId: number, userId: string): Promise<DeshacerImportacionRes> {
+    const { data, error } = await supabase.rpc('pagos_deshacer_importacion', {
+      p_importacion_id: importacionId, p_motivo: null, p_user_id: userId, p_aplicar: false,
+    })
+    if (error) throw mapRpcError(error)
+    return data as DeshacerImportacionRes
+  },
+
+  /**
+   * Deshace una importación: TODO O NADA. Anula sus facturas y los asientos
+   * del motor en períodos abiertos, en una sola transacción. 409
+   * IMPORTACION_CON_MOVIMIENTOS { bloqueos } si alguna tiene pago, NC,
+   * imputación, aprobación o asiento en un período cerrado.
+   */
+  async deshacer(importacionId: number, motivo: string, userId: string): Promise<DeshacerImportacionRes> {
+    const { data, error } = await supabase.rpc('pagos_deshacer_importacion', {
+      p_importacion_id: importacionId, p_motivo: motivo, p_user_id: userId, p_aplicar: true,
+    })
+    if (error) throw mapRpcError(error)
+    const r = data as DeshacerImportacionRes
+    console.info(`[pagos] importación ${importacionId} DESHECHA por ${userId}: ${r.a_anular} facturas anuladas, ${r.asientos_a_anular} asientos anulados`)
+    return r
+  },
+}
+
+export interface BloqueoDeshacer {
+  factura_id: number
+  numero: string | null
+  tipo_comprobante: string | null
+  proveedor: string | null
+  motivo: 'con_pago' | 'con_nc' | 'imputada' | 'aprobada' | 'asiento_periodo_cerrado'
+}
+
+export interface DeshacerImportacionRes {
+  importacion: { id: number; archivo: string | null; created_at: string; historica: boolean; filas: number }
+  total: number
+  a_anular: number
+  ya_anuladas: number
+  asientos_a_anular: number
+  bloqueos: BloqueoDeshacer[]
+  puede: boolean
+  aplicado: boolean
 }

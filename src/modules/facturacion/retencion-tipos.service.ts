@@ -1,7 +1,7 @@
 /**
  * Tipos de retención sufrida (tanda 6, ítem 5; base 20260929g) y la
- * configuración de Ventas (`ventas_config`: por ahora solo
- * `retencion_tipo_default`).
+ * configuración de Ventas (`ventas_config`: `retencion_tipo_default` y, desde
+ * 20260929j, los valores por defecto de la factura y la leyenda de la FCE).
  *
  * Todo pasa por las RPC: `ventas_retencion_tipos_json` (lectura, con
  * `retenciones` y `mapeado`), `ventas_guardar_retencion_tipo` (única puerta;
@@ -33,15 +33,49 @@ export interface RetencionTipo {
   mapeado: boolean
 }
 
+/**
+ * La leyenda de la FCE MiPyME, calcada del modelo de ARCA. Es la que imprime
+ * el PDF cuando `ventas_config.leyenda_fce` es null; espejo de `LEYENDA_FCE`
+ * en el `facturaPdf.ts` del frontend (20260929j).
+ */
+export const LEYENDA_FCE_ARCA =
+  'Luego de su aceptación tácita o expresa, esta Factura de Crédito Electrónica MiPyMEs será transmitida a ' +
+  'El Sistema de Circulación Abierta para Facturas de Crédito Electrónicas MiPyMEs, para su circulación y ' +
+  'negociación, incluso en los Mercados de Valores, en este caso, a través de un Agente de Depósito Colectivo ' +
+  'o agentes que cumplan similares funciones.'
+
+/** Los valores de siempre (lo que estaba escrito en el formulario): semilla y respaldo. */
+export const VENTAS_CONFIG_DEFAULTS = {
+  retencion_tipo_default: 'iibb',
+  condicion_pago_default: 'Cc Clientes',
+  provincia_default: 'Tucuman',
+  unidad_default: 'Unidades',
+} as const
+
 export interface VentasConfig {
   retencion_tipo_default: string
+  condicion_pago_default: string
+  provincia_default: string
+  unidad_default: string
+  /** null = la de ARCA (`leyenda_fce_default`). */
+  leyenda_fce: string | null
+  leyenda_fce_default: string
 }
 
-/** Pura: lo que devolvió `ventas_config_json` → la respuesta (default 'iibb'). */
+const txt = (v: unknown, def: string) => (typeof v === 'string' && v.trim() ? v : def)
+
+/** Pura: lo que devolvió `ventas_config_json` → la respuesta, con los defaults de siempre. */
 export function ventasConfigDesdeJson(raw: unknown): VentasConfig {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  const t = typeof r.retencion_tipo_default === 'string' && r.retencion_tipo_default ? r.retencion_tipo_default : 'iibb'
-  return { retencion_tipo_default: t }
+  const D = VENTAS_CONFIG_DEFAULTS
+  return {
+    retencion_tipo_default: txt(r.retencion_tipo_default, D.retencion_tipo_default),
+    condicion_pago_default: txt(r.condicion_pago_default, D.condicion_pago_default),
+    provincia_default: txt(r.provincia_default, D.provincia_default),
+    unidad_default: txt(r.unidad_default, D.unidad_default),
+    leyenda_fce: typeof r.leyenda_fce === 'string' && r.leyenda_fce.trim() ? r.leyenda_fce : null,
+    leyenda_fce_default: LEYENDA_FCE_ARCA,
+  }
 }
 
 export const retencionTiposService = {

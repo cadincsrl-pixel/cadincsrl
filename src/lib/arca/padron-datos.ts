@@ -41,11 +41,11 @@ export function errorDePadron(e: unknown): readonly [number, string] | null {
  * facturacion.utils.ts): sin tildes y CABA como «Capital Federal». ARCA las
  * manda en mayúsculas y a CABA como «CIUDAD AUTONOMA BUENOS AIRES».
  */
-const PROVINCIAS = [
+export const PROVINCIAS = [
   'Buenos Aires', 'Capital Federal', 'Catamarca', 'Chaco', 'Chubut', 'Cordoba', 'Corrientes', 'Entre Rios',
   'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones', 'Neuquen', 'Rio Negro', 'Salta',
   'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero', 'Tierra del Fuego', 'Tucuman',
-]
+] as const
 const sinTildes = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
 
 export function provinciaDePadron(desc: string | null | undefined): string {

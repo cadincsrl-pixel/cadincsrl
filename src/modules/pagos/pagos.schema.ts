@@ -476,6 +476,11 @@ export const FilaRecibidaSchema = z.object({
 }).strict()
 export type FilaRecibidaDto = z.infer<typeof FilaRecibidaSchema>
 
+/** Deshacer una importación (20260929k): motivo de 3 a 500 caracteres. */
+export const DeshacerImportacionSchema = z.object({
+  motivo: z.string().transform((s) => s.replace(/\s+/g, ' ').trim()).pipe(z.string().min(3).max(500)),
+})
+
 /**
  * `filas` es el contrato de la spec (filas ya normalizadas). Además, para no
  * duplicar el parser, el backend acepta el archivo crudo: `csv` (texto tal

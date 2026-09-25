@@ -250,7 +250,7 @@ describe('importar de ARCA', () => {
     })
     const r = await pagos.request('/importaciones')
     expect(r.status).toBe(200)
-    expect(await r.json()).toEqual([{ id: 7, archivo: 'julio.xlsx', created_by: 'u-9', created_by_nombre: 'Nicolás' }])
+    expect(await r.json()).toEqual([{ id: 7, archivo: 'julio.xlsx', created_by: 'u-9', created_by_nombre: 'Nicolás', deshecha_por_nombre: null, facturas_vigentes: 0 }])
   })
 })
 

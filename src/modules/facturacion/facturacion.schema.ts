@@ -6,6 +6,7 @@
  * fuente de verdad. Acá se rechaza lo que ni siquiera tiene sentido mandar.
  */
 import { z } from 'zod'
+import { PROVINCIAS } from '../../lib/arca/padron-datos.js'
 
 export const esBoolQ = (v?: string) => v === '1' || v === 'true'
 
@@ -295,8 +296,19 @@ export type RetencionTipoUpdateDto = z.infer<typeof RetencionTipoUpdateSchema>
 export const ListRetencionTiposQuerySchema = z.object({ incluir_inactivos: z.string().optional() })
 
 // ── Configuración de Ventas (ventas_config, 20260929g) ─────────────────────
+// Valores por defecto de la factura (20260929j): la base repite cada regla.
+const textoUnaLinea = (max: number) => z.string().transform((s) => s.replace(/\s+/g, ' ').trim())
+  .pipe(z.string().min(1, 'no puede quedar vacío').max(max, `hasta ${max} caracteres`))
 export const VentasConfigPatchSchema = z.object({
   retencion_tipo_default: z.string().trim().regex(CLAVE_RETENCION_RE).optional(),
+  condicion_pago_default: textoUnaLinea(100).optional(),
+  provincia_default: z.enum(PROVINCIAS, 'provincia inválida').optional(),
+  unidad_default: textoUnaLinea(50).optional(),
+  // null o '' = volver a la leyenda de ARCA.
+  leyenda_fce: z.string().transform((s) => s.replace(/\s+/g, ' ').trim())
+    .pipe(z.string().refine((s) => s === '' || (s.length >= 50 && s.length <= 1000), 'de 50 a 1000 caracteres'))
+    .transform((s) => (s === '' ? null : s))
+    .nullable().optional(),
 }).strict().refine((d) => Object.keys(d).length > 0, 'nada para cambiar')
 export type VentasConfigPatch = z.infer<typeof VentasConfigPatchSchema>
 

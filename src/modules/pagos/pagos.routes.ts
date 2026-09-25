@@ -51,7 +51,7 @@ import {
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
   ListConceptosQuerySchema, CreateConceptoSchema, UpdateConceptoSchema,
-  PeriodoIvaSugeridoQuerySchema, ImportarRecibidosSchema, ImputarFacturaSchema, ImputarLoteSchema, MarcarPagadasSchema,
+  PeriodoIvaSugeridoQuerySchema, ImportarRecibidosSchema, DeshacerImportacionSchema, ImputarFacturaSchema, ImputarLoteSchema, MarcarPagadasSchema,
 } from './pagos.schema.js'
 
 const pagos = new Hono()
@@ -149,6 +149,19 @@ pagos.post('/facturas/marcar-pagadas', lectura, tabFactura, zValidator('json', M
 }))
 
 pagos.get('/importaciones', lectura, tabFactura, handler(async () => importarArcaService.listar()))
+
+// Deshacer una importación (20260929k). GET = vista previa (lectura + tab
+// facturas + importar_comprobantes); POST = aplicar, además con
+// pagos.eliminacion. Todo o nada: 409 IMPORTACION_CON_MOVIMIENTOS { bloqueos }.
+// La RPC vuelve a chequear el flag.
+pagos.get('/importaciones/:id/deshacer', lectura, tabFactura, importarComprobantes, handler(async (c) =>
+  importarArcaService.deshacerVista(idParam(c), c.get('user').id)))
+
+pagos.post('/importaciones/:id/deshacer', lectura, tabFactura, importarComprobantes, requirePermiso('pagos', 'eliminacion'),
+  zValidator('json', DeshacerImportacionSchema, (r, c) => {
+    if (!r.success) return c.json({ error: 'MOTIVO_REQUERIDO', campo: 'motivo', detail: { campo: 'motivo' } }, 400)
+  }),
+  handler(async (c) => importarArcaService.deshacer(idParam(c), c.req.valid('json').motivo, c.get('user').id)))
 
 pagos.get('/facturas/:id', lectura, tabPago, handler(async (c) =>
   pagosService.detalleFactura(idParam(c), await verPii(c), esBoolQ(c.req.query('borrados')), c.get('accessToken'))))

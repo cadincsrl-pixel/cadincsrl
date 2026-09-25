@@ -274,8 +274,10 @@ fact.patch('/retencion-tipos/:clave', lectura, tabConfiguracion, configurar, val
   retencionTiposService.editar(claveParam(c), c.req.valid('json'), uid(c), db(c))))
 
 // ═══════════════════════════════════ Configuración de Ventas (20260929g) ════
-// Por ahora solo `retencion_tipo_default` (el ítem 9 suma los valores por
-// defecto de la factura). GET: lectura; PATCH: tab + configurar.
+// `retencion_tipo_default` y los valores por defecto de la factura
+// (condición de pago, provincia, unidad y leyenda de la FCE, 20260929j). El
+// GET suma `leyenda_fce_default` (la de ARCA). GET: lectura; PATCH: tab +
+// configurar.
 
 fact.get('/config', lectura, handler(async (c) => ventasConfigService.obtener(db(c))))
 
