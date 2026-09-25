@@ -454,15 +454,16 @@ export const LeerLiquidacionSchema = z.object({
 export type LeerLiquidacionDto = z.infer<typeof LeerLiquidacionSchema>
 
 /**
- * «Soltá acá los cheques» (2026-09-25): una foto o PDF ya subido a
- * `cobros/pendientes/`. No crea nada: devuelve los cheques leídos y el cliente.
+ * «Soltá acá los comprobantes del cobro» (2026-09-25): una foto o PDF ya
+ * subido a `cobros/pendientes/` (cheque, e-cheq, transferencia, depósito u
+ * orden de pago del cliente). No crea nada: devuelve lo leído y el cliente.
  */
-export const LeerChequesCobroSchema = z.object({
+export const LeerComprobanteCobroSchema = z.object({
   storage_path: z.string().min(1).max(300),
   nombre_archivo: z.string().trim().min(1).max(255),
   mime: z.enum(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']),
 })
-export type LeerChequesCobroDto = z.infer<typeof LeerChequesCobroSchema>
+export type LeerComprobanteCobroDto = z.infer<typeof LeerComprobanteCobroSchema>
 
 export const ImputarSchema = z.object({
   items: z.array(ItemImputacionSchema).min(1, 'al menos una imputación').max(500),
