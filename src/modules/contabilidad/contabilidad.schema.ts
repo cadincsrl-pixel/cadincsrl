@@ -245,7 +245,8 @@ export const ListTesoreriaQuerySchema = z.object({ incluir_inactivas: BoolQ })
 // ── Asientos automáticos y mapeos (fase 3, 20260927d–f) ─────────────────────
 
 /** Orígenes que contabiliza el motor (`cont_contabilizar`). */
-export const FUENTES = ['ventas_facturas', 'ventas_comprobantes_externos', 'ventas_cobros', 'pagos_facturas', 'pagos_ordenes'] as const
+/** Tanda 5 (20260928m): `tesoreria_movimientos` = movimientos de fondos sin factura (circuito «fondos»). */
+export const FUENTES = ['ventas_facturas', 'ventas_comprobantes_externos', 'ventas_cobros', 'pagos_facturas', 'pagos_ordenes', 'tesoreria_movimientos'] as const
 export type CtbFuente = (typeof FUENTES)[number]
 export const PENDIENTE_ESTADOS = ['sin_contabilizar', 'pendiente', 'desactualizado', 'a_revertir'] as const
 
@@ -299,6 +300,8 @@ export const GuardarMapeosSchema = z.object({
 export type GuardarMapeosDto = z.infer<typeof GuardarMapeosSchema>
 
 export const CVLP_MODOS = ['neto_liquidado', 'bruto'] as const
+export const BU_FRECUENCIAS = ['mensual', 'anual'] as const
+export const BU_CRITERIOS = ['completo', 'proporcional'] as const
 export const COMPRAS_FECHA_CONTABLE = ['fecha', 'mes_iva'] as const
 export const ConfigSchema = z.object({
   automaticos_desde:      FechaISO.refine((s) => s >= '2026-07-01', 'CONFIG_INVALIDA').optional(),
@@ -306,6 +309,12 @@ export const ConfigSchema = z.object({
   compras_fecha_contable: z.enum(COMPRAS_FECHA_CONTABLE).optional(),
   /** Pendiente de definir con el contador (P3.4): hoy solo null. */
   paga_cliente_modo:      z.null().optional(),
+  // Tanda 5 (20260928n): asiento de IVA y bienes de uso. La base valida
+  // además que frecuencia y corte no cambien con amortizaciones hechas.
+  iva_ddjj_arrastre:      z.boolean().optional(),
+  bu_frecuencia:          z.enum(BU_FRECUENCIAS).optional(),
+  bu_criterio_alta:       z.enum(BU_CRITERIOS).optional(),
+  bu_corte_inicial:       FechaISO.optional(),
 }).strict().refine((b) => Object.keys(b).length > 0, { message: 'CONFIG_INVALIDA', path: [] })
 export type ConfigDto = z.infer<typeof ConfigSchema>
 
@@ -323,3 +332,153 @@ export const AuxiliaresQuerySchema = z.object({
   ids:  z.string().max(4000).regex(/^\d+(,\d+)*$/, 'ids: números separados por coma').optional(),
 })
 export type AuxiliaresQuery = z.infer<typeof AuxiliaresQuerySchema>
+
+// ═══════════════════════════════════ Tanda 5 (20260928l–r) ══════════════════
+
+const ImportePositivo = z.number().positive('IMPORTE_INVALIDO').max(999_999_999_999.99, 'IMPORTE_INVALIDO')
+const TextoOpc = (max: number) => z.string().trim().max(max).optional()
+const ObraCod = z.string().trim().max(40).nullable().optional()
+
+// ── Movimientos de fondos (tab `tesoreria`) ────────────────────────────────
+
+export const TES_MOV_TIPOS = ['ingreso', 'egreso', 'transferencia'] as const
+export const TES_CONCEPTO_SENTIDOS = ['ingreso', 'egreso', 'ambos'] as const
+export const TES_ADJ_TIPOS = ['comprobante', 'vep', 'extracto', 'otro'] as const
+
+/**
+ * Alta y edición (el PATCH manda el movimiento COMPLETO). La forma se chequea
+ * acá; monedas, cotización, cuentas activas, concepto compatible y período
+ * abierto los decide la RPC `tesoreria_guardar_movimiento` (y el trigger).
+ */
+export const TesMovimientoSchema = z.object({
+  fecha:                FechaISO,
+  tipo:                 z.enum(TES_MOV_TIPOS, 'TIPO_INVALIDO'),
+  tesoreria_id:         Id,
+  tesoreria_destino_id: Id.nullable().optional(),
+  concepto_id:          Id.nullable().optional(),
+  importe:              ImportePositivo,
+  importe_destino:      ImportePositivo.nullable().optional(),
+  cotizacion:           z.number().positive('COTIZACION_REQUERIDA').max(99_999_999).nullable().optional(),
+  obra_cod:             ObraCod,
+  referencia:           TextoOpc(120),
+  obs:                  TextoOpc(1000),
+}).strict().superRefine((m, ctx) => {
+  const destino = m.tesoreria_destino_id ?? null
+  if (m.tipo === 'transferencia') {
+    if (destino == null) ctx.addIssue({ code: 'custom', path: ['tesoreria_destino_id'], message: 'TESORERIA_DESTINO_REQUERIDA' })
+    else if (destino === m.tesoreria_id) ctx.addIssue({ code: 'custom', path: ['tesoreria_destino_id'], message: 'TESORERIA_IGUALES' })
+    if (m.concepto_id != null) ctx.addIssue({ code: 'custom', path: ['concepto_id'], message: 'CONCEPTO_NO_CORRESPONDE' })
+    if (m.obra_cod) ctx.addIssue({ code: 'custom', path: ['obra_cod'], message: 'OBRA_NO_CORRESPONDE' })
+  } else {
+    if (m.concepto_id == null) ctx.addIssue({ code: 'custom', path: ['concepto_id'], message: 'CONCEPTO_REQUERIDO' })
+    if (destino != null) ctx.addIssue({ code: 'custom', path: ['tesoreria_destino_id'], message: 'DESTINO_NO_CORRESPONDE' })
+  }
+})
+export type TesMovimientoDto = z.infer<typeof TesMovimientoSchema>
+
+export const TesMovimientosQuerySchema = z.object({
+  desde:        FechaISO.optional(),
+  hasta:        FechaISO.optional(),
+  tipo:         z.enum(TES_MOV_TIPOS).optional(),
+  tesoreria_id: IdQ.optional(),
+  concepto_id:  IdQ.optional(),
+  obra_cod:     z.string().trim().min(1).max(40).optional(),
+  /** Sin estado = todos (vigentes y anulados). */
+  estado:       z.enum(['vigente', 'anulado', 'todos']).optional(),
+  origen:       z.enum(['manual', 'conciliacion']).optional(),
+  q:            z.string().trim().max(200).optional(),
+  limit:        z.coerce.number().int().min(1).max(200).optional().default(50),
+  offset:       z.coerce.number().int().min(0).optional().default(0),
+})
+export type TesMovimientosQuery = z.infer<typeof TesMovimientosQuerySchema>
+
+export const TesConceptoSchema = z.object({
+  nombre:  z.string().trim().min(2, 'NOMBRE_INVALIDO').max(120),
+  sentido: z.enum(TES_CONCEPTO_SENTIDOS),
+  orden:   z.number().int().min(0).max(32767).optional(),
+  activo:  z.boolean().optional(),
+  obs:     TextoOpc(500),
+}).strict()
+export type TesConceptoDto = z.infer<typeof TesConceptoSchema>
+/** PATCH: parcial; el service completa con lo guardado. */
+export const UpdateTesConceptoSchema = TesConceptoSchema.partial().strict()
+  .refine((b) => Object.keys(b).length > 0, { message: 'SIN_CAMBIOS', path: [] })
+export type UpdateTesConceptoDto = z.infer<typeof UpdateTesConceptoSchema>
+
+export const TesConceptosQuerySchema = z.object({ incluir_inactivos: BoolQ })
+
+/** Adjuntos de un movimiento (bucket privado `tesoreria-docs`, 10 MB). */
+export const TES_ADJ_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'] as const
+export const TES_ADJ_MAX_BYTES = 10 * 1024 * 1024
+export const TesAdjUploadUrlSchema = z.object({
+  nombre_archivo: z.string().trim().min(1).max(255),
+  mime_type:      z.enum(TES_ADJ_MIMES, 'MIME_NO_PERMITIDO'),
+  size_bytes:     z.number().int().positive('TAMANO_INVALIDO').max(TES_ADJ_MAX_BYTES, 'TAMANO_INVALIDO'),
+  /** Opcional: el tipo se decide al registrar. */
+  tipo:           z.enum(TES_ADJ_TIPOS).optional(),
+}).strict()
+export type TesAdjUploadUrlDto = z.infer<typeof TesAdjUploadUrlSchema>
+export const TesAdjRegistrarSchema = z.object({
+  tipo:           z.enum(TES_ADJ_TIPOS),
+  storage_path:   z.string().min(1).max(500),
+  nombre_archivo: z.string().trim().min(1).max(255),
+  mime_type:      z.enum(TES_ADJ_MIMES, 'MIME_NO_PERMITIDO'),
+  obs:            TextoOpc(500),
+}).strict()
+export type TesAdjRegistrarDto = z.infer<typeof TesAdjRegistrarSchema>
+
+// ── Asiento mensual de IVA (tab `periodos`) ────────────────────────────────
+
+export const IvaEstadosQuerySchema = z.object({ ejercicio_id: IdQ.optional() })
+export const IvaGenerarSchema = z.object({ forzar: z.boolean().optional().default(false) }).strict()
+
+// ── Bienes de uso (tab `bienes`) ────────────────────────────────────────────
+
+/** Alta y edición (el PATCH manda el bien completo, como el alta). */
+export const BienSchema = z.object({
+  descripcion:        z.string().trim().min(3, 'DESCRIPCION_REQUERIDA').max(300),
+  identificador:      TextoOpc(120),
+  cuenta_origen_id:   Id,
+  cuenta_amort_id:    Id.nullable().optional(),
+  cuenta_gasto_id:    Id.nullable().optional(),
+  fecha_alta:         FechaISO,
+  valor_origen:       ImportePositivo,
+  vida_util_anios:    z.number().positive('VIDA_UTIL_INVALIDA').max(999.99, 'VIDA_UTIL_INVALIDA').nullable().optional(),
+  valor_residual:     Importe.optional(),
+  amort_acum_inicial: Importe.optional(),
+  criterio_alta:      z.enum(BU_CRITERIOS).nullable().optional(),
+  obra_cod:           ObraCod,
+  pagos_factura_id:   Id.nullable().optional(),
+  obs:                TextoOpc(1000),
+}).strict().superRefine((b, ctx) => {
+  const residual = b.valor_residual ?? 0
+  const inicial = b.amort_acum_inicial ?? 0
+  if (residual >= b.valor_origen) ctx.addIssue({ code: 'custom', path: ['valor_residual'], message: 'BU_RESIDUAL_INVALIDO' })
+  else if (inicial > b.valor_origen - residual + 0.001) ctx.addIssue({ code: 'custom', path: ['amort_acum_inicial'], message: 'BU_INICIAL_INVALIDA' })
+  if (b.vida_util_anios != null) {
+    if (b.cuenta_amort_id == null) ctx.addIssue({ code: 'custom', path: ['cuenta_amort_id'], message: 'BU_SIN_CUENTA_AMORT' })
+    if (b.cuenta_gasto_id == null) ctx.addIssue({ code: 'custom', path: ['cuenta_gasto_id'], message: 'BU_SIN_CUENTA_GASTO' })
+  }
+})
+export type BienDto = z.infer<typeof BienSchema>
+
+export const BajaBienSchema = z.object({ fecha: FechaISO, motivo: Motivo }).strict()
+
+export const BienesQuerySchema = z.object({
+  incluir_bajas:    BoolQ,
+  q:                z.string().trim().max(200).optional(),
+  cuenta_origen_id: IdQ.optional(),
+  obra_cod:         z.string().trim().min(1).max(40).optional(),
+})
+export type BienesQuery = z.infer<typeof BienesQuerySchema>
+
+export const ImportarBienesSchema = z.object({
+  filas:     z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))).max(2000, 'DEMASIADAS_FILAS').optional(),
+  csv:       z.string().max(4_000_000).optional(),
+  confirmar: z.boolean().optional().default(false),
+}).refine((b) => (b.filas && b.filas.length > 0) || (b.csv != null && b.csv.trim() !== ''), { message: 'SIN_FILAS', path: ['filas'] })
+export type ImportarBienesDto = z.infer<typeof ImportarBienesSchema>
+
+export const CuadroBienesQuerySchema = z.object({ hasta: FechaISO })
+export const CorridasQuerySchema = z.object({ ejercicio_id: IdQ.optional() })
+export const AmortizarSchema = z.object({ hasta: FechaISO }).strict()

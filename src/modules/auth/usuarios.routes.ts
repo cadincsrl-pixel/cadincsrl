@@ -129,7 +129,11 @@ const ModuloPermisosSchema = z.object({
   editar_mapeos:         z.boolean().optional(),
   // Pagos: alta masiva desde «Mis Comprobantes Recibidos» de ARCA (20260927b/c).
   importar_comprobantes: z.boolean().optional(),
-  obras_scope:       z.enum(['todas', 'asignadas']).optional(),
+  // Contabilidad tanda 5 (20260928l–r): movimientos de fondos sin factura
+  // (tab `tesoreria`) y bienes de uso con amortizaciones (tab `bienes`).
+  movimientos_fondos:    z.boolean().optional(),
+  bienes_uso:            z.boolean().optional(),
+  obras_scope:      z.enum(['todas', 'asignadas']).optional(),
 })
 
 // Validamos `permisos` como `z.record(ModuloKeySchema, ...)` PERO en zod v3

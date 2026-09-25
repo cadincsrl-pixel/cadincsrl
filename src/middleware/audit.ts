@@ -91,6 +91,8 @@ export const VERBOS: Record<string, string> = {
   contabilizar: 'contabilizar', liquido: 'cargar líquido',
   // Contabilidad: abrir el ejercicio siguiente desde Períodos (20260928e).
   siguiente: 'abrir el siguiente',
+  // Contabilidad tanda 5: asiento de IVA del mes y bienes de uso (20260928o–q).
+  generar: 'generar', amortizar: 'amortizar', 'revertir-baja': 'revertir baja',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
@@ -184,6 +186,13 @@ export const ENTIDADES: Record<string, string> = {
   // PUT /contabilidad/mapeos → «actualizar mapeo contable».
   'contabilidad/automaticos': 'contabilizador', 'contabilidad/mapeos': 'mapeo contable',
   'contabilidad/config': 'config contable',
+  // Tanda 5: POST /contabilidad/fondos/movimientos/5/anular → «anular movimiento de fondos 5»;
+  // POST /contabilidad/iva/3/generar → «generar DDJJ de IVA 3»; POST /contabilidad/bienes/amortizar → «amortizar bien de uso».
+  'contabilidad/fondos': 'movimiento de fondos', 'contabilidad/fondos/movimientos': 'movimiento de fondos',
+  'contabilidad/fondos/conceptos': 'concepto de fondos',
+  'contabilidad/fondos/movimientos/adjuntos': 'adjunto de movimiento de fondos',
+  'contabilidad/iva': 'DDJJ de IVA',
+  'contabilidad/bienes': 'bien de uso', 'contabilidad/bienes/amortizaciones': 'amortización de bienes de uso',
   'pagos/importaciones': 'importación ARCA',
 }
 

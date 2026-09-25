@@ -24,6 +24,12 @@ export interface CtbConfig {
   cvlp_modo: 'neto_liquidado' | 'bruto'
   compras_fecha_contable: 'fecha' | 'mes_iva'
   paga_cliente_modo: string | null
+  /** Tanda 5 (20260928n): compensar saldos a favor del mes anterior en el asiento de IVA. */
+  iva_ddjj_arrastre: boolean
+  /** Bienes de uso: cada cuánto se amortiza, cómo cuenta el año de alta y a qué fecha es la acumulada inicial. */
+  bu_frecuencia: 'mensual' | 'anual'
+  bu_criterio_alta: 'completo' | 'proporcional'
+  bu_corte_inicial: string
 }
 
 export const CONFIG_DEFAULT: CtbConfig = {
@@ -31,6 +37,10 @@ export const CONFIG_DEFAULT: CtbConfig = {
   cvlp_modo: 'neto_liquidado',
   compras_fecha_contable: 'mes_iva',
   paga_cliente_modo: null,
+  iva_ddjj_arrastre: false,
+  bu_frecuencia: 'mensual',
+  bu_criterio_alta: 'proporcional',
+  bu_corte_inicial: '2026-06-30',
 }
 
 /** Filas de `cont_config` (clave, valor jsonb) → CtbConfig, con defaults. */

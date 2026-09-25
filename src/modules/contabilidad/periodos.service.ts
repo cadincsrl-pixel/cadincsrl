@@ -60,6 +60,30 @@ export function ejercicioPorDefecto(ejercicios: CtbEjercicio[], hoy: string): Ct
   return [...ejercicios].sort((a, b) => (a.desde < b.desde ? 1 : a.desde > b.desde ? -1 : 0))[0] ?? null
 }
 
+/**
+ * ¿La DDJJ de IVA del período frena el cierre (tanda 5, 20260928o)? Solo si
+ * hay una generada (registro vigente) y quedó `desactualizado`: después de
+ * generarla se contabilizó algo del mes. `sin_generar` no bloquea (el modal
+ * de cierre lo avisa). Puro.
+ */
+export function ddjjBloqueaCierre(p: { estado?: unknown; registro?: unknown } | null | undefined): boolean {
+  return !!p && p.registro != null && p.estado === 'desactualizado'
+}
+
+/**
+ * Estado de la DDJJ para el cierre. Si la RPC todavía no existe en la base
+ * (20260928o sin aplicar) devuelve null y el cierre sigue como antes.
+ */
+async function ivaParaCierre(periodoId: number, db: SupabaseClient): Promise<{ estado?: unknown; registro?: unknown } | null> {
+  const { data, error } = await db.rpc('cont_iva_posicion', { p_periodo_id: periodoId })
+  if (error) {
+    const e = error as PgError
+    if (e.code === '42883' || e.code === 'PGRST202') return null
+    throw mapRpcError(e)
+  }
+  return (data ?? null) as { estado?: unknown; registro?: unknown } | null
+}
+
 export const periodosService = {
   async ejercicios(db: SupabaseClient = supabase): Promise<CtbEjercicio[]> {
     const { data, error } = await db.from('cont_ejercicios').select('id, nombre, desde, hasta, estado')
@@ -90,6 +114,8 @@ export const periodosService = {
    * Cerrar. Desde la fase 3, si en el rango del período hay orígenes sin
    * contabilizar, pendientes, desactualizados o a revertir, frena con 409
    * HAY_PENDIENTES_AUTOMATICOS { cantidad, por_estado } salvo `forzar`.
+   * Desde la tanda 5, una DDJJ de IVA generada y desactualizada frena con 409
+   * IVA_DDJJ_DESACTUALIZADA { periodo_id }, con el mismo `forzar`.
    */
   async cerrar(id: number, userId: string, db: SupabaseClient = supabase, forzar = false) {
     if (!forzar) {
@@ -102,6 +128,9 @@ export const periodosService = {
         const pend = desde <= hoy ? await automaticosService.pendientesDelRango(desde, hasta < hoy ? hasta : hoy, db) : null
         if (pend && pend.total > 0) {
           throw new ContabilidadHttpError(409, 'HAY_PENDIENTES_AUTOMATICOS', { periodo_id: id, cantidad: pend.total, por_estado: pend.por_estado })
+        }
+        if (ddjjBloqueaCierre(await ivaParaCierre(id, db))) {
+          throw new ContabilidadHttpError(409, 'IVA_DDJJ_DESACTUALIZADA', { periodo_id: id })
         }
       }
     }

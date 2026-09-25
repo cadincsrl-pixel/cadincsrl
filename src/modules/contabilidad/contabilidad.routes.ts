@@ -17,13 +17,19 @@
  * Tanda 4 (20260928h–k): `fuentes` en pendientes (circuitos), `modo` del
  * libro diario (detallado | dia | mes) y tab `estados` (balance y resultados).
  *
+ * Tanda 5 (20260928l–r): tab `tesoreria` (movimientos de fondos sin factura,
+ * flag `movimientos_fondos`), asiento mensual de IVA en la tab `periodos`
+ * (flag `contabilizar`; cerrar frena con 409 IVA_DDJJ_DESACTUALIZADA salvo
+ * `forzar`) y tab `bienes` (bienes de uso y amortizaciones, flag
+ * `bienes_uso`). Los tres flags nacen en false.
+ *
  * Rutas literales (`/cuentas/importar`) van ANTES de `/:id`.
  */
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import type { ZodType } from 'zod'
 import { authMiddleware } from '../../middleware/auth.js'
-import { requirePermiso, requireFlag, requireTab, tieneFlag } from '../../middleware/permission.js'
+import { requirePermiso, requirePermisoOr, requireFlag, requireTab, tieneFlag } from '../../middleware/permission.js'
 import { ContabilidadHttpError, cuerpoError, errorDeZod } from './contabilidad.errors.js'
 import { dbDe } from './comun.js'
 import { asientosService } from './asientos.service.js'
@@ -34,6 +40,10 @@ import { tesoreriaService } from './tesoreria.service.js'
 import { catalogosService } from './catalogos.service.js'
 import { automaticosService } from './automaticos.service.js'
 import { mapeosService } from './mapeos.service.js'
+import { fondosService } from './fondos.service.js'
+import { fondosAdjuntosService } from './fondos-adjuntos.service.js'
+import { ivaService } from './iva.service.js'
+import { bienesService } from './bienes.service.js'
 import {
   esBoolQ, MotivoSchema, PeriodosQuerySchema,
   CuentaSchema, UpdateCuentaSchema, ListCuentasQuerySchema, ImportarPlanSchema,
@@ -41,6 +51,9 @@ import {
   DiarioQuerySchema, MayorQuerySchema, SumasSaldosQuerySchema, BalanceQuerySchema, ResultadosQuerySchema,
   TesoreriaSchema, UpdateTesoreriaSchema, ListTesoreriaQuerySchema, AuxiliaresQuerySchema,
   PendientesQuerySchema, PropuestaQuerySchema, ContabilizarSchema, GuardarMapeosSchema, ConfigSchema, CerrarPeriodoSchema,
+  TesMovimientoSchema, TesMovimientosQuerySchema, TesConceptoSchema, UpdateTesConceptoSchema, TesConceptosQuerySchema,
+  TesAdjUploadUrlSchema, TesAdjRegistrarSchema, IvaEstadosQuerySchema, IvaGenerarSchema,
+  BienSchema, BajaBienSchema, BienesQuerySchema, ImportarBienesSchema, CuadroBienesQuerySchema, CorridasQuerySchema, AmortizarSchema,
 } from './contabilidad.schema.js'
 
 const MOD = 'contabilidad'
@@ -69,6 +82,13 @@ const tabAutomaticos   = requireTab(MOD, 'automaticos')
 const tabMapeos        = requireTab(MOD, 'mapeos')
 const flagContabilizar = requireFlag(MOD, 'contabilizar')
 const flagMapeos       = requireFlag(MOD, 'editar_mapeos')
+// Tanda 5 (20260928l–r). Default false.
+const tabTesoreria     = requireTab(MOD, 'tesoreria')
+const tabBienes        = requireTab(MOD, 'bienes')
+const flagFondos       = requireFlag(MOD, 'movimientos_fondos')
+const flagBienes       = requireFlag(MOD, 'bienes_uso')
+// Subir un adjunto va justo después de crear el movimiento: alcanza con crear o editar.
+const creaOEdita       = requirePermisoOr([{ modulo: MOD, accion: 'creacion' }, { modulo: MOD, accion: 'actualizacion' }])
 
 /** Errores tipados → `{ error, campo?, detail? }`. Lo demás sube al onError global. */
 function handler(fn: (c: any) => Promise<any>) {
@@ -240,6 +260,109 @@ ctb.get('/config', lectura, handler(async (c) => automaticosService.config(db(c)
 
 ctb.patch('/config', lectura, actualizacion, tabMapeos, flagMapeos, valida('json', ConfigSchema), handler(async (c) =>
   mapeosService.guardarConfig(c.req.valid('json'), uid(c), db(c))))
+
+// ═══════════════════════════════════ Movimientos de fondos (tanda 5) ════════
+// Tab `tesoreria`. Literales (`/fondos/conceptos`) antes de `/fondos/movimientos/:id`.
+
+ctb.get('/fondos/conceptos', lectura, tabTesoreria, valida('query', TesConceptosQuerySchema), handler(async (c) =>
+  fondosService.conceptos(esBoolQ(c.req.valid('query').incluir_inactivos), db(c))))
+
+ctb.post('/fondos/conceptos', lectura, creacion, tabTesoreria, flagFondos, valida('json', TesConceptoSchema), handler(async (c) =>
+  c.json(await fondosService.crearConcepto(c.req.valid('json'), uid(c), db(c)), 201)))
+
+ctb.patch('/fondos/conceptos/:id', lectura, actualizacion, tabTesoreria, flagFondos, valida('json', UpdateTesConceptoSchema), handler(async (c) =>
+  fondosService.editarConcepto(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+ctb.get('/fondos/movimientos', lectura, tabTesoreria, valida('query', TesMovimientosQuerySchema), handler(async (c) =>
+  fondosService.listar(c.req.valid('query'), db(c))))
+
+ctb.post('/fondos/movimientos', lectura, creacion, tabTesoreria, flagFondos, valida('json', TesMovimientoSchema), handler(async (c) =>
+  c.json(await fondosService.crear(c.req.valid('json'), uid(c), db(c)), 201)))
+
+ctb.get('/fondos/movimientos/:id', lectura, tabTesoreria, handler(async (c) =>
+  fondosService.detalle(idParam(c), db(c))))
+
+ctb.patch('/fondos/movimientos/:id', lectura, actualizacion, tabTesoreria, flagFondos, valida('json', TesMovimientoSchema), handler(async (c) =>
+  fondosService.editar(idParam(c), c.req.valid('json'), uid(c), db(c))))
+
+ctb.post('/fondos/movimientos/:id/anular', lectura, actualizacion, tabTesoreria, flagFondos, valida('json', MotivoSchema), handler(async (c) =>
+  fondosService.anular(idParam(c), c.req.valid('json').motivo, uid(c), db(c))))
+
+ctb.get('/fondos/movimientos/:id/adjuntos', lectura, tabTesoreria, handler(async (c) =>
+  fondosAdjuntosService.listar(idParam(c), db(c))))
+
+ctb.post('/fondos/movimientos/:id/adjuntos/upload-url', lectura, creaOEdita, tabTesoreria, flagFondos, valida('json', TesAdjUploadUrlSchema), handler(async (c) =>
+  fondosAdjuntosService.uploadUrl(idParam(c), c.req.valid('json'), db(c))))
+
+ctb.post('/fondos/movimientos/:id/adjuntos', lectura, creaOEdita, tabTesoreria, flagFondos, valida('json', TesAdjRegistrarSchema), handler(async (c) =>
+  c.json(await fondosAdjuntosService.registrar(idParam(c), c.req.valid('json'), uid(c), db(c)), 201)))
+
+ctb.get('/fondos/movimientos/:id/adjuntos/:adjId/signed-url', lectura, tabTesoreria, handler(async (c) =>
+  fondosAdjuntosService.signedUrl(idParam(c), idParam(c, 'adjId'), db(c))))
+
+ctb.delete('/fondos/movimientos/:id/adjuntos/:adjId', lectura, actualizacion, tabTesoreria, flagFondos, handler(async (c) =>
+  fondosAdjuntosService.borrar(idParam(c), idParam(c, 'adjId'), uid(c), db(c))))
+
+// ═══════════════════════════════════ Asiento mensual de IVA (tanda 5) ═══════
+// Tab `periodos`. La posición fiscal (libros) la arma el server; el body de
+// generar solo trae `forzar`.
+
+ctb.get('/iva', lectura, tabPeriodos, valida('query', IvaEstadosQuerySchema), handler(async (c) =>
+  ivaService.estados(c.req.valid('query').ejercicio_id, db(c))))
+
+ctb.get('/iva/:periodo_id', lectura, tabPeriodos, handler(async (c) =>
+  ivaService.posicion(idParam(c, 'periodo_id'), db(c))))
+
+ctb.post('/iva/:periodo_id/generar', lectura, actualizacion, tabPeriodos, flagContabilizar, handler(async (c) => {
+  const raw = await c.req.json().catch(() => ({}))
+  const b = IvaGenerarSchema.safeParse(raw ?? {})
+  if (!b.success) {
+    const e = errorDeZod(b.error.issues[0] as any)
+    return c.json(e.body, e.status as any)
+  }
+  return ivaService.generar(idParam(c, 'periodo_id'), b.data.forzar, uid(c), db(c))
+}))
+
+ctb.post('/iva/:periodo_id/anular', lectura, actualizacion, tabPeriodos, flagContabilizar, valida('json', MotivoSchema), handler(async (c) =>
+  ivaService.anular(idParam(c, 'periodo_id'), c.req.valid('json').motivo, uid(c), db(c))))
+
+// ═══════════════════════════════════ Bienes de uso (tanda 5) ════════════════
+// Tab `bienes`. Literales (`importar`, `cuadro`, `amortizaciones`, `amortizar`) antes de `/bienes/:id`.
+
+ctb.get('/bienes', lectura, tabBienes, valida('query', BienesQuerySchema), handler(async (c) =>
+  bienesService.listar(c.req.valid('query'), db(c))))
+
+ctb.post('/bienes/importar', lectura, creacion, tabBienes, flagBienes, valida('json', ImportarBienesSchema), handler(async (c) =>
+  bienesService.importar(c.req.valid('json'), uid(c), db(c))))
+
+ctb.get('/bienes/cuadro', lectura, tabBienes, valida('query', CuadroBienesQuerySchema), handler(async (c) =>
+  bienesService.cuadro(c.req.valid('query').hasta, db(c))))
+
+ctb.get('/bienes/amortizaciones', lectura, tabBienes, valida('query', CorridasQuerySchema), handler(async (c) =>
+  bienesService.corridas(c.req.valid('query').ejercicio_id, db(c))))
+
+ctb.post('/bienes/amortizar', lectura, actualizacion, tabBienes, flagBienes, valida('json', AmortizarSchema), handler(async (c) =>
+  bienesService.amortizar(c.req.valid('json').hasta, uid(c), db(c))))
+
+ctb.post('/bienes/amortizaciones/:corrida_id/anular', lectura, actualizacion, tabBienes, flagBienes, valida('json', MotivoSchema), handler(async (c) =>
+  bienesService.anularCorrida(idParam(c, 'corrida_id'), c.req.valid('json').motivo, uid(c), db(c))))
+
+ctb.post('/bienes', lectura, creacion, tabBienes, flagBienes, valida('json', BienSchema), handler(async (c) =>
+  c.json(await bienesService.guardar(c.req.valid('json'), null, uid(c), db(c)), 201)))
+
+ctb.get('/bienes/:id', lectura, tabBienes, handler(async (c) =>
+  bienesService.detalle(idParam(c), db(c))))
+
+ctb.patch('/bienes/:id', lectura, actualizacion, tabBienes, flagBienes, valida('json', BienSchema), handler(async (c) =>
+  bienesService.guardar(c.req.valid('json'), idParam(c), uid(c), db(c))))
+
+ctb.post('/bienes/:id/baja', lectura, actualizacion, tabBienes, flagBienes, valida('json', BajaBienSchema), handler(async (c) => {
+  const b = c.req.valid('json')
+  return bienesService.baja(idParam(c), b.fecha, b.motivo, uid(c), db(c))
+}))
+
+ctb.post('/bienes/:id/revertir-baja', lectura, actualizacion, tabBienes, flagBienes, handler(async (c) =>
+  bienesService.revertirBaja(idParam(c), uid(c), db(c))))
 
 // ═══════════════════════════════════ Catálogos ══════════════════════════════
 
