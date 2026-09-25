@@ -164,6 +164,9 @@ describe('From del mail', () => {
     expect(parsearFrom('pagos@cadinc.com.ar')).toEqual({ nombre: '', direccion: 'pagos@cadinc.com.ar' })
     expect(parsearFrom('CADINC SRL <pagos@cadinc.com.ar>')).toEqual({ nombre: 'CADINC SRL', direccion: 'pagos@cadinc.com.ar' })
     expect(parsearFrom('"CADINC, SRL" <pagos@cadinc.com.ar>')).toEqual({ nombre: 'CADINC, SRL', direccion: 'pagos@cadinc.com.ar' })
+    // Así está SMTP_FROM en Render: sin <>. El SMTP rechazaba el texto entero como dirección (25/09).
+    expect(parsearFrom('CADINC SRL aviso@cadinc.com.ar')).toEqual({ nombre: 'CADINC SRL', direccion: 'aviso@cadinc.com.ar' })
+    expect(armarFrom('CADINC SRL aviso@cadinc.com.ar', null)).toEqual({ name: 'CADINC SRL', address: 'aviso@cadinc.com.ar' })
   })
   it('la dirección sale SIEMPRE del env; el nombre, del configurado o del que traía SMTP_FROM', () => {
     expect(armarFrom('CADINC SRL <pagos@cadinc.com.ar>', 'CADINC Pagos')).toEqual({ name: 'CADINC Pagos', address: 'pagos@cadinc.com.ar' })

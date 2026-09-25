@@ -55,6 +55,14 @@ export function parsearFrom(from: string): { nombre: string; direccion: string }
   const t = (from ?? '').trim()
   const m = t.match(/^\s*"?([^"<]*?)"?\s*<\s*([^<>\s]+)\s*>\s*$/)
   if (m) return { nombre: (m[1] ?? '').trim(), direccion: (m[2] ?? '').trim() }
+  // Sin <>: «CADINC SRL aviso@cadinc.com.ar» (así está en Render). La dirección
+  // es la palabra con @; lo demás, el nombre. Mandar el texto entero como
+  // dirección hizo que el SMTP rechazara todos los avisos (25/09, 553 5.7.1).
+  const dir = t.match(/[^\s<>"]+@[^\s<>"]+/)
+  if (dir) {
+    const nombre = t.replace(dir[0], '').replace(/[<>"]/g, ' ').replace(/\s+/g, ' ').trim()
+    return { nombre, direccion: dir[0] }
+  }
   return { nombre: '', direccion: t }
 }
 
