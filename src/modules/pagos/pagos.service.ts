@@ -1076,8 +1076,9 @@ export const pagosService = {
   /**
    * POST /facturas/:id/pasar-a-deuda (20260929n): la factura entró con el
    * importador como «de meses ya pagados» pero se debe. La RPC exige el flag
-   * efectivo pago_a_reconstruir y que no tenga pagos ni NC aplicadas
-   * (FACTURA_NO_A_RECONSTRUIR / FACTURA_CON_PAGOS). La ruta ya chequeó
+   * efectivo pago_a_reconstruir y saldo > 0 (FACTURA_NO_A_RECONSTRUIR /
+   * FACTURA_SIN_SALDO). Desde 20260929y acepta una factura con pagos o NC ya
+   * reconstruidos: pasa a deuda el saldo que queda. La ruta ya chequeó
    * `aprobar_facturas`. Devuelve la fila de v_pagos_facturas.
    */
   async pasarADeuda(id: number, userId: string, verPii: boolean) {
