@@ -13,6 +13,7 @@ import type {
   DocUploadUrlDto,
   DocRegistrarDto,
 } from './contratistas.schema.js'
+import { opcionesSignedUrl } from '../../lib/signed-url.js'
 
 // Error tipado del módulo. El onError del sub-app (contratistas.routes.ts) lo
 // traduce a `{ error: <mensaje legible>, code?: <CODIGO>, ...detail }`.
@@ -84,10 +85,10 @@ async function leerArchivoSubido(storagePath: string): Promise<{ hash: string; s
   return { hash: createHash('sha256').update(buf).digest('hex'), size: dl.data.size }
 }
 
-async function crearSignedUrl(path: string, nombre: string | null) {
+async function crearSignedUrl(path: string, nombre: string | null, mime: string | null = null, descargar = false) {
   const { data, error } = await supabaseAdmin.storage
     .from(DOCS_BUCKET)
-    .createSignedUrl(path, 900, { download: nombre ?? undefined })
+    .createSignedUrl(path, 900, opcionesSignedUrl({ nombre, path, mime, descargar }))
   if (error) throw new ContratError(500, error.message)
   return { url: data.signedUrl, nombre_archivo: nombre }
 }
@@ -427,18 +428,18 @@ export const contratistasService = {
     return data
   },
 
-  async dniSignedUrl(contratId: number, token: string) {
+  async dniSignedUrl(contratId: number, token: string, descargar = false) {
     const supabase = createSupabaseClient(token)
     const { data: c, error } = await supabase
       .from('contratistas')
-      .select('dni_doc_path, dni_doc_nombre')
+      .select('dni_doc_path, dni_doc_nombre, dni_doc_mime')
       .eq('id', contratId)
       .single()
     if (error) throw new ContratError(500, error.message)
     if (!c?.dni_doc_path) {
       throw new ContratError(404, 'El contratista no tiene DNI adjunto')
     }
-    return crearSignedUrl(c.dni_doc_path, c.dni_doc_nombre ?? null)
+    return crearSignedUrl(c.dni_doc_path, c.dni_doc_nombre ?? null, c.dni_doc_mime ?? null, descargar)
   },
 
   async dniDelete(contratId: number, token: string, userId: string) {
@@ -695,10 +696,10 @@ export const contratistasService = {
     return data as PresupuestoRow
   },
 
-  async presupDocSignedUrl(id: number, token: string) {
+  async presupDocSignedUrl(id: number, token: string, descargar = false) {
     const p = await getPresupuestoRow(createSupabaseClient(token), id)
     if (!p.doc_path) throw new ContratError(404, 'El presupuesto no tiene adjunto')
-    return crearSignedUrl(p.doc_path, p.doc_nombre)
+    return crearSignedUrl(p.doc_path, p.doc_nombre, null, descargar)
   },
 
   async presupDocDelete(id: number, token: string, userId: string) {

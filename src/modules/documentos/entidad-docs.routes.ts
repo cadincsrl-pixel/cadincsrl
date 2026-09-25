@@ -15,6 +15,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { entidadDocsService, entidadInfo, VehiculoDocError, type Entidad } from './entidad-docs.service.js'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 // Los tipos válidos dependen de la entidad (camión/batea aceptan 6, máquina y
 // unidad los 8 de flota), así que los schemas se arman por entidad.
@@ -125,6 +126,7 @@ export function buildEntidadDocsRoutes(entidad: Entidad): Hono {
       Number(c.req.param('id')),
       Number(c.req.param('docId')),
       c.get('accessToken'),
+      quiereDescargar(c.req.query('descargar')),
     )),
   )
 

@@ -22,6 +22,7 @@ import type {
   SeguroUploadUrlDto,
   SeguroRegistrarDto,
 } from './alquiler.schema.js'
+import { opcionesSignedUrl } from '../../lib/signed-url.js'
 
 // ── Storage de la póliza de seguro (bucket privado alquiler-docs) ──
 const SEGURO_BUCKET = 'alquiler-docs'
@@ -1077,12 +1078,12 @@ export const alquilerService = {
     return data
   },
 
-  async seguroSignedUrl(maquinaId: number, token: string, userId: string) {
+  async seguroSignedUrl(maquinaId: number, token: string, userId: string, descargar = false) {
     await requireGestionDocs(userId)
     const sb = createSupabaseClient(token)
     const { data: maq, error } = await sb
       .from('alquiler_maquinas')
-      .select('seguro_poliza_path, seguro_poliza_nombre')
+      .select('seguro_poliza_path, seguro_poliza_nombre, seguro_poliza_mime')
       .eq('id', maquinaId)
       .single()
     if (error) throw new HTTPException(500, { message: error.message })
@@ -1091,7 +1092,7 @@ export const alquilerService = {
     }
     const { data, error: sErr } = await supabaseAdmin.storage
       .from(SEGURO_BUCKET)
-      .createSignedUrl(maq.seguro_poliza_path, 900, { download: maq.seguro_poliza_nombre ?? undefined })
+      .createSignedUrl(maq.seguro_poliza_path, 900, opcionesSignedUrl({ nombre: maq.seguro_poliza_nombre, path: maq.seguro_poliza_path, mime: maq.seguro_poliza_mime, descargar }))
     if (sErr) throw new HTTPException(500, { message: sErr.message })
     return { url: data.signedUrl, nombre_archivo: maq.seguro_poliza_nombre }
   },

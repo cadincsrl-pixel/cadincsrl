@@ -21,6 +21,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
+import { opcionesSignedUrl } from '../../lib/signed-url.js'
 
 const ALLOWED_MIME = new Set([
   'image/jpeg','image/png','image/webp','image/heic','image/heif','application/pdf',
@@ -234,12 +235,12 @@ export const entidadDocsService = {
     return data
   },
 
-  async signedUrl(entidad: Entidad, entidadId: number, id: number, token: string) {
+  async signedUrl(entidad: Entidad, entidadId: number, id: number, token: string, descargar = false) {
     const { tabla, fkCol, bucket } = tablaInfo(entidad)
     const sb = createSupabaseClient(token)
     const { data: doc, error } = await sb
       .from(tabla)
-      .select('id, storage_path, nombre_archivo, deleted_at')
+      .select('id, storage_path, nombre_archivo, mime_type, deleted_at')
       .eq('id', id)
       .eq(fkCol, entidadId)
       .is('deleted_at', null)
@@ -249,7 +250,7 @@ export const entidadDocsService = {
 
     const { data, error: sErr } = await supabase.storage
       .from(bucket)
-      .createSignedUrl(doc.storage_path, 900, { download: doc.nombre_archivo })
+      .createSignedUrl(doc.storage_path, 900, opcionesSignedUrl({ nombre: doc.nombre_archivo, path: doc.storage_path, mime: doc.mime_type, descargar }))
     if (sErr) throw new VehiculoDocError(500, 'SIGNED_URL_ERROR', sErr.message)
     return { url: data.signedUrl, nombre_archivo: doc.nombre_archivo }
   },

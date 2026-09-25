@@ -61,6 +61,7 @@ import {
   ContactosSchema, LidVentasQuerySchema, LidVentasDescargarQuerySchema, LidComprasQuerySchema, LidComprasDescargarQuerySchema,
 } from './facturacion.schema.js'
 import { z } from 'zod'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 const MOD = 'facturacion'
 const fact = new Hono()
@@ -428,7 +429,7 @@ fact.post('/cobros/retenciones/descartar-pendiente', lectura, registrarCobros, t
   valida('json', z.object({ storage_path: z.string().min(1).max(300) })), handler(async (c) =>
     cobrosService.descartarPendiente(c.req.valid('json').storage_path)))
 
-const urlRetencion = handler(async (c) => cobrosService.urlRetencion(idParam(c), db(c)))
+const urlRetencion = handler(async (c) => cobrosService.urlRetencion(idParam(c), db(c), quiereDescargar(c.req.query('descargar'))))
 fact.get('/cobros/retenciones/:id/url', lectura, tabLeerCobros, urlRetencion)
 fact.get('/retenciones/:id/url', lectura, tabLeerCobros, urlRetencion)
 
@@ -445,7 +446,7 @@ fact.post('/cobros/adjuntos/descartar-pendiente', lectura, registrarCobros, tabC
     cobrosService.descartarAdjuntoPendiente(c.req.valid('json').storage_path)))
 
 fact.get('/cobros/adjuntos/:id/url', lectura, tabLeerCobros, handler(async (c) =>
-  cobrosService.urlAdjunto(idParam(c), db(c))))
+  cobrosService.urlAdjunto(idParam(c), db(c), quiereDescargar(c.req.query('descargar')))))
 
 // Borrar: quien registra o quien anula cobros. De un cobro anulado, no (COBRO_ANULADO).
 fact.delete('/cobros/adjuntos/:id', lectura, tabCobranzas, handler(async (c) => {

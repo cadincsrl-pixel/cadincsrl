@@ -55,6 +55,7 @@ import {
   TesAdjUploadUrlSchema, TesAdjRegistrarSchema, IvaEstadosQuerySchema, IvaGenerarSchema,
   BienSchema, BajaBienSchema, BienesQuerySchema, ImportarBienesSchema, CuadroBienesQuerySchema, CorridasQuerySchema, AmortizarSchema,
 } from './contabilidad.schema.js'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 const MOD = 'contabilidad'
 const ctb = new Hono()
@@ -298,7 +299,7 @@ ctb.post('/fondos/movimientos/:id/adjuntos', lectura, creaOEdita, tabTesoreria, 
   c.json(await fondosAdjuntosService.registrar(idParam(c), c.req.valid('json'), uid(c), db(c)), 201)))
 
 ctb.get('/fondos/movimientos/:id/adjuntos/:adjId/signed-url', lectura, tabTesoreria, handler(async (c) =>
-  fondosAdjuntosService.signedUrl(idParam(c), idParam(c, 'adjId'), db(c))))
+  fondosAdjuntosService.signedUrl(idParam(c), idParam(c, 'adjId'), db(c), quiereDescargar(c.req.query('descargar')))))
 
 ctb.delete('/fondos/movimientos/:id/adjuntos/:adjId', lectura, actualizacion, tabTesoreria, flagFondos, handler(async (c) =>
   fondosAdjuntosService.borrar(idParam(c), idParam(c, 'adjId'), uid(c), db(c))))

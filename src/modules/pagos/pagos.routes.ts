@@ -53,6 +53,7 @@ import {
   ListConceptosQuerySchema, CreateConceptoSchema, UpdateConceptoSchema,
   PeriodoIvaSugeridoQuerySchema, ImportarRecibidosSchema, DeshacerImportacionSchema, ImputarFacturaSchema, ImputarLoteSchema, MarcarPagadasSchema,
 } from './pagos.schema.js'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 const pagos = new Hono()
 pagos.use('*', authMiddleware)
@@ -270,7 +271,7 @@ pagos.post('/facturas/:id/adjuntos', creacion, tabFactura, zValidator('json', Re
   pagosAdjuntosService.registrar('facturas', idParam(c), c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
 
 pagos.get('/facturas/:id/adjuntos/:adjId/signed-url', lectura, tabPago, handler(async (c) =>
-  pagosAdjuntosService.signedUrl('facturas', idParam(c), idParam(c, 'adjId'), c.get('accessToken'))))
+  pagosAdjuntosService.signedUrl('facturas', idParam(c), idParam(c, 'adjId'), c.get('accessToken'), quiereDescargar(c.req.query('descargar')))))
 
 pagos.delete('/facturas/:id/adjuntos/:adjId', actualizacion, tabFactura, handler(async (c) =>
   pagosAdjuntosService.softDelete('facturas', idParam(c), idParam(c, 'adjId'), c.get('user').id, c.get('accessToken'))))
@@ -370,7 +371,7 @@ pagos.post('/ordenes/:id/adjuntos', lectura, registrarPagos, tabPago, zValidator
   pagosAdjuntosService.registrar('ordenes', idParam(c), c.req.valid('json'), c.get('user').id, c.get('accessToken'))))
 
 pagos.get('/ordenes/:id/adjuntos/:adjId/signed-url', lectura, tabPago, handler(async (c) =>
-  pagosAdjuntosService.signedUrl('ordenes', idParam(c), idParam(c, 'adjId'), c.get('accessToken'))))
+  pagosAdjuntosService.signedUrl('ordenes', idParam(c), idParam(c, 'adjId'), c.get('accessToken'), quiereDescargar(c.req.query('descargar')))))
 
 // `?motivo=` (opcional, 20260929x): queda en el obs del adjunto quitado.
 pagos.delete('/ordenes/:id/adjuntos/:adjId', lectura, registrarPagos, tabPago, handler(async (c) =>

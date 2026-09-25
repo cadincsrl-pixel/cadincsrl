@@ -4,7 +4,7 @@
  * Clon del patrón de logistica/cobros/adjuntos.service.ts: signed URL de 3
  * pasos (upload-url → PUT del cliente → registrar), sha256 calculado EN EL
  * SERVER sobre lo que quedó en el bucket, soft delete, y
- * `createSignedUrl(path, 900, { download })` para abrir.
+ * `createSignedUrl(path, 900, opcionesSignedUrl(...))` para abrir (PDF/imagen inline).
  *
  * Dos tablas, una por entidad (`pagos_facturas_adjuntos` / `pagos_ordenes_adjuntos`),
  * con reglas de dedup distintas (diseño v3 §4.6):
@@ -26,6 +26,7 @@ import {
   FORMAS_CON_COMPROBANTE_OBLIGATORIO,
   type AdjuntoPendienteDto, type RegistrarAdjDto, type UploadUrlDto,
 } from './pagos.schema.js'
+import { opcionesSignedUrl } from '../../lib/signed-url.js'
 
 export const BUCKET = 'pagos-docs'
 
@@ -330,15 +331,15 @@ export const pagosAdjuntosService = {
     return { ...(data as Record<string, unknown>), control }
   },
 
-  async signedUrl(entidad: Entidad, id: number, adjId: number, token: string) {
+  async signedUrl(entidad: Entidad, id: number, adjId: number, token: string, descargar = false) {
     const cfg = CFG[entidad]
     const sb = createSupabaseClient(token)
     const { data: doc, error } = await sb
-      .from(cfg.tabla).select('id, storage_path, nombre_archivo').eq('id', adjId).eq(cfg.fk, id).maybeSingle()
+      .from(cfg.tabla).select('id, storage_path, nombre_archivo, mime_type').eq('id', adjId).eq(cfg.fk, id).maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!doc) throw new PagosHttpError(404, 'ADJ_NO_EXISTE')
     const { data, error: sErr } = await supabase.storage
-      .from(BUCKET).createSignedUrl((doc as any).storage_path, 900, { download: (doc as any).nombre_archivo })
+      .from(BUCKET).createSignedUrl((doc as any).storage_path, 900, opcionesSignedUrl({ nombre: (doc as any).nombre_archivo, path: (doc as any).storage_path, mime: (doc as any).mime_type, descargar }))
     if (sErr) throw new PagosHttpError(500, 'SIGNED_URL_ERROR', sErr.message)
     return { url: data.signedUrl, nombre_archivo: (doc as any).nombre_archivo }
   },

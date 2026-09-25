@@ -3,7 +3,7 @@
  * tabla `tesoreria_movimientos_adjuntos`, 20260928l). Clon del patrón de
  * `pagos/adjuntos.service.ts`: signed URL de 3 pasos (upload-url → PUT del
  * cliente → registrar), sha256 calculado EN EL SERVER sobre lo que quedó en
- * el bucket, soft delete y `createSignedUrl(path, 900, { download })`.
+ * el bucket, soft delete y `createSignedUrl(path, 900, opcionesSignedUrl(...))`.
  *
  * Rutas en el bucket: `movimientos/<id>/<uuid>.<ext>`. Dedup por movimiento
  * (índice único `(movimiento_id, hash_sha256) where deleted_at is null`):
@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase.js'
 import { ContabilidadHttpError, mapRpcError, type PgError } from './contabilidad.errors.js'
 import { TES_ADJ_MAX_BYTES, TES_ADJ_MIMES, type TesAdjRegistrarDto, type TesAdjUploadUrlDto } from './contabilidad.schema.js'
+import { opcionesSignedUrl } from '../../lib/signed-url.js'
 
 export const BUCKET_TESORERIA = 'tesoreria-docs'
 const TABLA = 'tesoreria_movimientos_adjuntos'
@@ -116,13 +117,13 @@ export const fondosAdjuntosService = {
     return data as TesAdjunto
   },
 
-  async signedUrl(movimientoId: number, adjId: number, db: SupabaseClient = supabase): Promise<{ url: string; nombre_archivo: string }> {
-    const { data: doc, error } = await db.from(TABLA).select('id, storage_path, nombre_archivo')
+  async signedUrl(movimientoId: number, adjId: number, db: SupabaseClient = supabase, descargar = false): Promise<{ url: string; nombre_archivo: string }> {
+    const { data: doc, error } = await db.from(TABLA).select('id, storage_path, nombre_archivo, mime_type')
       .eq('id', adjId).eq('movimiento_id', movimientoId).is('deleted_at', null).maybeSingle()
     if (error) throw mapRpcError(error as PgError)
     if (!doc) throw new ContabilidadHttpError(404, 'ADJUNTO_NO_EXISTE', { adjunto_id: adjId })
-    const d = doc as { storage_path: string; nombre_archivo: string }
-    const { data, error: sErr } = await supabase.storage.from(BUCKET_TESORERIA).createSignedUrl(d.storage_path, 900, { download: d.nombre_archivo })
+    const d = doc as { storage_path: string; nombre_archivo: string; mime_type: string | null }
+    const { data, error: sErr } = await supabase.storage.from(BUCKET_TESORERIA).createSignedUrl(d.storage_path, 900, opcionesSignedUrl({ nombre: d.nombre_archivo, path: d.storage_path, mime: d.mime_type, descargar }))
     if (sErr || !data) throw new ContabilidadHttpError(500, 'SIGNED_URL_ERROR', { mensaje: sErr?.message })
     return { url: data.signedUrl, nombre_archivo: d.nombre_archivo }
   },

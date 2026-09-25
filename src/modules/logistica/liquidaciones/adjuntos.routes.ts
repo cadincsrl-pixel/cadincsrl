@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { liqAdjuntosService, LiqAdjError } from './adjuntos.service.js'
+import { quiereDescargar } from '../../../lib/signed-url.js'
 
 const docs = new Hono()
 docs.use('*', authMiddleware)
@@ -75,6 +76,7 @@ docs.get(
     Number(c.req.param('id')),
     Number(c.req.param('adjId')),
     c.get('accessToken'),
+    quiereDescargar(c.req.query('descargar')),
   )),
 )
 

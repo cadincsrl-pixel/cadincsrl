@@ -14,6 +14,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso } from '../../middleware/permission.js'
 import { flotaDocsService, FlotaDocError } from './flota-docs.service.js'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 const TipoEnum = z.enum([
   'titulo', 'tarjeta_verde', 'vtv', 'rto',
@@ -113,6 +114,7 @@ docs.get(
     Number(c.req.param('id')),
     Number(c.req.param('docId')),
     c.get('accessToken'),
+    quiereDescargar(c.req.query('descargar')),
   )),
 )
 

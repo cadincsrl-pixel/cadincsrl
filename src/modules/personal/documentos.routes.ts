@@ -5,6 +5,7 @@ import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag } from '../../middleware/permission.js'
 import { documentosService, PersonalDocError } from './documentos.service.js'
 import { supabase as supabaseAdmin } from '../../lib/supabase.js'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 const docs = new Hono()
 docs.use('*', authMiddleware)
@@ -107,6 +108,7 @@ docs.get(
     c.req.param('leg'),
     Number(c.req.param('id')),
     c.get('accessToken'),
+    quiereDescargar(c.req.query('descargar')),
   )),
 )
 

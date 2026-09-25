@@ -145,7 +145,10 @@ describe('adjuntos del cobro — rutas', () => {
     const u = await fact.request('/cobros/adjuntos/50/url')
     expect(u.status).toBe(200)
     expect(await u.json()).toMatchObject({ url: 'https://s/dl', nombre_archivo: 'transferencia.pdf' })
-    expect(storage.createSignedUrl).toHaveBeenCalledWith('cobros/9/abc.pdf', 900, { download: 'transferencia.pdf' })
+    // PDF: se abre en el navegador (sin download); ?descargar=1 lo baja con su nombre.
+    expect(storage.createSignedUrl).toHaveBeenCalledWith('cobros/9/abc.pdf', 900, undefined)
+    expect((await fact.request('/cobros/adjuntos/50/url?descargar=1')).status).toBe(200)
+    expect(storage.createSignedUrl).toHaveBeenLastCalledWith('cobros/9/abc.pdf', 900, { download: 'transferencia.pdf' })
     expect((await post('/cobros/9/adjuntos', ADJ)).status).toBe(403)
     expect((await del('/cobros/adjuntos/50')).status).toBe(403)
   })

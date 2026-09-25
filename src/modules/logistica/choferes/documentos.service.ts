@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase } from '../../../lib/supabase.js'
+import { opcionesSignedUrl } from '../../../lib/signed-url.js'
 
 const BUCKET = 'chofer-docs'
 const ALLOWED_MIME = new Set([
@@ -161,11 +162,11 @@ export const choferDocsService = {
     return data
   },
 
-  async signedUrl(choferId: number, id: number, token: string) {
+  async signedUrl(choferId: number, id: number, token: string, descargar = false) {
     const sb = createSupabaseClient(token)
     const { data: doc, error } = await sb
       .from('chofer_documentos')
-      .select('id, chofer_id, storage_path, nombre_archivo, deleted_at')
+      .select('id, chofer_id, storage_path, nombre_archivo, mime_type, deleted_at')
       .eq('id', id)
       .eq('chofer_id', choferId)
       .is('deleted_at', null)
@@ -175,7 +176,7 @@ export const choferDocsService = {
 
     const { data, error: sErr } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(doc.storage_path, 900, { download: doc.nombre_archivo })
+      .createSignedUrl(doc.storage_path, 900, opcionesSignedUrl({ nombre: doc.nombre_archivo, path: doc.storage_path, mime: doc.mime_type, descargar }))
     if (sErr) throw new ChoferDocError(500, 'SIGNED_URL_ERROR', sErr.message)
     return { url: data.signedUrl, nombre_archivo: doc.nombre_archivo }
   },

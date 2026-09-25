@@ -11,6 +11,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { createSupabaseClient, supabase } from '../../lib/supabase.js'
+import { opcionesSignedUrl } from '../../lib/signed-url.js'
 
 const BUCKET = 'flota-docs'
 const ALLOWED_MIME = new Set([
@@ -178,11 +179,11 @@ export const flotaDocsService = {
     return data
   },
 
-  async signedUrl(vehiculoId: number, id: number, token: string) {
+  async signedUrl(vehiculoId: number, id: number, token: string, descargar = false) {
     const sb = createSupabaseClient(token)
     const { data: doc, error } = await sb
       .from('flota_documentos')
-      .select('id, storage_path, nombre_archivo, deleted_at')
+      .select('id, storage_path, nombre_archivo, mime_type, deleted_at')
       .eq('id', id)
       .eq('vehiculo_id', vehiculoId)
       .is('deleted_at', null)
@@ -192,7 +193,7 @@ export const flotaDocsService = {
 
     const { data, error: sErr } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(doc.storage_path, 900, { download: doc.nombre_archivo })
+      .createSignedUrl(doc.storage_path, 900, opcionesSignedUrl({ nombre: doc.nombre_archivo, path: doc.storage_path, mime: doc.mime_type, descargar }))
     if (sErr) throw new FlotaDocError(500, 'SIGNED_URL_ERROR', sErr.message)
     return { url: data.signedUrl, nombre_archivo: doc.nombre_archivo }
   },

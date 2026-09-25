@@ -33,6 +33,7 @@ import type {
   AdjuntoCobroDto, AdjuntoRetencionDto, AmbienteCobranza, CompensarDto, ImputarDto, ItemImputacionDto, ListCobrosQuery,
   ListImputacionesQuery, RegistrarCobroDto, RetencionCobroDto, UploadRetencionDto,
 } from './facturacion.schema.js'
+import { opcionesSignedUrl } from '../../lib/signed-url.js'
 
 export const BUCKET_VENTAS = 'ventas-docs'
 export const PREFIJO_RETENCION_PENDIENTE = 'retenciones/pendientes/'
@@ -389,14 +390,14 @@ export const cobrosService = {
   },
 
   /** URL firmada (15 min) para ver/bajar el certificado de una retención. */
-  async urlRetencion(retencionId: number, db: SupabaseClient = supabase): Promise<{ url: string; nombre_archivo: string | null; mime: string | null }> {
+  async urlRetencion(retencionId: number, db: SupabaseClient = supabase, descargar = false): Promise<{ url: string; nombre_archivo: string | null; mime: string | null }> {
     const { data, error } = await db.from('ventas_cobro_retenciones')
       .select('id, adjunto_path, adjunto_nombre, adjunto_mime').eq('id', retencionId).maybeSingle()
     if (error) throw mapRpcError(error as PgError)
     if (!data) throw new FacturacionHttpError(404, 'RETENCION_NO_EXISTE', { retencion_id: retencionId })
     const r = data as { adjunto_path: string | null; adjunto_nombre: string | null; adjunto_mime: string | null }
     if (!r.adjunto_path) throw new FacturacionHttpError(404, 'RETENCION_SIN_ADJUNTO', { retencion_id: retencionId })
-    const s = await supabase.storage.from(BUCKET_VENTAS).createSignedUrl(r.adjunto_path, 900, { download: r.adjunto_nombre ?? true })
+    const s = await supabase.storage.from(BUCKET_VENTAS).createSignedUrl(r.adjunto_path, 900, opcionesSignedUrl({ nombre: r.adjunto_nombre, path: r.adjunto_path, mime: r.adjunto_mime, descargar }))
     if (s.error || !s.data) throw new FacturacionHttpError(500, 'SIGNED_URL_ERROR', { mensaje: s.error?.message })
     return { url: s.data.signedUrl, nombre_archivo: r.adjunto_nombre, mime: r.adjunto_mime }
   },
@@ -441,13 +442,13 @@ export const cobrosService = {
   },
 
   /** URL firmada (15 min) para ver/bajar un adjunto del cobro. */
-  async urlAdjunto(id: number, db: SupabaseClient = supabase): Promise<{ url: string; nombre_archivo: string; mime: string | null }> {
+  async urlAdjunto(id: number, db: SupabaseClient = supabase, descargar = false): Promise<{ url: string; nombre_archivo: string; mime: string | null }> {
     const { data, error } = await db.from('ventas_cobro_adjuntos')
       .select('id, storage_path, nombre_archivo, mime').eq('id', id).maybeSingle()
     if (error) throw mapRpcError(error as PgError)
     if (!data) throw new FacturacionHttpError(404, 'ADJUNTO_NO_EXISTE', { adjunto_id: id })
     const a = data as Pick<AdjuntoCobro, 'storage_path' | 'nombre_archivo' | 'mime'>
-    const s = await supabase.storage.from(BUCKET_VENTAS).createSignedUrl(a.storage_path, 900, { download: a.nombre_archivo || true })
+    const s = await supabase.storage.from(BUCKET_VENTAS).createSignedUrl(a.storage_path, 900, opcionesSignedUrl({ nombre: a.nombre_archivo, path: a.storage_path, mime: a.mime, descargar }))
     if (s.error || !s.data) throw new FacturacionHttpError(500, 'SIGNED_URL_ERROR', { mensaje: s.error?.message })
     return { url: s.data.signedUrl, nombre_archivo: a.nombre_archivo, mime: a.mime }
   },

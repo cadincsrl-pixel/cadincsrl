@@ -26,6 +26,7 @@ import {
   SeguroUploadUrlSchema,
   SeguroRegistrarSchema,
 } from './alquiler.schema.js'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 const alquiler = new Hono()
 alquiler.use('*', authMiddleware)
@@ -74,7 +75,7 @@ alquiler.post('/maquinas/:id/seguro-poliza', zValidator('json', SeguroRegistrarS
 })
 
 alquiler.get('/maquinas/:id/seguro-poliza', async (c) => {
-  return c.json(await alquilerService.seguroSignedUrl(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id))
+  return c.json(await alquilerService.seguroSignedUrl(Number(c.req.param('id')), c.get('accessToken'), c.get('user').id, quiereDescargar(c.req.query('descargar'))))
 })
 
 alquiler.delete('/maquinas/:id/seguro-poliza', async (c) => {

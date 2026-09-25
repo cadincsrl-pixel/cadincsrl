@@ -17,6 +17,7 @@ import {
   DocRegistrarSchema,
 } from './contratistas.schema.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
+import { quiereDescargar } from '../../lib/signed-url.js'
 
 const contratistas = new Hono()
 
@@ -146,7 +147,7 @@ contratistas.get(
   async (c) => {
     const id = Number(c.req.param('id'))
     if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
-    const data = await contratistasService.dniSignedUrl(id, c.get('accessToken'))
+    const data = await contratistasService.dniSignedUrl(id, c.get('accessToken'), quiereDescargar(c.req.query('descargar')))
     return c.json(data)
   },
 )
@@ -257,7 +258,7 @@ contratistas.get(
     const id = Number(c.req.param('id'))
     if (isNaN(id)) return c.json({ error: 'ID inválido' }, 400)
     await validarScopePresupuesto(c, id)
-    const data = await contratistasService.presupDocSignedUrl(id, c.get('accessToken'))
+    const data = await contratistasService.presupDocSignedUrl(id, c.get('accessToken'), quiereDescargar(c.req.query('descargar')))
     return c.json(data)
   },
 )

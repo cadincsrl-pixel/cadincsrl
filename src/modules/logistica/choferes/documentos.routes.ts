@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { authMiddleware } from '../../../middleware/auth.js'
 import { requirePermiso } from '../../../middleware/permission.js'
 import { choferDocsService, ChoferDocError } from './documentos.service.js'
+import { quiereDescargar } from '../../../lib/signed-url.js'
 
 const docs = new Hono()
 docs.use('*', authMiddleware)
@@ -103,6 +104,7 @@ docs.get(
     Number(c.req.param('id')),
     Number(c.req.param('docId')),
     c.get('accessToken'),
+    quiereDescargar(c.req.query('descargar')),
   )),
 )
 
