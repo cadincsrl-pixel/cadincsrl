@@ -20,6 +20,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { z } from 'zod'
 import { TIPOS_TRIBUTO } from './arca.js'
+import { getEmpresa, type Empresa } from '../../../lib/empresa.js'
 
 /** Modelo por defecto. Se puede cambiar sin deploy con PAGOS_LECTURA_MODEL. */
 // 24/09: Sonnet 5 en vez de Opus 5 (más barato). Probado sobre las 17 facturas
@@ -104,7 +105,10 @@ export type ResultadoIA =
   | { ok: true; lectura: LecturaIA; modelo: string }
   | { ok: false; motivo: string; modelo: string | null }
 
-const SISTEMA = `Leés comprobantes de compra argentinos (facturas de proveedores) para la contabilidad de CADINC S.R.L. (CUIT 33-71719194-9), que es la empresa que COMPRA. Tu salida alimenta el Libro IVA Digital de compras, así que cada número tiene que salir del papel tal cual: si un dato no se ve con seguridad, devolvé null. Es mucho peor un número inventado que un campo vacío.`
+/** El prompt de sistema se arma en cada llamada con los datos de la empresa (tanda 6). */
+export function sistema(emp: Pick<Empresa, 'razon_social' | 'cuit_fmt'>): string {
+  return `Leés comprobantes de compra argentinos (facturas de proveedores) para la contabilidad de ${emp.razon_social} (CUIT ${emp.cuit_fmt}), que es la empresa que COMPRA. Tu salida alimenta el Libro IVA Digital de compras, así que cada número tiene que salir del papel tal cual: si un dato no se ve con seguridad, devolvé null. Es mucho peor un número inventado que un campo vacío.`
+}
 
 const INSTRUCCIONES = `Extraé los datos del comprobante adjunto.
 
@@ -166,7 +170,7 @@ export async function leerFacturaConIA(archivo: Buffer, mime: string, conceptos:
       max_tokens: 16000,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      system: SISTEMA,
+      system: sistema(await getEmpresa()),
       output_config: { format: betaZodOutputFormat(LecturaIASchema) },
       messages: [{ role: 'user', content: [bloque, { type: 'text', text: INSTRUCCIONES + instruccionConcepto(conceptos) }] }],
     })

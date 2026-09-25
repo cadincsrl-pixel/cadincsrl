@@ -73,6 +73,7 @@ import pagosRoutes from './modules/pagos/pagos.routes.js'
 import facturacionRoutes from './modules/facturacion/facturacion.routes.js'
 import contabilidadRoutes from './modules/contabilidad/contabilidad.routes.js'
 import facturacionInternalRoutes from './modules/facturacion/facturacion.internal.routes.js'
+import empresaRoutes from './modules/empresa/empresa.routes.js'
 import { iniciarArca } from './modules/facturacion/emision.service.js'
 
 
@@ -175,6 +176,8 @@ app.route('/api/asistente', asistenteRoutes)
 app.route('/api/pagos', pagosRoutes)
 app.route('/api/facturacion', facturacionRoutes)
 app.route('/api/contabilidad', contabilidadRoutes)
+// Datos de la empresa (tanda 6, 20260929a): GET para todos, PATCH admin.configurar.
+app.route('/api/empresa', empresaRoutes)
 
 // ── Manejo global de errores ──
 app.onError((err, c) => {

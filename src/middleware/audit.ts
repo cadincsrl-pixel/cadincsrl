@@ -194,6 +194,8 @@ export const ENTIDADES: Record<string, string> = {
   'contabilidad/iva': 'DDJJ de IVA',
   'contabilidad/bienes': 'bien de uso', 'contabilidad/bienes/amortizaciones': 'amortización de bienes de uso',
   'pagos/importaciones': 'importación ARCA',
+  // Tanda 6 (20260929a): PATCH /empresa → «actualizar datos de la empresa».
+  empresa: 'datos de la empresa',
 }
 
 /** Palabras que aparecen como segmentos de ruta: nunca son un id. */

@@ -12,6 +12,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { z } from 'zod'
 import { MODELO_LECTURA_DEFAULT, bloqueDelArchivo } from './ia.js'
+import { getEmpresa, type Empresa } from '../../../lib/empresa.js'
 
 const Num = z.number().nullable()
 const Txt = z.string().nullable()
@@ -39,7 +40,10 @@ export type ResultadoChequeIA =
   | { ok: true; lectura: LecturaChequeIA; modelo: string }
   | { ok: false; motivo: string; modelo: string | null }
 
-const SISTEMA = `Leés cheques argentinos (papel o captura de un e-cheq) para la tesorería de CADINC S.R.L. (CUIT 33-71719194-9), que los ENTREGA para pagarle a un proveedor: pueden ser cheques propios de CADINC o de terceros que CADINC endosa. Cada dato tiene que salir de la imagen tal cual: si algo no se ve con seguridad, devolvé null. Es mucho peor un número inventado que un campo vacío.`
+/** El prompt de sistema se arma en cada llamada con los datos de la empresa (tanda 6). */
+export function sistema(emp: Pick<Empresa, 'razon_social' | 'cuit_fmt'>): string {
+  return `Leés cheques argentinos (papel o captura de un e-cheq) para la tesorería de ${emp.razon_social} (CUIT ${emp.cuit_fmt}), que los ENTREGA para pagarle a un proveedor: pueden ser cheques propios de CADINC o de terceros que CADINC endosa. Cada dato tiene que salir de la imagen tal cual: si algo no se ve con seguridad, devolvé null. Es mucho peor un número inventado que un campo vacío.`
+}
 
 const INSTRUCCIONES = `Extraé los datos del cheque de la imagen.
 
@@ -70,7 +74,7 @@ export async function leerChequeConIA(archivo: Buffer, mime: string): Promise<Re
       max_tokens: 4000,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      system: SISTEMA,
+      system: sistema(await getEmpresa()),
       output_config: { format: betaZodOutputFormat(LecturaChequeIASchema) },
       messages: [{ role: 'user', content: [bloque, { type: 'text', text: INSTRUCCIONES }] }],
     })

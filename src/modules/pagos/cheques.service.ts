@@ -21,7 +21,9 @@ import { MIME_PERMITIDOS, PREFIJO_COMPROBANTE_PENDIENTE, type AdjuntoPendienteDt
 import { cuitValido, normCuit } from './pagos.util.js'
 import { leerChequeConIA, type LecturaChequeIA } from './lectura/cheque-ia.js'
 
-export const CUIT_CADINC = '33717191949'
+// Única fuente del CUIT: lib/empresa.ts (ARCA_CUIT o el default).
+import { CUIT_EMPRESA as CUIT_CADINC } from '../../lib/empresa.js'
+export { CUIT_CADINC }
 
 export interface AvisoCheque {
   campo: string

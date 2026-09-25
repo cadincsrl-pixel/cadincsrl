@@ -12,6 +12,7 @@
  *   total                   = neto + IVA
  */
 import type { ComprobanteSolicitud, ComprobanteConsultado, ResultadoCAE, ErrArca, Opcional } from '../../lib/arca/index.js'
+import { CUIT_EMPRESA } from '../../lib/empresa.js'
 
 // ── Catálogos fijos ─────────────────────────────────────────────────────────
 
@@ -75,8 +76,11 @@ const CONDICIONES_B = new Set(CONDICIONES_IVA.filter((c) => c.admite_b).map((c) 
  */
 export const TOPE_CF_IDENTIFICACION = 10_000_000
 
-/** CUIT de CADINC: el emisor. Va en el Auth de WSFE y en cada CbteAsoc. */
-export const CUIT_EMISOR = '33717191949'
+/**
+ * CUIT de CADINC: el emisor. Va en el Auth de WSFE y en cada CbteAsoc.
+ * Reexportado de `lib/empresa.ts` (única fuente: ARCA_CUIT o el default).
+ */
+export const CUIT_EMISOR = CUIT_EMPRESA
 
 export type Producto = 'AVANCE DE OBRA' | 'TRANSPORTE'
 

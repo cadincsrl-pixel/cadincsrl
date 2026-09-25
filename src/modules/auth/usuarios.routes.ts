@@ -133,7 +133,10 @@ const ModuloPermisosSchema = z.object({
   // (tab `tesoreria`) y bienes de uso con amortizaciones (tab `bienes`).
   movimientos_fondos:    z.boolean().optional(),
   bienes_uso:            z.boolean().optional(),
-  obras_scope:      z.enum(['todas', 'asignadas']).optional(),
+  // Tanda 6 (20260929a): editar la configuración del módulo (Ventas,
+  // Compras) y, en `admin`, los Datos de la empresa. Default false.
+  configurar:            z.boolean().optional(),
+  obras_scope:     z.enum(['todas', 'asignadas']).optional(),
 })
 
 // Validamos `permisos` como `z.record(ModuloKeySchema, ...)` PERO en zod v3

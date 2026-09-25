@@ -19,7 +19,7 @@
  */
 
 /** CUIT de CADINC: el receptor que tiene que decir toda factura de compra. */
-export const CUIT_CADINC = '33717191949'
+export { CUIT_EMPRESA as CUIT_CADINC } from '../../../lib/empresa.js'
 
 export interface QrArca {
   ver:        number | null

@@ -28,6 +28,7 @@ import { createSupabaseClient, supabase } from '../../lib/supabase.js'
 import { enviarMail, esEmailValido, estaConfigurado, loQueFalta, type AdjuntoMail } from '../../lib/mail.js'
 import { BUCKET } from './adjuntos.service.js'
 import { PagosHttpError } from './pagos.errors.js'
+import { getEmpresa } from '../../lib/empresa.js'
 import { armarCuerpo, destinatariosProveedor, type Destinatario } from './aviso-pago.cuerpo.js'
 export { armarCuerpo, destinatariosProveedor } from './aviso-pago.cuerpo.js'
 export type { Destinatario } from './aviso-pago.cuerpo.js'
@@ -144,7 +145,8 @@ export const avisoPagoService = {
     }
 
     const comprobantes = ((adjOrden.data ?? []) as any[]).filter((a) => a.tipo === 'comprobante_pago')
-    const empresa = process.env.EMPRESA_NOMBRE ?? 'CADINC SRL'
+    // Nombre de fantasía de empresa_config; EMPRESA_NOMBRE del env queda como fallback (en getEmpresa).
+    const empresa = (await getEmpresa()).nombre_fantasia
     const responderA = (process.env.SMTP_REPLY_TO ?? '').trim() || undefined
 
     const registrar = async (r: ResultadoAviso) => {
