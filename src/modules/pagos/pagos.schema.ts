@@ -820,6 +820,8 @@ export const CreateProveedorSchema = z.object({
   plazo_pago_dias: z.number().int().min(0).max(365).optional().default(30),
   vencimiento_modo: z.enum(VENCIMIENTO_MODOS).optional().default('dias'),
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
+  /** Cómo se le paga normalmente (20260930a): la forma con que nacen sus facturas. Null = transferencia. */
+  forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
   contacto:        Texto(120).optional().default(''),
   telefono:        Texto(40).optional().default(''),
   email:           Texto(120).optional().default(''),
@@ -838,6 +840,7 @@ export const UpdateProveedorSchema = z.object({
   plazo_pago_dias: z.number().int().min(0).max(365).optional(),
   vencimiento_modo: z.enum(VENCIMIENTO_MODOS).optional(),
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
+  forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
   contacto:        Texto(120).optional(),
   telefono:        Texto(40).optional(),
   email:           Texto(120).optional(),

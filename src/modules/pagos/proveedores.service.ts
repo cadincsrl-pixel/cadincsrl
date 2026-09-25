@@ -26,7 +26,7 @@ import { padronJson, precargaPadron, type PrecargaPadron } from '../../lib/arca/
 import { CONDICIONES_IVA_IDS } from './condicion-iva.js'
 import { esBoolQ, type ContactoProveedorDto, type CreateProveedorDto, type UpdateProveedorDto, type DatosPagoDto, type ListProveedoresQuery } from './pagos.schema.js'
 
-const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by, domicilio, provincia, condicion_iva_id, tipo_persona, actividad_principal, padron_consultado_at'
+const COLS_PADRON = 'id, razon_social, razon_social_norm, cuit, alias_cbu, cbu, banco, plazo_pago_dias, vencimiento_modo, cierre_dia, forma_pago_habitual, contacto, telefono, email, obs, activo, baja_motivo, baja_por, baja_at, datos_pago_actualizados_at, datos_pago_actualizados_por, created_at, updated_at, created_by, updated_by, domicilio, provincia, condicion_iva_id, tipo_persona, actividad_principal, padron_consultado_at'
 
 export interface Aviso { code: string; [k: string]: unknown }
 
@@ -66,7 +66,7 @@ function normalizar(dto: Partial<CreateProveedorDto>): Record<string, unknown> {
     if (alias !== null && !aliasValido(alias)) throw errorDeCampo('ALIAS_INVALIDO', 'alias_cbu')
     out.alias_cbu = alias
   }
-  for (const k of ['banco', 'plazo_pago_dias', 'vencimiento_modo', 'contacto', 'telefono', 'email', 'obs'] as const) {
+  for (const k of ['banco', 'plazo_pago_dias', 'vencimiento_modo', 'forma_pago_habitual', 'contacto', 'telefono', 'email', 'obs'] as const) {
     if (dto[k] !== undefined) out[k] = dto[k]
   }
   // Datos fiscales (20260925o): vacío = null (no se sabe), no ''.
