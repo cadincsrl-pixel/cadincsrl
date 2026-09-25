@@ -64,6 +64,38 @@ export function libradorRecibido(
   return { librador: l.librador.trim(), librador_cuit: cuit || null }
 }
 
+/**
+ * La lectura de la cartera usa el modelo barato (pedido del dueño, 25/09:
+ * «seguí siempre con IA barata»). Haiku leyó bien número, banco, fecha e
+ * importe de las liquidaciones de Casilda y de las fotos, en 8–15 s; el
+ * librador lo corrige `libradorRecibido`.
+ */
+const MODELO_CARTERA = process.env.CARTERA_LECTURA_MODEL ?? 'claude-haiku-4-5-20251001'
+/** Un 'leyendo' más viejo que esto se da por caído (reinicio del servidor). */
+const LECTURA_CAIDA_MS = 5 * 60_000
+
+const COLS_ADJ = 'id, cobro_id, tipo, nombre_archivo, mime_type, size_bytes, obs, created_at, created_by, updated_at, updated_by, cheques_lectura, cheques_resultado, cheques_lectura_at'
+
+/** ¿Hay una lectura en curso (no caída) en este adjunto? */
+function leyendo(a: { cheques_lectura: string | null; cheques_lectura_at: string | null }): boolean {
+  return a.cheques_lectura === 'leyendo' && !!a.cheques_lectura_at
+    && Date.now() - new Date(a.cheques_lectura_at).getTime() < LECTURA_CAIDA_MS
+}
+
+async function marcarLectura(adjuntoId: number, estado: 'leyendo' | 'ok' | 'sin_cheques' | 'error', resultado: Record<string, unknown> | null) {
+  await supabase.from('cobros_adjuntos')
+    .update({ cheques_lectura: estado, cheques_resultado: resultado, cheques_lectura_at: new Date().toISOString() })
+    .eq('id', adjuntoId)
+}
+
+/** La empresa del cobro: quien dio los cheques. */
+async function empresaDelCobro(cobroId: number): Promise<{ nombre: string | null; cuit: string | null } | null> {
+  const { data: cobro } = await supabase.from('cobros')
+    .select('empresa_id, empresas_transportistas(nombre, cuit)').eq('id', cobroId).maybeSingle()
+  const emp = Array.isArray(cobro?.empresas_transportistas) ? cobro?.empresas_transportistas[0] : cobro?.empresas_transportistas
+  return (emp ?? null) as { nombre: string | null; cuit: string | null } | null
+}
+
 /** Tipos de adjunto que pueden traer los cheques con que pagó la empresa. */
 const TIPOS_CON_CHEQUES = new Set<CobroAdjTipo>(['comprobante', 'liquidacion'])
 
@@ -81,30 +113,46 @@ const TIPOS_CON_CHEQUES = new Set<CobroAdjTipo>(['comprobante', 'liquidacion'])
  */
 export async function cargarChequesDelAdjunto(cobroId: number, adjuntoId: number, archivo: Buffer, mime: string, userId: string) {
   try {
-    const ia = await leerChequeConIA(archivo, mime)
-    if (!ia.ok) return
+    const ia = await leerChequeConIA(archivo, mime, MODELO_CARTERA)
+    if (!ia.ok) {
+      await marcarLectura(adjuntoId, 'error', { motivo: ia.motivo, modelo: ia.modelo })
+      return
+    }
     const legibles = ia.lecturas.filter((l) => l.legible && l.numero && (l.importe ?? 0) > 0)
-    if (legibles.length === 0) return
-    const { data: cobro } = await supabase.from('cobros')
-      .select('empresa_id, empresas_transportistas(nombre, cuit)').eq('id', cobroId).maybeSingle()
-    const emp = (Array.isArray(cobro?.empresas_transportistas) ? cobro?.empresas_transportistas[0] : cobro?.empresas_transportistas) as
-      { nombre: string | null; cuit: string | null } | null | undefined
+    if (legibles.length === 0) {
+      await marcarLectura(adjuntoId, 'sin_cheques', { modelo: ia.modelo })
+      return
+    }
+    const emp = await empresaDelCobro(cobroId)
     const cheques = legibles.map((l) => ({
       numero: (l.numero ?? '').replace(/\D/g, ''),
       banco: l.banco,
-      ...libradorRecibido(l, emp ?? null),
+      ...libradorRecibido(l, emp),
       fecha_cobro: l.fecha_pago,
       importe: l.importe,
       es_echeq: l.es_echeq,
     }))
     const { data, error } = await supabase.rpc('cheques_recibidos_registrar', {
       p_cobro_id: cobroId, p_adjunto_id: adjuntoId, p_cheques: cheques, p_user_id: userId,
+      p_obs: `Leído del adjunto del cobro (${ia.modelo})`,
     })
     if (error) throw new Error(error.message)
-    console.info(`[cartera] cobro ${cobroId} adjunto ${adjuntoId}: ${JSON.stringify(data)}`)
+    await marcarLectura(adjuntoId, 'ok', { ...(data as Record<string, unknown>), modelo: ia.modelo })
   } catch (e) {
     console.error(`[cartera] cobro ${cobroId} adjunto ${adjuntoId}: no se pudieron cargar los cheques`, e)
+    await marcarLectura(adjuntoId, 'error', { motivo: e instanceof Error ? e.message.slice(0, 200) : 'ERROR' }).catch(() => {})
   }
+}
+
+/** Un cheque cargado a mano en el cobro. */
+export interface ChequeAMano {
+  numero: string
+  banco?: string | null
+  librador?: string | null
+  librador_cuit?: string | null
+  fecha_cobro?: string | null
+  importe: number
+  es_echeq?: boolean | null
 }
 
 export const cobroAdjuntosService = {
@@ -113,7 +161,7 @@ export const cobroAdjuntosService = {
     const sb = createSupabaseClient(token)
     const { data, error } = await sb
       .from('cobros_adjuntos')
-      .select('id, cobro_id, tipo, nombre_archivo, mime_type, size_bytes, obs, created_at, created_by, updated_at, updated_by')
+      .select(COLS_ADJ)
       .eq('cobro_id', cobroId)
       .is('deleted_at', null)
       .order('tipo', { ascending: true })
@@ -161,8 +209,10 @@ export const cobroAdjuntosService = {
         obs:            dto.obs ?? null,
         created_by:     userId,
         updated_by:     userId,
+        // Se lee en segundo plano: la pantalla muestra «Leyendo cheques…».
+        ...(TIPOS_CON_CHEQUES.has(dto.tipo) ? { cheques_lectura: 'leyendo', cheques_lectura_at: new Date().toISOString() } : {}),
       })
-      .select('id, cobro_id, tipo, nombre_archivo, mime_type, size_bytes, obs, created_at, created_by, updated_at, updated_by')
+      .select(COLS_ADJ)
       .single()
     if (error) {
       const is23505 = error.code === '23505' || /unique/i.test(error.message)
@@ -195,6 +245,57 @@ export const cobroAdjuntosService = {
       .createSignedUrl(doc.storage_path, 900, opcionesSignedUrl({ nombre: doc.nombre_archivo, path: doc.storage_path, mime: doc.mime_type, descargar }))
     if (sErr) throw new CobroAdjError(500, 'SIGNED_URL_ERROR', sErr.message)
     return { url: data.signedUrl, nombre_archivo: doc.nombre_archivo }
+  },
+
+  /** «Volver a leer» los cheques de un adjunto (falló, o se cayó). */
+  async releerCheques(cobroId: number, id: number, userId: string) {
+    const { data: a, error } = await supabase.from('cobros_adjuntos')
+      .select('id, tipo, storage_path, mime_type, cheques_lectura, cheques_lectura_at')
+      .eq('id', id).eq('cobro_id', cobroId).is('deleted_at', null).maybeSingle()
+    if (error) throw new CobroAdjError(500, 'DB_ERROR', error.message)
+    if (!a) throw new CobroAdjError(404, 'ADJ_NO_EXISTE')
+    if (!TIPOS_CON_CHEQUES.has(a.tipo as CobroAdjTipo)) throw new CobroAdjError(400, 'TIPO_SIN_CHEQUES')
+    if (leyendo(a)) throw new CobroAdjError(409, 'LECTURA_EN_CURSO')
+    const dl = await supabase.storage.from(BUCKET).download(a.storage_path)
+    if (dl.error || !dl.data) throw new CobroAdjError(400, 'ARCHIVO_NO_SUBIDO', dl.error?.message)
+    await marcarLectura(id, 'leyendo', null)
+    void cargarChequesDelAdjunto(cobroId, id, Buffer.from(await dl.data.arrayBuffer()), a.mime_type, userId)
+    return { success: true, cheques_lectura: 'leyendo' }
+  },
+
+  /** Los cheques de la cartera que entraron por este cobro. */
+  async chequesDelCobro(cobroId: number) {
+    const { data, error } = await supabase.from('cheques_recibidos')
+      .select('id, numero, banco, librador, librador_cuit, fecha_cobro, importe, es_echeq, estado, obs, cobro_adjunto_id, created_at')
+      .eq('cobro_id', cobroId).order('fecha_cobro', { ascending: true }).order('id')
+    if (error) throw new CobroAdjError(500, 'DB_ERROR', error.message)
+    return data
+  },
+
+  /**
+   * Cheques cargados a mano (sin IA, o para Global con cheque físico). Misma
+   * puerta que la lectura: no duplica (número + importe) y vincula los ya
+   * endosados. No se puede mientras un adjunto del cobro se está leyendo.
+   */
+  async cargarChequesAMano(cobroId: number, cheques: ChequeAMano[], userId: string) {
+    const { data: adjs } = await supabase.from('cobros_adjuntos')
+      .select('cheques_lectura, cheques_lectura_at').eq('cobro_id', cobroId).is('deleted_at', null)
+    if ((adjs ?? []).some(leyendo)) throw new CobroAdjError(409, 'LECTURA_EN_CURSO')
+    const emp = await empresaDelCobro(cobroId)
+    const lista = cheques.map((c) => ({
+      numero: c.numero.replace(/\D/g, ''),
+      banco: c.banco ?? null,
+      librador: c.librador?.trim() || emp?.nombre || null,
+      librador_cuit: c.librador?.trim() ? (c.librador_cuit ?? null) : (emp?.cuit ?? null),
+      fecha_cobro: c.fecha_cobro ?? null,
+      importe: c.importe,
+      es_echeq: c.es_echeq ?? null,
+    }))
+    const { data, error } = await supabase.rpc('cheques_recibidos_registrar', {
+      p_cobro_id: cobroId, p_adjunto_id: null, p_cheques: lista, p_user_id: userId, p_obs: 'Cargado a mano en el cobro',
+    })
+    if (error) throw new CobroAdjError(500, 'DB_ERROR', error.message)
+    return data
   },
 
   async softDelete(cobroId: number, id: number, userId: string, token: string) {

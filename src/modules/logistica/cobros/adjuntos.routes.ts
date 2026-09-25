@@ -75,6 +75,37 @@ docs.post(
   )),
 )
 
+// Cartera de cheques recibidos (20260930h/j).
+const ChequeAManoSchema = z.object({
+  numero:        z.string().trim().min(1).max(40),
+  banco:         z.string().trim().max(80).nullable().optional(),
+  librador:      z.string().trim().max(160).nullable().optional(),
+  librador_cuit: z.string().trim().max(20).nullable().optional(),
+  fecha_cobro:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  importe:       z.number().positive(),
+  es_echeq:      z.boolean().nullable().optional(),
+})
+const ChequesAManoSchema = z.object({ cheques: z.array(ChequeAManoSchema).min(1).max(60) })
+
+docs.post(
+  '/:id/adjuntos/:adjId/leer-cheques',
+  requirePermiso('logistica', 'creacion'),
+  handle(c => cobroAdjuntosService.releerCheques(Number(c.req.param('id')), Number(c.req.param('adjId')), c.get('user').id)),
+)
+
+docs.get(
+  '/:id/cheques',
+  requirePermiso('logistica', 'lectura'),
+  handle(c => cobroAdjuntosService.chequesDelCobro(Number(c.req.param('id')))),
+)
+
+docs.post(
+  '/:id/cheques',
+  requirePermiso('logistica', 'creacion'),
+  zValidator('json', ChequesAManoSchema),
+  handle(c => cobroAdjuntosService.cargarChequesAMano(Number(c.req.param('id')), c.req.valid('json').cheques, c.get('user').id)),
+)
+
 docs.get(
   '/:id/adjuntos/:adjId/signed-url',
   requirePermiso('logistica', 'lectura'),

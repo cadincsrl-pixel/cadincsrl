@@ -84,6 +84,8 @@ export const VERBOS: Record<string, string> = {
   'upload-lectura': 'subir adjunto', leer: 'leer comprobante', 'lectura-pendiente': 'descartar lectura',
   // Completar el desglose de una factura ya cargada (20260924v).
   desglose: 'completar desglose', 'leer-adjunto': 'leer comprobante',
+  // Cartera de cheques: releer el adjunto del cobro (20260930j).
+  'leer-cheques': 'leer cheques',
   // Compras: importador de ARCA recibidos, imputación y pagadas en lote
   // (20260927b/c/h). `imputar` ya está arriba.
   'importar-arca': 'importar de ARCA', 'imputar-lote': 'imputar en lote', 'marcar-pagadas': 'marcar pagadas en lote',
@@ -138,6 +140,7 @@ export const ENTIDADES: Record<string, string> = {
   'logistica/tarifas': 'tarifa de cantera', 'logistica/tarifas/canteras': 'tarifa de cantera',
   'logistica/empresas': 'empresa transportista', 'logistica/empresas/tarifas': 'tarifa de empresa',
   'logistica/cobros': 'cobro de flete', 'logistica/cobros/adjuntos': 'adjunto de cobro',
+  'logistica/cobros/cheques': 'cheques recibidos del cobro',
   'logistica/gastos': 'gasto de flota',
   'logistica/rentabilidad': 'rentabilidad', 'logistica/rentabilidad/parametros': 'parámetros de rentabilidad',
   'logistica/rentabilidad/viajes': 'viaje simulado',

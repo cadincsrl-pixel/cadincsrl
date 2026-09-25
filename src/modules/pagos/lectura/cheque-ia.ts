@@ -78,8 +78,10 @@ Para cada cheque:
 - legible: false si ese cheque no se puede leer con confianza.`
 
 /** Lee los cheques del archivo. `archivo` son los bytes tal como están en el bucket. */
-export async function leerChequeConIA(archivo: Buffer, mime: string): Promise<ResultadoChequeIA> {
-  const modelo = process.env.PAGOS_LECTURA_MODEL ?? MODELO_LECTURA_DEFAULT
+export async function leerChequeConIA(archivo: Buffer, mime: string, modeloPedido?: string): Promise<ResultadoChequeIA> {
+  // Compras usa el de siempre (PAGOS_LECTURA_MODEL, Sonnet); la cartera de
+  // Logística pide uno más barato (CARTERA_LECTURA_MODEL, Haiku).
+  const modelo = modeloPedido ?? process.env.PAGOS_LECTURA_MODEL ?? MODELO_LECTURA_DEFAULT
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, motivo: 'SIN_API_KEY', modelo: null }
   const bloque = bloqueDelArchivo(archivo.toString('base64'), mime)
   if (!bloque) return { ok: false, motivo: 'FORMATO_NO_SOPORTADO', modelo }
