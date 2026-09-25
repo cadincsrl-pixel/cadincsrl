@@ -71,7 +71,7 @@ import pagos from '../../../src/modules/pagos/pagos.routes.js'
 import { hoyAR } from '../../../src/modules/pagos/pagos.util.js'
 import { avisoLetraCondicion } from '../../../src/modules/pagos/condicion-iva.js'
 import { cambiosProveedorDesdePadron } from '../../../src/modules/pagos/proveedores.service.js'
-import { adjuntosDeCheques, chequesParaRpc, chocaConEmitido, propuestaDeCheque } from '../../../src/modules/pagos/cheques.service.js'
+import { adjuntosDeCheques, chequesParaRpc, chocaConEmitido, nombreComparable, propuestaDeCheque, proveedorDelCheque } from '../../../src/modules/pagos/cheques.service.js'
 import { comprobanteFaltante } from '../../../src/modules/pagos/pagos.service.js'
 import {
   ChequeSchema, CreateOrdenSchema, CreateProveedorSchema, DatosPagoSchema, ListOrdenesQuerySchema, TIPOS_ADJ_ORDEN, UpdateProveedorSchema,
@@ -230,7 +230,7 @@ describe('leer la foto de un cheque', () => {
     legible: true, numero: 'N° 12345678', banco: 'Banco de Galicia', sucursal: null,
     fecha_emision: '2026-09-20', fecha_pago: '2026-10-20', importe: 1250000.5, importe_en_letras: 'un millón…',
     importe_letras_coincide: true, librador: 'Constructora Sur SA', librador_cuit: CUIT_OK,
-    es_echeq: false, es_diferido: null, a_la_orden_de: null, notas: null,
+    es_echeq: false, es_diferido: null, a_la_orden_de: null, entregado_a: null, entregado_a_cuit: null, notas: null,
   }
 
   it('pide lectura + registrar_pagos + tab facturas o pagos', async () => {
@@ -258,7 +258,7 @@ describe('leer la foto de un cheque', () => {
     expect(body.propuesta).toEqual({
       numero: '12345678', banco: 'Banco de Galicia', fecha_cobro: '2026-10-20', fecha_emision: '2026-09-20',
       importe: 1250000.5, librador: 'Constructora Sur SA', librador_cuit: CUIT_OK,
-      es_echeq: false, es_diferido: true, es_propio: false,
+      es_echeq: false, es_diferido: true, es_propio: false, entregado_a: null, entregado_a_cuit: null,
     })
     expect(body.avisos).toEqual([])
     expect(rpcMock).not.toHaveBeenCalled()
@@ -292,9 +292,17 @@ describe('leer la foto de un cheque', () => {
     state.profile = CONTADOR
     // El echeq propio N° 3080 del Galicia vs. el cheque de TERCERO N° 3080 endosado a El Limón.
     iaChequeMock.mockResolvedValue({ ok: true, lecturas: [{ ...LEIDO, numero: '3080', librador: 'CADINC SRL', librador_cuit: null, es_echeq: true }], modelo: 'm' })
-    state.cheques = [{ orden_id: 240, numero: '3080', banco: '', librador: 'No informado en el detalle del endoso', pagos_ordenes: { numero: 240, estado: 'emitida' } }]
+    state.cheques = [{ orden_id: 240, numero: '3080', banco: '', librador: 'No informado en el detalle del endoso', monto: 999, pagos_ordenes: { numero: 240, estado: 'emitida' } }]
     const body = await (await post('/cheques/leer', BODY)).json()
     expect(body.avisos.map((a: Fila) => a.codigo)).not.toContain('CHEQUE_YA_ENTREGADO')
+  })
+
+  it('SÍ avisa con el mismo número (sin los ceros) y el mismo importe aunque banco y librador difieran (endosos del Galicia vs. OP-0244)', async () => {
+    state.profile = CONTADOR
+    iaChequeMock.mockResolvedValue({ ok: true, lecturas: [{ ...LEIDO, numero: '00000344', importe: 5868016, librador: null, librador_cuit: null }], modelo: 'm' })
+    state.cheques = [{ orden_id: 244, numero: '344', banco: '', librador: 'PROSAL S.A.', monto: '5868016.00', pagos_ordenes: { numero: 244, estado: 'emitida' } }]
+    const body = await (await post('/cheques/leer', BODY)).json()
+    expect(body.avisos[0]).toMatchObject({ codigo: 'CHEQUE_YA_ENTREGADO', severidad: 'error', orden_ids: [244] })
   })
 
   it('si la IA no puede leer → 422 CHEQUE_ILEGIBLE (con el path, para adjuntarla igual)', async () => {
@@ -323,6 +331,27 @@ describe('leer la foto de un cheque', () => {
 })
 
 // ── Letra vs condición ──────────────────────────────────────────────────────
+
+describe('a qué proveedor va el cheque (proveedorDelCheque)', () => {
+  const PADRON = [
+    { id: 1, razon_social: 'SUPERMAT CENTRAL S.A.S.', cuit: '30716871009' },
+    { id: 2, razon_social: 'PETRONORTE SA', cuit: null },
+    { id: 3, razon_social: 'Norte Distribuciones', cuit: null },
+    { id: 4, razon_social: 'NORTE HERRAMIENTAS SRL', cuit: null },
+  ]
+  it('por CUIT manda aunque el nombre no se parezca', () => {
+    expect(proveedorDelCheque({ entregado_a: 'otro nombre', entregado_a_cuit: '30716871009' }, PADRON)).toMatchObject({ id: 1, por: 'cuit' })
+  })
+  it('por nombre, sin la forma societaria', () => {
+    expect(nombreComparable('SUPERMAT CENTRAL S.A.S.')).toBe('supermat central')
+    expect(proveedorDelCheque({ entregado_a: 'Supermat Central SAS', entregado_a_cuit: null }, PADRON)).toMatchObject({ id: 1, por: 'nombre' })
+    expect(proveedorDelCheque({ entregado_a: 'PETRONORTE S.A.', entregado_a_cuit: null }, PADRON)).toMatchObject({ id: 2 })
+  })
+  it('con dos candidatos no adivina', () => {
+    expect(proveedorDelCheque({ entregado_a: 'Norte', entregado_a_cuit: null }, PADRON)).toBeNull()
+    expect(proveedorDelCheque({ entregado_a: null, entregado_a_cuit: null }, PADRON)).toBeNull()
+  })
+})
 
 describe('aviso LETRA_NO_COINCIDE_CONDICION', () => {
   it.each([

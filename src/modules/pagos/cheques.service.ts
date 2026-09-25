@@ -46,7 +46,13 @@ export interface PropuestaCheque {
   es_diferido: boolean
   /** true si el librador es CADINC; false si es de un tercero; null si no se sabe. */
   es_propio: boolean | null
+  /** A quién se le entrega: el beneficiario, o el endosatario si es un endoso (2026-09-25). */
+  entregado_a: string | null
+  entregado_a_cuit: string | null
 }
+
+/** El proveedor de Compras al que va el cheque, si se reconoce. */
+export interface ProveedorDelCheque { id: number; razon_social: string; por: 'cuit' | 'nombre' }
 
 function fechaValida(s: string | null | undefined): string | null {
   const t = (s ?? '').trim()
@@ -101,6 +107,11 @@ export function propuestaDeCheque(l: LecturaChequeIA): { propuesta: PropuestaChe
     : librador ? /\bcadinc\b/i.test(librador)
     : null
 
+  // El CUIT de a quién se entrega: si no es válido se descarta sin aviso (el
+  // proveedor se busca igual por el nombre).
+  const cuitEnt = normCuit(l.entregado_a_cuit ?? null)
+  const entregadoACuit = cuitEnt && /^\d{11}$/.test(cuitEnt) && cuitValido(cuitEnt) ? cuitEnt : null
+
   const es_diferido = l.es_diferido === true || (!!fecha_cobro && !!fecha_emision && fecha_cobro > fecha_emision)
   if (l.notas?.trim()) av('cheque', 'info', 'NOTA_LECTURA', l.notas.trim().slice(0, 300))
 
@@ -116,6 +127,8 @@ export function propuestaDeCheque(l: LecturaChequeIA): { propuesta: PropuestaChe
       es_echeq: l.es_echeq === true,
       es_diferido,
       es_propio,
+      entregado_a: txt(l.entregado_a, 160),
+      entregado_a_cuit: entregadoACuit,
     },
     avisos,
   }
@@ -235,11 +248,19 @@ export const chequesService = {
     // emisión y los endosos, 2026-09-25): uno por cheque, cada uno con su
     // control. `propuesta`/`avisos` sueltos son el primero, para quien lee
     // un solo cheque.
+    // A qué proveedor va cada cheque (para «Soltá los cheques» de Compras ›
+    // Pagos, 2026-09-25): por CUIT y, si no, por el nombre.
+    const { data: padron } = await supabase.from('pagos_proveedores').select('id, razon_social, cuit').eq('activo', true)
+    const provs = (padron ?? []) as PadronProveedor[]
     const cheques = await Promise.all(legibles.map(async (l) => {
       const { propuesta, avisos } = propuestaDeCheque(l)
       await avisarSiYaEntregado(propuesta, avisos)
       const orden = { error: 0, advertencia: 1, info: 2 } as const
-      return { propuesta, avisos: avisos.sort((a, b) => orden[a.severidad] - orden[b.severidad]) }
+      return {
+        propuesta,
+        avisos: avisos.sort((a, b) => orden[a.severidad] - orden[b.severidad]),
+        proveedor: proveedorDelCheque(propuesta, provs),
+      }
     }))
     return {
       ...cheques[0]!,
@@ -248,6 +269,37 @@ export const chequesService = {
       modelo: ia.modelo,
     }
   },
+}
+
+export interface PadronProveedor { id: number; razon_social: string; cuit: string | null }
+
+/** El nombre sin la forma societaria, para comparar «SUPERMAT CENTRAL S.A.S.» con «Supermat Central SAS». */
+export function nombreComparable(t: string): string {
+  return normTxt(t)
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(s\s*a\s*s|s\s*r\s*l|s\s*a\s*u|s\s*a|s\s*h|s\s*c\s*a|sociedad anonima|sociedad de responsabilidad limitada)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * El proveedor al que se entrega el cheque: primero por CUIT; si no, por el
+ * nombre (igual sin la forma societaria, o uno contenido en el otro con al
+ * menos 5 letras). Sólo si hay UNO: con dos candidatos no se adivina.
+ */
+export function proveedorDelCheque(
+  p: Pick<PropuestaCheque, 'entregado_a' | 'entregado_a_cuit'>, provs: readonly PadronProveedor[],
+): ProveedorDelCheque | null {
+  if (p.entregado_a_cuit) {
+    const porCuit = provs.filter((x) => normCuit(x.cuit ?? null) === p.entregado_a_cuit)
+    if (porCuit.length === 1) return { id: porCuit[0]!.id, razon_social: porCuit[0]!.razon_social, por: 'cuit' }
+  }
+  const nom = nombreComparable(p.entregado_a ?? '')
+  if (nom.length < 3) return null
+  const iguales = provs.filter((x) => nombreComparable(x.razon_social) === nom)
+  const cands = iguales.length > 0 ? iguales : nom.length >= 5
+    ? provs.filter((x) => { const c = nombreComparable(x.razon_social); return c.length >= 5 && (c.includes(nom) || nom.includes(c)) })
+    : []
+  return cands.length === 1 ? { id: cands[0]!.id, razon_social: cands[0]!.razon_social, por: 'nombre' } : null
 }
 
 /**
@@ -261,16 +313,29 @@ export const chequesService = {
  */
 async function avisarSiYaEntregado(propuesta: PropuestaCheque, avisos: AvisoCheque[]): Promise<void> {
   if (!propuesta.numero) return
+  // El número sin ceros a la izquierda: el PDF del banco dice «00000344» y
+  // la carga a mano, «344» (2026-09-25).
+  const corto = propuesta.numero.replace(/^0+/, '') || '0'
   const { data } = await supabase.from('pagos_cheques')
-    .select('orden_id, numero, banco, librador, pagos_ordenes!inner(numero, estado)')
-    .ilike('numero', `%${propuesta.numero}%`).eq('pagos_ordenes.estado', 'emitida').limit(50)
-  const iguales = ((data ?? []) as ChequeEmitido[]).filter((c) => chocaConEmitido(propuesta, c))
-  if (iguales.length === 0) return
-  const op = iguales[0]!.pagos_ordenes
+    .select('orden_id, numero, banco, librador, monto, pagos_ordenes!inner(numero, estado)')
+    .ilike('numero', `%${corto}%`).eq('pagos_ordenes.estado', 'emitida').limit(50)
+  const filas = (data ?? []) as (ChequeEmitido & { monto: number | string | null })[]
+  const iguales = filas.filter((c) => chocaConEmitido(propuesta, c))
+  // Mismo número y mismo importe, aunque el banco o el librador se hayan
+  // cargado distinto: el trigger no lo frena, pero es casi seguro el mismo
+  // cheque (los endosos del Galicia vs. la carga a mano de la OP-0244).
+  const parecidos = iguales.length > 0 ? [] : filas.filter((c) =>
+    (c.numero ?? '').replace(/\D/g, '').replace(/^0+/, '') === corto
+    && propuesta.importe != null && Math.abs(Number(c.monto) - propuesta.importe) < 0.01)
+  const choques = iguales.length > 0 ? iguales : parecidos
+  if (choques.length === 0) return
+  const op = choques[0]!.pagos_ordenes
   const numOp = Array.isArray(op) ? op[0]?.numero : op?.numero
   avisos.unshift({
     campo: 'numero', severidad: 'error', codigo: 'CHEQUE_YA_ENTREGADO',
-    mensaje: `El cheque N° ${propuesta.numero} ya figura entregado en la OP-${String(numOp ?? '').padStart(4, '0')}.`,
-    orden_ids: [...new Set(iguales.map((c) => c.orden_id))],
+    mensaje: iguales.length > 0
+      ? `El cheque N° ${propuesta.numero} ya figura entregado en la OP-${String(numOp ?? '').padStart(4, '0')}.`
+      : `Un cheque N° ${corto} por el mismo importe ya figura entregado en la OP-${String(numOp ?? '').padStart(4, '0')}: casi seguro es éste.`,
+    orden_ids: [...new Set(choques.map((c) => c.orden_id))],
   })
 }
