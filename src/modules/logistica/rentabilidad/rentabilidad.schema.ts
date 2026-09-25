@@ -50,6 +50,14 @@ const baseViaje = z.object({
   // la incluye, así que se descuenta. Tope abierto en 100 igual que el CHECK de
   // la tabla: una comisión del 100% dejaría el viaje en ingreso cero.
   comision_pct:         z.number().min(0).max(99.99).optional(),
+  // Vuelta cargada (20260929v): otra carga, con sus toneladas, tarifa y
+  // comisión. Si vuelve_cargado es false, no suma aunque traiga datos.
+  carga_ida:             z.string().max(120).optional().nullable(),
+  vuelve_cargado:        z.boolean().optional(),
+  carga_vuelta:          z.string().max(120).optional().nullable(),
+  toneladas_vuelta:      z.number().min(0).optional(),
+  tarifa_vuelta_por_ton: z.number().min(0).optional(),
+  comision_vuelta_pct:   z.number().min(0).max(99.99).optional(),
   obs:                  z.string().optional().nullable(),
 })
 
