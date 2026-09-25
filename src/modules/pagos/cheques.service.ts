@@ -281,29 +281,32 @@ export const LIBRADOR_NO_INFORMADO = 'No informado en el detalle del endoso'
 
 /**
  * El librador de un cheque endosado, que el comprobante del banco no trae:
- * se busca entre los cheques RECIBIDOS en los cobros de Ventas por el número
- * (sin ceros a la izquierda). Si no está, queda «No informado…» y un aviso
- * para completarlo a mano. (2026-09-25; los cobros de Logística todavía no
- * registran cheques.)
+ * se busca en la CARTERA de cheques recibidos (`cheques_recibidos`,
+ * 20260930f: liquidaciones de Casilda y cobros de Ventas) por número sin
+ * ceros y, si hay, por importe. Si no está, queda «No informado…» y un aviso
+ * para completarlo a mano.
  */
 async function libradorDelEndoso(p: PropuestaCheque, avisos: AvisoCheque[]): Promise<void> {
   const corto = (p.numero ?? '').replace(/^0+/, '')
   if (corto) {
-    const { data } = await supabase.from('ventas_cobro_medios')
-      .select('cheque_numero, cheque_banco, cheque_librador').ilike('cheque_numero', `%${corto}%`).limit(20)
-    const r = ((data ?? []) as { cheque_numero: string | null; cheque_banco: string | null; cheque_librador: string | null }[])
-      .find((x) => (x.cheque_numero ?? '').replace(/\D/g, '').replace(/^0+/, '') === corto && x.cheque_librador?.trim())
+    let q = supabase.from('cheques_recibidos')
+      .select('numero_norm, banco, librador, librador_cuit, importe, estado, obs').eq('numero_norm', corto)
+    if (p.importe != null) q = q.eq('importe', p.importe)
+    const { data } = await q.limit(2)
+    const r = ((data ?? []) as { banco: string | null; librador: string | null; librador_cuit: string | null; obs: string | null }[])
+      .find((x) => x.librador?.trim())
     if (r) {
-      p.librador = r.cheque_librador!.trim()
-      if (!p.banco && r.cheque_banco?.trim()) p.banco = r.cheque_banco.trim()
-      avisos.push({ campo: 'librador', severidad: 'info', codigo: 'LIBRADOR_DEL_COBRO',
-        mensaje: `Librador tomado del cobro donde se recibió el cheque: ${p.librador}.` })
+      p.librador = r.librador!.trim()
+      if (r.librador_cuit) p.librador_cuit = r.librador_cuit
+      if (r.banco?.trim()) p.banco = r.banco.trim()
+      avisos.push({ campo: 'librador', severidad: 'info', codigo: 'LIBRADOR_DE_LA_CARTERA',
+        mensaje: `Librador y banco de la cartera de cheques recibidos${r.obs ? ` (${r.obs})` : ''}: ${p.librador}.` })
       return
     }
   }
   p.librador = LIBRADOR_NO_INFORMADO
   avisos.push({ campo: 'librador', severidad: 'advertencia', codigo: 'LIBRADOR_NO_INFORMADO',
-    mensaje: 'Es un endoso y el comprobante no dice quién libró el cheque: si lo sabés, completalo.' })
+    mensaje: 'Es un endoso y el cheque no está en la cartera de cheques recibidos: si sabés quién lo libró, completalo.' })
 }
 
 export interface PadronProveedor { id: number; razon_social: string; cuit: string | null }
