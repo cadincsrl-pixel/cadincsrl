@@ -23,6 +23,8 @@ const { fromMock, rpcMock, removeMock, moveMock, state } = vi.hoisted(() => ({
     userId: 'u-1',
     profile: null as Fila | null,
     facturas: [] as Fila[],
+    /** Contenido de cada archivo del bucket (por defecto, uno distinto por path). */
+    contenidos: {} as Record<string, string>,
   },
 }))
 
@@ -50,7 +52,7 @@ vi.mock('../../../src/lib/supabase.js', () => {
     from: () => ({
       remove: async (p: string[]) => { removeMock(p); return {} },
       move: async (a: string, b: string) => { moveMock(a, b); return {} },
-      download: async (path: string) => ({ data: new Blob([`contenido de ${path}`]), error: null }),
+      download: async (path: string) => ({ data: new Blob([state.contenidos[path] ?? `contenido de ${path}`]), error: null }),
     }),
   }
   const cliente = () => ({ from: (t: string) => fromMock(t), rpc: (n: string, a: unknown) => rpcMock(n, a), storage })
@@ -90,6 +92,7 @@ beforeEach(() => {
   fromMock.mockReset(); rpcMock.mockReset(); removeMock.mockReset(); moveMock.mockReset()
   state.userId = 'u-1'
   state.profile = CONTADOR
+  state.contenidos = {}
   state.facturas = [
     { id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 },
     { id: 6, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 2 },
@@ -219,6 +222,144 @@ describe('POST /ordenes/lote — camino feliz', () => {
     state.profile = perfil({ lectura: true, registrar_pagos: true, tabs: ['facturas', 'pagos'] })
     const body = await (await post('/ordenes/lote', LOTE)).json()
     expect(body.ordenes[0].orden.cbu_destino).not.toBe('2850590940090418135201')
+  })
+})
+
+/**
+ * 25/09 (OP-0247/0248): el e-cheq de Cencosud quedó también como comprobante
+ * en la OP de Gimenez. Fue el archivo elegido en el bloque equivocado (dos
+ * subidas distintas del mismo PDF), no un cruce del código: cada bloque tiene
+ * que terminar SOLO en su OP, y el mismo archivo en dos bloques se frena.
+ */
+describe('POST /ordenes/lote — cada archivo en SU orden', () => {
+  const ECHEQ = (prov: number, factura: number, numero: string, foto: string, extra: Fila = {}) => ({
+    proveedor_id: prov, forma_pago: 'echeq', lineas: [{ factura_id: factura, monto: 100 }],
+    cheques: [{ numero, banco: 'Galicia', fecha_cobro: HOY, monto: 100, foto_path: `ordenes/pendientes/${foto}.pdf` }],
+    ...extra,
+  })
+  const tresBloques = (ordenes: Fila[]) => {
+    state.facturas = [5, 6, 7].map((id, i) => ({ id, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: i + 1 }))
+    rpcMock.mockImplementation(async () => ({ data: { ordenes: ordenes.map((o, i) => ({ indice: i, proveedor_id: o.proveedor_id, orden: { id: 30 + i, numero: 300 + i }, facturas: [] })) }, error: null }))
+    return { fecha: HOY, ordenes }
+  }
+
+  it('archivos distintos: cada bloque viaja con los suyos y se mueve a la carpeta de su OP', async () => {
+    const lote = tresBloques([ECHEQ(1, 5, '3076', 'cencosud'), ECHEQ(2, 6, '3077', 'gimenez'), ECHEQ(3, 7, '3079', 'sanjuan')])
+    const res = await post('/ordenes/lote', lote)
+    expect(res.status).toBe(200)
+    const ordenes = llamada('pagos_emitir_ordenes_lote')!.p_ordenes as { orden: Fila; adjuntos: Fila[] }[]
+    expect(ordenes.map((o) => o.adjuntos.map((a) => [a.tipo, a.storage_path, a.obs]))).toEqual([
+      [['cheque', 'ordenes/pendientes/cencosud.pdf', 'Cheque N° 3076']],
+      [['cheque', 'ordenes/pendientes/gimenez.pdf', 'Cheque N° 3077']],
+      [['cheque', 'ordenes/pendientes/sanjuan.pdf', 'Cheque N° 3079']],
+    ])
+    expect(moveMock.mock.calls).toEqual([
+      ['ordenes/pendientes/cencosud.pdf', 'ordenes/30/cencosud.pdf'],
+      ['ordenes/pendientes/gimenez.pdf', 'ordenes/31/gimenez.pdf'],
+      ['ordenes/pendientes/sanjuan.pdf', 'ordenes/32/sanjuan.pdf'],
+    ])
+  })
+
+  it('el mismo PDF subido en dos bloques (el caso real): 400 ARCHIVO_EN_VARIOS_BLOQUES nombrando los bloques, sin RPC ni borrar nada', async () => {
+    // Cencosud: su e-cheq + el mismo PDF como comprobante (otra subida).
+    // Gimenez: su e-cheq + OTRA subida del PDF de Cencosud como comprobante.
+    state.contenidos = {
+      'ordenes/pendientes/cencosud.pdf': 'echeq 3076',
+      'ordenes/pendientes/cencosud-comp.pdf': 'echeq 3076',
+      'ordenes/pendientes/gimenez.pdf': 'echeq 3077',
+      'ordenes/pendientes/gimenez-comp.pdf': 'echeq 3076',
+    }
+    const comp = (n: string) => ({ ...COMPROBANTE(n), nombre_archivo: 'Cheque3076_CENCOSUD SA_30590360763.pdf' })
+    const lote = tresBloques([
+      ECHEQ(1, 5, '3076', 'cencosud', { adjuntos: [comp('cencosud-comp')] }),
+      ECHEQ(2, 6, '3077', 'gimenez', { adjuntos: [comp('gimenez-comp')] }),
+      ECHEQ(3, 7, '3079', 'sanjuan'),
+    ])
+    const res = await post('/ordenes/lote', lote)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({
+      error: 'ARCHIVO_EN_VARIOS_BLOQUES',
+      campo: 'adjuntos',
+      detail: {
+        campo: 'adjuntos', indices: [0, 1], proveedor_ids: [1, 2],
+        nombre_archivo: 'Cheque3076_CENCOSUD SA_30590360763.pdf', tipos: ['comprobante_pago'],
+        indice: 1, proveedor_id: 2,
+      },
+    })
+    expect(rpcMock).not.toHaveBeenCalled()
+    // Nada se borra: la persona saca el archivo equivocado y reintenta con el resto.
+    expect(removeMock).not.toHaveBeenCalled()
+    expect(moveMock).not.toHaveBeenCalled()
+  })
+
+  it('transferencia masiva del Galicia: el mismo comprobante en bloques que son TODOS transferencia pasa, en cada OP', async () => {
+    state.contenidos = { 'ordenes/pendientes/galicia-1.pdf': 'masiva', 'ordenes/pendientes/galicia-2.pdf': 'masiva' }
+    const transf = (prov: number, factura: number, n: string) => ({
+      proveedor_id: prov, forma_pago: 'transferencia', lineas: [{ factura_id: factura, monto: 100 }], adjuntos: [COMPROBANTE(n)],
+    })
+    const lote = tresBloques([transf(1, 5, 'galicia-1'), transf(2, 6, 'galicia-2')])
+    const res = await post('/ordenes/lote', lote)
+    expect(res.status).toBe(200)
+    const ordenes = llamada('pagos_emitir_ordenes_lote')!.p_ordenes as { adjuntos: Fila[] }[]
+    expect(ordenes.map((o) => o.adjuntos.map((a) => a.storage_path))).toEqual([['ordenes/pendientes/galicia-1.pdf'], ['ordenes/pendientes/galicia-2.pdf']])
+    expect(moveMock.mock.calls).toEqual([
+      ['ordenes/pendientes/galicia-1.pdf', 'ordenes/30/galicia-1.pdf'],
+      ['ordenes/pendientes/galicia-2.pdf', 'ordenes/31/galicia-2.pdf'],
+    ])
+  })
+
+  it('el comprobante compartido con un bloque que NO es transferencia se frena', async () => {
+    state.contenidos = { 'ordenes/pendientes/galicia-1.pdf': 'masiva', 'ordenes/pendientes/galicia-2.pdf': 'masiva' }
+    const lote = tresBloques([
+      { proveedor_id: 1, forma_pago: 'transferencia', lineas: [{ factura_id: 5, monto: 100 }], adjuntos: [COMPROBANTE('galicia-1')] },
+      { proveedor_id: 2, forma_pago: 'efectivo', lineas: [{ factura_id: 6, monto: 100 }], adjuntos: [COMPROBANTE('galicia-2')] },
+    ])
+    const res = await post('/ordenes/lote', lote)
+    expect(await res.json()).toMatchObject({ error: 'ARCHIVO_EN_VARIOS_BLOQUES', detail: { indices: [0, 1], proveedor_ids: [1, 2] } })
+    expect(rpcMock).not.toHaveBeenCalled()
+  })
+
+  it('un comprobante de transferencia que es el archivo de un cheque de otro bloque se frena', async () => {
+    state.contenidos = { 'ordenes/pendientes/galicia-1.pdf': 'echeq 3077', 'ordenes/pendientes/gimenez.pdf': 'echeq 3077' }
+    const lote = tresBloques([
+      { proveedor_id: 1, forma_pago: 'transferencia', lineas: [{ factura_id: 5, monto: 100 }], adjuntos: [COMPROBANTE('galicia-1')] },
+      ECHEQ(2, 6, '3077', 'gimenez'),
+    ])
+    const res = await post('/ordenes/lote', lote)
+    expect(await res.json()).toMatchObject({ error: 'ARCHIVO_EN_VARIOS_BLOQUES', detail: { indices: [0, 1], tipos: ['comprobante_pago', 'cheque'] } })
+  })
+
+  it('la foto de un cheque repetida en otro bloque también se frena', async () => {
+    state.contenidos = { 'ordenes/pendientes/cencosud.pdf': 'echeq 3076', 'ordenes/pendientes/otra.pdf': 'echeq 3076' }
+    const lote = tresBloques([ECHEQ(1, 5, '3076', 'cencosud'), ECHEQ(2, 6, '3077', 'gimenez'), ECHEQ(3, 7, '3079', 'otra')])
+    const res = await post('/ordenes/lote', lote)
+    expect(await res.json()).toMatchObject({ error: 'ARCHIVO_EN_VARIOS_BLOQUES', detail: { indices: [0, 2], proveedor_ids: [1, 3], tipos: ['cheque'] } })
+  })
+
+  it('el mismo archivo dos veces en UN bloque se unifica en su OP, y la copia se borra recién después de registrar', async () => {
+    state.contenidos = { 'ordenes/pendientes/cencosud.pdf': 'echeq 3076', 'ordenes/pendientes/cencosud-comp.pdf': 'echeq 3076' }
+    const lote = tresBloques([
+      ECHEQ(1, 5, '3076', 'cencosud', { adjuntos: [COMPROBANTE('cencosud-comp')] }),
+      ECHEQ(2, 6, '3077', 'gimenez'),
+      ECHEQ(3, 7, '3079', 'sanjuan'),
+    ])
+    expect((await post('/ordenes/lote', lote)).status).toBe(200)
+    const ordenes = llamada('pagos_emitir_ordenes_lote')!.p_ordenes as { orden: Fila; adjuntos: Fila[] }[]
+    expect(ordenes[0]!.adjuntos).toHaveLength(1)
+    expect(ordenes[0]!.adjuntos[0]).toMatchObject({ storage_path: 'ordenes/pendientes/cencosud-comp.pdf', obs: 'Cheque N° 3076' })
+    // El e-cheq apunta al archivo que quedó.
+    expect((ordenes[0]!.orden.cheques as Fila[])[0]!.foto_path).toBe('ordenes/pendientes/cencosud-comp.pdf')
+    expect(ordenes[1]!.adjuntos.map((a) => a.storage_path)).toEqual(['ordenes/pendientes/gimenez.pdf'])
+    expect(removeMock).toHaveBeenCalledWith(['ordenes/pendientes/cencosud.pdf'])
+    expect(rpcMock.mock.invocationCallOrder[0]!).toBeLessThan(removeMock.mock.invocationCallOrder[0]!)
+  })
+
+  it('si la RPC rebota, tampoco se borra la copia unificada (el reintento manda los mismos paths)', async () => {
+    state.contenidos = { 'ordenes/pendientes/cencosud.pdf': 'echeq 3076', 'ordenes/pendientes/cencosud-comp.pdf': 'echeq 3076' }
+    const lote = tresBloques([ECHEQ(1, 5, '3076', 'cencosud', { adjuntos: [COMPROBANTE('cencosud-comp')] }), ECHEQ(2, 6, '3077', 'gimenez')])
+    rpcMock.mockImplementation(async () => ({ data: null, error: { message: 'MONTO_SUPERA_SALDO', details: JSON.stringify({ indice: 1 }) } }))
+    expect((await post('/ordenes/lote', lote)).status).toBe(409)
+    expect(removeMock).not.toHaveBeenCalled()
   })
 })
 

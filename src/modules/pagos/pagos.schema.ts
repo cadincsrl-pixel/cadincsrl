@@ -704,6 +704,8 @@ export type LoteOrdenesDto = z.infer<typeof LoteOrdenesSchema>
 export const AvisarPagoSchema = z.object({
   a_proveedor:     z.boolean().optional().default(false),
   a_contador:      z.boolean().optional().default(false),
+  /** Copia a Compras (20260929x): el mismo paquete que el contador. */
+  a_compras:       z.boolean().optional().default(false),
   /** Legacy (una sola dirección). Si viene `emails_proveedor`, se ignora. */
   email_proveedor: z.string().trim().email().max(254).optional(),
   /**
@@ -715,7 +717,7 @@ export const AvisarPagoSchema = z.object({
   /** Las direcciones nuevas quedan como contacto del proveedor («recibe avisos»). */
   guardar_email:   z.boolean().optional().default(true),
 }).superRefine((o, ctx) => {
-  if (!o.a_proveedor && !o.a_contador) {
+  if (!o.a_proveedor && !o.a_contador && !o.a_compras) {
     ctx.addIssue({ code: 'custom', path: ['a_contador'], message: 'SIN_DESTINATARIOS' })
   }
 })

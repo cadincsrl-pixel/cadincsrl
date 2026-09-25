@@ -372,8 +372,9 @@ pagos.post('/ordenes/:id/adjuntos', lectura, registrarPagos, tabPago, zValidator
 pagos.get('/ordenes/:id/adjuntos/:adjId/signed-url', lectura, tabPago, handler(async (c) =>
   pagosAdjuntosService.signedUrl('ordenes', idParam(c), idParam(c, 'adjId'), c.get('accessToken'))))
 
+// `?motivo=` (opcional, 20260929x): queda en el obs del adjunto quitado.
 pagos.delete('/ordenes/:id/adjuntos/:adjId', lectura, registrarPagos, tabPago, handler(async (c) =>
-  pagosAdjuntosService.softDelete('ordenes', idParam(c), idParam(c, 'adjId'), c.get('user').id, c.get('accessToken'))))
+  pagosAdjuntosService.softDelete('ordenes', idParam(c), idParam(c, 'adjId'), c.get('user').id, c.get('accessToken'), c.req.query('motivo'))))
 
 // ═══════════════════════════════════ Proveedores (padrón propio) ════════════
 

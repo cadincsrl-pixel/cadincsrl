@@ -159,6 +159,18 @@ describe('PATCH /config — avisos y plazos (20260929i)', () => {
     expect(r.status).toBe(400)
     expect(await r.json()).toMatchObject({ error: 'PIE_CON_CBU', campo: 'pie_texto', detail: { clave: 'pie_texto' } })
   })
+  it('compras_email (20260929x): se normaliza, va a aviso_compras_email; malo → EMAIL_INVALIDO; vacío → null', async () => {
+    const r = await patch({ compras_email: ' ComprasCadinc@Gmail.com ' })
+    expect(r.status).toBe(200)
+    expect(state.rpcs.find((x) => x.fn === 'pagos_guardar_config')?.args).toEqual({ p_user_id: 'u-1', p_cambios: { aviso_compras_email: 'comprascadinc@gmail.com' } })
+    expect((await r.json()).aviso.compras_email).toBe('comprascadinc@gmail.com')
+    expect(await (await patch({ compras_email: 'compras@' })).json()).toMatchObject({ error: 'EMAIL_INVALIDO', campo: 'compras_email' })
+    expect(cambiosParaDb(PagosConfigPatchSchema.parse({ compras_email: '' }))).toEqual({ aviso_compras_email: null })
+  })
+  it('el error de la base sobre aviso_compras_email vuelve con la clave de la API', async () => {
+    state.error = { message: 'CONFIG_INVALIDA', details: '{"clave":"aviso_compras_email","motivo":"email_invalido"}' }
+    expect(await (await patch({ compras_email: 'a@b.com' })).json()).toMatchObject({ error: 'EMAIL_INVALIDO', campo: 'compras_email' })
+  })
   it('cambiosParaDb omite lo no mandado', () => {
     expect(cambiosParaDb(PagosConfigPatchSchema.parse({ plazos_cheque: [15] }))).toEqual({ plazos_cheque: [15] })
   })

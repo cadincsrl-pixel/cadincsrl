@@ -14,6 +14,10 @@
  *                  para imputar el cobro. NO se le manda la factura: ya es suya.
  *   · CONTADOR   → el par completo, comprobante + las facturas que cubrió, que
  *                  es lo que necesita para cerrar el asiento.
+ *   · COMPRAS    → copia del paquete del contador (20260929x, dueño: «junto al
+ *                  contador necesito que los comprobantes se envíen a
+ *                  compras»). Mail propio, no CC: así queda su propio intento
+ *                  en el historial. Dirección de Compras › Configuración.
  *
  * NUNCA va el CBU en el cuerpo. El proveedor ya sabe su cuenta y el contador la
  * tiene en el comprobante; ponerla en un mail es regalar un dato que sirve para
@@ -56,7 +60,7 @@ export const avisoPagoService = {
    */
   async avisar(
     ordenId: number,
-    dto: { a_proveedor: boolean; a_contador: boolean; email_proveedor?: string; emails_proveedor?: string[]; guardar_email?: boolean },
+    dto: { a_proveedor: boolean; a_contador: boolean; a_compras?: boolean; email_proveedor?: string; emails_proveedor?: string[]; guardar_email?: boolean },
     userId: string,
     token: string,
   ): Promise<{ resultados: ResultadoAviso[] }> {
@@ -67,7 +71,7 @@ export const avisoPagoService = {
     const orden = o as Record<string, unknown>
     // Avisar de un pago que se anuló es mandar información falsa.
     if (orden.estado === 'anulada') throw new PagosHttpError(409, 'ORDEN_ANULADA')
-    if (!dto.a_proveedor && !dto.a_contador) throw new PagosHttpError(400, 'SIN_DESTINATARIOS')
+    if (!dto.a_proveedor && !dto.a_contador && !dto.a_compras) throw new PagosHttpError(400, 'SIN_DESTINATARIOS')
 
     const [lineas, cheques, adjOrden] = await Promise.all([
       sb.from('pagos_orden_lineas')
@@ -218,10 +222,14 @@ export const avisoPagoService = {
       for (const email of emails) await mandarA('proveedor', email, comprobantes)
     }
 
+    // El contador recibe el par completo: sin el comprobante ve la deuda pero
+    // no puede cerrar el asiento. Compras recibe exactamente lo mismo.
+    const paqueteCompleto = [...comprobantes, ...((adjFactura.data ?? []) as any[])]
     if (dto.a_contador) {
-      // El contador recibe el par completo: sin el comprobante ve la deuda pero
-      // no puede cerrar el asiento.
-      await mandarA('contador', config.aviso.contador_email_efectivo, [...comprobantes, ...((adjFactura.data ?? []) as any[])])
+      await mandarA('contador', config.aviso.contador_email_efectivo, paqueteCompleto)
+    }
+    if (dto.a_compras) {
+      await mandarA('compras', config.aviso.compras_email, paqueteCompleto)
     }
 
     return { resultados }

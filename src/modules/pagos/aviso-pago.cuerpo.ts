@@ -9,10 +9,11 @@
  * NUNCA va el CBU ni el alias en el cuerpo. El proveedor ya sabe su cuenta y
  * el contador la tiene en el comprobante; ponerla en un mail es regalar el
  * dato que sirve para estafar («cambió nuestro CBU, pagá acá»). Hay un test
- * que lo verifica para los dos destinatarios.
+ * que lo verifica para cada destinatario.
  */
 
-export type Destinatario = 'proveedor' | 'contador'
+/** `compras` (20260929x) recibe el mismo cuerpo que el contador. */
+export type Destinatario = 'proveedor' | 'contador' | 'compras'
 
 export interface FacturaDelAviso {
   tipo_comprobante: string | null

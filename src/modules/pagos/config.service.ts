@@ -6,6 +6,8 @@
  *     de un tributo (IIBB de Tucumán). 20260929f.
  *   · avisos de pago (20260929i): `aviso_contador_email`, `aviso_responder_a`,
  *     `aviso_nombre_remitente`, `aviso_pie_texto`.
+ *   · `aviso_compras_email` (20260929x): copia a Compras del aviso de pago;
+ *     recibe el mismo paquete que el contador. Sin fallback a env ni perfil.
  *   · `plazos_cheque` (20260929i): los días que ofrece el alta de un cheque.
  *
  * La API habla con nombres cortos (`contador_email`, `plazos_cheque`…) y este
@@ -38,6 +40,7 @@ const emailONull = z.string().trim().max(254)
 export const PagosConfigPatchSchema = z.object({
   tributo_jurisdiccion_default_id: z.number().int().positive().nullable().optional(),
   contador_email: emailONull.optional(),
+  compras_email: emailONull.optional(),
   responder_a: emailONull.optional(),
   nombre_remitente: z.string().trim()
     .max(60, { message: 'TEXTO_LARGO' })
@@ -60,6 +63,7 @@ export type PagosConfigPatch = z.infer<typeof PagosConfigPatchSchema>
 const CLAVE_DB: Record<keyof PagosConfigPatch, string> = {
   tributo_jurisdiccion_default_id: 'tributo_jurisdiccion_default_id',
   contador_email: 'aviso_contador_email',
+  compras_email: 'aviso_compras_email',
   responder_a: 'aviso_responder_a',
   nombre_remitente: 'aviso_nombre_remitente',
   pie_texto: 'aviso_pie_texto',
@@ -82,6 +86,7 @@ export function cambiosParaDb(p: PagosConfigPatch): Record<string, unknown> {
 export interface PagosConfigBase {
   tributo_jurisdiccion_default_id: number | null
   aviso_contador_email: string | null
+  aviso_compras_email: string | null
   aviso_responder_a: string | null
   aviso_nombre_remitente: string | null
   aviso_pie_texto: string | null
@@ -95,6 +100,8 @@ export interface PagosConfig {
     contador_email: string | null
     contador_email_efectivo: string | null
     contador_fuente: FuenteContador
+    /** Copia a Compras (20260929x): mismo paquete que el contador. null = no se manda. */
+    compras_email: string | null
     responder_a: string | null
     /** El Reply-To que sale de verdad: el de la pantalla o SMTP_REPLY_TO. */
     responder_a_efectivo: string | null
@@ -122,6 +129,7 @@ export function baseDesdeJson(raw: unknown): PagosConfigBase {
   return {
     tributo_jurisdiccion_default_id: Number.isInteger(id) && id > 0 ? id : null,
     aviso_contador_email: texto(r.aviso_contador_email),
+    aviso_compras_email: texto(r.aviso_compras_email),
     aviso_responder_a: texto(r.aviso_responder_a),
     aviso_nombre_remitente: texto(r.aviso_nombre_remitente),
     aviso_pie_texto: texto(r.aviso_pie_texto),
@@ -184,6 +192,7 @@ async function armar(base: PagosConfigBase): Promise<PagosConfig> {
       contador_email: base.aviso_contador_email,
       contador_email_efectivo: contador.email,
       contador_fuente: contador.fuente,
+      compras_email: base.aviso_compras_email,
       responder_a: base.aviso_responder_a,
       responder_a_efectivo: responderAEfectivo(base.aviso_responder_a),
       nombre_remitente: base.aviso_nombre_remitente,

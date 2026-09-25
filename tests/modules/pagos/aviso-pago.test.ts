@@ -29,7 +29,7 @@ describe('armarCuerpo', () => {
   it('el CBU NUNCA va en el cuerpo, ni al proveedor ni al contador', () => {
     // Poner la cuenta en un mail regala el dato que sirve para estafar
     // («cambió nuestro CBU, pagá acá»). El proveedor ya sabe su cuenta.
-    for (const para of ['proveedor', 'contador'] as const) {
+    for (const para of ['proveedor', 'contador', 'compras'] as const) {
       const c = armarCuerpo(para, ORDEN, FACTURAS, CHEQUES, 'CADINC SRL')
       for (const texto of [c.html, c.texto, c.asunto]) {
         expect(texto).not.toContain('0070399520000003055000')
@@ -40,7 +40,7 @@ describe('armarCuerpo', () => {
 
   it('el CBU tampoco entra por el pie: un pie con CBU o alias no se imprime', () => {
     for (const pie of ['Pagar al 0070399520000003055000', 'CBU 0070 3995 2000 0003 0550 00', 'alias norte.distrib']) {
-      for (const para of ['proveedor', 'contador'] as const) {
+      for (const para of ['proveedor', 'contador', 'compras'] as const) {
         const c = armarCuerpo(para, ORDEN, FACTURAS, CHEQUES, 'CADINC SRL', { pie })
         for (const texto of [c.html, c.texto, c.asunto]) {
           expect(texto).not.toContain('0070399520000003055000')

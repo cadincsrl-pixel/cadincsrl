@@ -81,18 +81,10 @@ export interface AdjuntoProcesado {
 /**
  * Valida el prefijo `ordenes/pendientes/` y hashea cada archivo. Si uno falla,
  * se borran TODOS los que ya estaban subidos (el form reintenta subiendo de
- * nuevo) y se relanza.
- *
- * El mismo archivo dos veces en la misma OP (mismo hash: la foto de dos
- * cheques subida dos veces, o el comprobante repetido como foto) queda UNA
- * vez —el índice `(orden_id, hash)` lo rebotaría con ADJ_DUPLICADO—: se
- * conserva el primero, se le suman las obs y se borra la copia del bucket.
- * Con `reemplazos`, cada copia queda anotada con el path que la reemplaza.
+ * nuevo) y se relanza. No deduplica: eso es `unificarPorHash`.
  */
-export async function procesarPendientes(
+export async function hashearPendientes(
   adjuntos: (AdjuntoPendienteDto & { obs?: string })[],
-  /** Si se pasa, se anota «copia → la que quedó» (lo usa la foto de cada echeq, 20260929u). */
-  reemplazos?: Map<string, string>,
 ): Promise<AdjuntoProcesado[]> {
   const out: AdjuntoProcesado[] = []
   for (const a of adjuntos) {
@@ -112,9 +104,25 @@ export async function procesarPendientes(
     await borrarDelBucket(adjuntos.map((a) => a.storage_path))
     throw err
   }
+  return out
+}
+
+/**
+ * El mismo archivo dos veces en la misma OP (mismo hash: la foto de dos
+ * cheques subida dos veces, o el comprobante repetido como foto) queda UNA
+ * vez —el índice `(orden_id, hash)` lo rebotaría con ADJ_DUPLICADO—: se
+ * conserva el primero, se le suman las obs, y la copia sale en `copias` para
+ * que quien llama la borre del bucket. Con `reemplazos`, cada copia queda
+ * anotada con el path que la reemplaza. Pura (no toca el bucket).
+ */
+export function unificarPorHash(
+  out: readonly AdjuntoProcesado[],
+  reemplazos?: Map<string, string>,
+): { unicos: AdjuntoProcesado[]; copias: string[] } {
   const unicos: AdjuntoProcesado[] = []
   const copias: string[] = []
-  for (const a of out) {
+  for (const orig of out) {
+    const a = { ...orig }
     const previo = unicos.find((u) => u.hash_sha256 === a.hash_sha256)
     if (!previo) { unicos.push(a); continue }
     if (a.storage_path !== previo.storage_path) {
@@ -123,8 +131,55 @@ export async function procesarPendientes(
     }
     if (a.obs && a.obs !== previo.obs) previo.obs = [previo.obs, a.obs].filter(Boolean).join(' · ')
   }
+  return { unicos, copias }
+}
+
+/** `hashearPendientes` + `unificarPorHash` + borrar las copias: lo que usa la OP suelta. */
+export async function procesarPendientes(
+  adjuntos: (AdjuntoPendienteDto & { obs?: string })[],
+  /** Si se pasa, se anota «copia → la que quedó» (lo usa la foto de cada echeq, 20260929u). */
+  reemplazos?: Map<string, string>,
+): Promise<AdjuntoProcesado[]> {
+  const { unicos, copias } = unificarPorHash(await hashearPendientes(adjuntos), reemplazos)
   await borrarDelBucket(copias)
   return unicos
+}
+
+/**
+ * «Pagar en lote»: un mismo archivo (mismo hash) en bloques de proveedores
+ * distintos. Un cheque es de UN pago a UN proveedor: si aparece en dos
+ * bloques, casi seguro se eligió mal el archivo en uno de ellos (pasó el
+ * 25/09: el e-cheq de Cencosud quedó también en la OP de Gimenez).
+ *
+ * Única excepción: un `comprobante_pago` compartido cuando TODOS los bloques
+ * que lo llevan son transferencia (la transferencia masiva del Galicia da un
+ * solo comprobante para varias). Cualquier otro repetido (un archivo de
+ * cheque, o un bloque que no es transferencia) choca. Devuelve el primer
+ * choque, o null.
+ */
+export function archivoEnVariosBloques(
+  porBloque: readonly {
+    forma: string
+    adjuntos: readonly Pick<AdjuntoProcesado, 'hash_sha256' | 'nombre_archivo' | 'tipo'>[]
+  }[],
+): { indices: number[]; nombre_archivo: string; tipos: string[] } | null {
+  const donde = new Map<string, { indices: number[]; nombres: string[]; tipos: string[] }>()
+  for (const [i, b] of porBloque.entries()) {
+    for (const a of b.adjuntos) {
+      const d = donde.get(a.hash_sha256) ?? { indices: [], nombres: [], tipos: [] }
+      if (!d.indices.includes(i)) d.indices.push(i)
+      d.nombres.push(a.nombre_archivo)
+      if (!d.tipos.includes(a.tipo)) d.tipos.push(a.tipo)
+      donde.set(a.hash_sha256, d)
+    }
+  }
+  for (const d of donde.values()) {
+    if (d.indices.length < 2) continue
+    const transferenciaMasiva = d.tipos.every((t) => t === 'comprobante_pago')
+      && d.indices.every((i) => porBloque[i]!.forma === 'transferencia')
+    if (!transferenciaMasiva) return { indices: d.indices, nombre_archivo: d.nombres[0]!, tipos: d.tipos }
+  }
+  return null
 }
 
 /**
@@ -298,15 +353,21 @@ export const pagosAdjuntosService = {
    *     cualquiera de los dos mientras quede un `comprobante_pago` o tantos
    *     archivos `cheque` como cheques (el mismo criterio de conteo que
    *     `v_pagos_ordenes.tiene_comprobante`).
+   * `motivo` (opcional, 20260929x): por qué se quitó; se suma al `obs` del
+   * adjunto como «Quitado: …» y se ve en «ver quitados».
    */
-  async softDelete(entidad: Entidad, id: number, adjId: number, userId: string, token: string) {
+  async softDelete(entidad: Entidad, id: number, adjId: number, userId: string, token: string, motivo?: string | null) {
     const cfg = CFG[entidad]
     const sb = createSupabaseClient(token)
     const { data: adj, error: e0 } = await sb
-      .from(cfg.tabla).select('id, tipo').eq('id', adjId).eq(cfg.fk, id).is('deleted_at', null).maybeSingle()
+      .from(cfg.tabla).select('id, tipo, obs').eq('id', adjId).eq(cfg.fk, id).is('deleted_at', null).maybeSingle()
     if (e0) throw new PagosHttpError(500, 'DB_ERROR', e0.message)
     if (!adj) throw new PagosHttpError(404, 'ADJ_NO_EXISTE')
     const tipoAdj = (adj as { tipo: string }).tipo
+    const motivoTxt = (motivo ?? '').trim().slice(0, 200)
+    const obsNuevo = motivoTxt
+      ? [String((adj as { obs?: string | null }).obs ?? '').trim(), `Quitado: ${motivoTxt}`].filter(Boolean).join(' · ')
+      : null
 
     if (entidad === 'ordenes' && (tipoAdj === 'comprobante_pago' || tipoAdj === 'cheque')) {
       const { data: orden } = await sb.from('pagos_ordenes').select('estado, forma_pago, monto_pagado').eq('id', id).maybeSingle()
@@ -330,7 +391,7 @@ export const pagosAdjuntosService = {
 
     const { data, error } = await sb
       .from(cfg.tabla)
-      .update({ deleted_at: new Date().toISOString(), updated_by: userId })
+      .update({ deleted_at: new Date().toISOString(), updated_by: userId, ...(obsNuevo != null ? { obs: obsNuevo } : {}) })
       .eq('id', adjId).eq(cfg.fk, id).is('deleted_at', null)
       .select('id').maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)

@@ -46,7 +46,7 @@ import {
   type ImputacionDto, type RegistrarFinnegansDto, type AplicarNcDto, sumaAplicaA,
 } from './pagos.schema.js'
 import {
-  pagosAdjuntosService, procesarPendientes, borrarDelBucket, moverPendientesAOrden, ordenesConHash, hashDelBucket, BUCKET,
+  pagosAdjuntosService, procesarPendientes, hashearPendientes, unificarPorHash, archivoEnVariosBloques, borrarDelBucket, moverPendientesAOrden, ordenesConHash, hashDelBucket, BUCKET,
   type AdjuntoProcesado,
 } from './adjuntos.service.js'
 import { ultimoControl, recompararControl, controlDesdeLectura, controlarFactura } from './control.service.js'
@@ -1436,6 +1436,11 @@ export const pagosService = {
    * demás están bien: la persona corrige o excluye ese bloque y reintenta sin
    * volver a subir todo. Si cierra el modal, el modal los borra (y el barrido
    * de pendientes se lleva lo que quede).
+   *
+   * El mismo archivo (hash) en bloques de proveedores distintos se frena con
+   * 400 ARCHIVO_EN_VARIOS_BLOQUES (`indices` / `proveedor_ids`), salvo el
+   * comprobante compartido de una transferencia masiva (todos los bloques
+   * que lo llevan son transferencia).
    */
   async registrarOrdenesLote(dto: LoteOrdenesDto, userId: string, perfil: Perfil | null) {
     const hoy = hoyAR()
@@ -1452,11 +1457,39 @@ export const pagosService = {
       validadas.push(await enBloque(i, o.proveedor_id, () => validarOrden(o, userId, perfil)))
     }
 
-    // 2) Hashear los adjuntos de cada orden.
+    // 2) Hashear los adjuntos de cada orden. Las copias dentro de un bloque
+    //    (mismo archivo dos veces en la misma OP) se unifican, pero se borran
+    //    del bucket recién cuando el lote se registró: si algo rebota, el
+    //    reintento vuelve a mandar los mismos paths y tienen que seguir ahí.
     const adjuntosPorOrden: AdjuntoProcesado[][] = []
+    const copias: string[] = []
     const reemplazos = new Map<string, string>()
     for (const [i, o] of ordenes.entries()) {
-      adjuntosPorOrden.push(await enBloque(i, o.proveedor_id, () => procesarPendientes(adjuntosPendientesDeOrden(o), reemplazos)))
+      const hasheados = await enBloque(i, o.proveedor_id, () => hashearPendientes(adjuntosPendientesDeOrden(o)))
+      const u = unificarPorHash(hasheados, reemplazos)
+      adjuntosPorOrden.push(u.unicos)
+      copias.push(...u.copias)
+    }
+
+    // 2b) El mismo archivo en bloques de proveedores distintos: un cheque es
+    //     de UN pago a UN proveedor, así que es un archivo elegido en el
+    //     bloque equivocado (25/09: el e-cheq de Cencosud quedó también en la
+    //     OP de Gimenez). Se frena nombrando los bloques; el `indice` es el
+    //     último, que es el que se cargó después. Excepción: el comprobante
+    //     de una transferencia masiva del Galicia, compartido por bloques que
+    //     son todos transferencia.
+    const choque = archivoEnVariosBloques(adjuntosPorOrden.map((adjuntos, i) => ({ forma: validadas[i]!.formaPago, adjuntos })))
+    if (choque) {
+      const proveedorIds = choque.indices.map((i) => ordenes[i]!.proveedor_id)
+      throw new PagosHttpError(400, 'ARCHIVO_EN_VARIOS_BLOQUES', {
+        campo: 'adjuntos',
+        indices: choque.indices,
+        proveedor_ids: proveedorIds,
+        nombre_archivo: choque.nombre_archivo,
+        tipos: choque.tipos,
+        indice: choque.indices[choque.indices.length - 1],
+        proveedor_id: proveedorIds[proveedorIds.length - 1],
+      })
     }
     const avisos: (Aviso & { indice: number; proveedor_id: number })[] = []
     for (const [i, adj] of adjuntosPorOrden.entries()) {
@@ -1471,6 +1504,7 @@ export const pagosService = {
         p_user_id: userId,
       }))
 
+    await borrarDelBucket(copias)
     for (const r of res.ordenes) {
       const ordenId = Number((r.orden as { id?: number }).id)
       const adj = adjuntosPorOrden[r.indice] ?? []
