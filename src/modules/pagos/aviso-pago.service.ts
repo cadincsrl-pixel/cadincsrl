@@ -29,21 +29,10 @@ import { enviarMail, esEmailValido, estaConfigurado, loQueFalta, type AdjuntoMai
 import { BUCKET } from './adjuntos.service.js'
 import { PagosHttpError } from './pagos.errors.js'
 import { getEmpresa } from '../../lib/empresa.js'
-import { armarCuerpo, destinatariosProveedor, type Destinatario } from './aviso-pago.cuerpo.js'
+import { armarCuerpo, armarPrueba, destinatariosProveedor, type Destinatario } from './aviso-pago.cuerpo.js'
+import { nombreRemitenteEfectivo, pagosConfigService, responderAEfectivo } from './config.service.js'
 export { armarCuerpo, destinatariosProveedor } from './aviso-pago.cuerpo.js'
 export type { Destinatario } from './aviso-pago.cuerpo.js'
-
-/** La casilla del contador: la del env, o la del usuario activo con rol contador. */
-async function emailDelContador(): Promise<string | null> {
-  const delEnv = (process.env.CONTADOR_EMAIL ?? '').trim()
-  if (esEmailValido(delEnv)) return delEnv
-  const { data } = await supabase
-    .from('profiles').select('id').eq('rol_key', 'contador').eq('activo', true).limit(1).maybeSingle()
-  if (!data) return null
-  const { data: u } = await supabase.auth.admin.getUserById((data as { id: string }).id)
-  const mail = u?.user?.email ?? ''
-  return esEmailValido(mail) ? mail : null
-}
 
 export type EstadoAviso = 'enviado' | 'fallado' | 'omitido'
 
@@ -147,7 +136,12 @@ export const avisoPagoService = {
     const comprobantes = ((adjOrden.data ?? []) as any[]).filter((a) => a.tipo === 'comprobante_pago')
     // Nombre de fantasía de empresa_config; EMPRESA_NOMBRE del env queda como fallback (en getEmpresa).
     const empresa = (await getEmpresa()).nombre_fantasia
-    const responderA = (process.env.SMTP_REPLY_TO ?? '').trim() || undefined
+    // Configuración de Compras (20260929i): a quién le llega el del contador
+    // (pantalla → env → perfil), Reply-To, nombre del From y pie.
+    const config = await pagosConfigService.obtener()
+    const responderA = responderAEfectivo(config.aviso.responder_a) ?? undefined
+    const nombreRemitente = nombreRemitenteEfectivo(config.aviso.nombre_remitente, empresa) ?? undefined
+    const pie = config.aviso.pie_texto
 
     const registrar = async (r: ResultadoAviso) => {
       await supabase.from('pagos_ordenes_avisos').insert({
@@ -175,8 +169,8 @@ export const avisoPagoService = {
           ((cheques.data ?? []) as any[]).map((c) => ({
             numero: String(c.numero), banco: String(c.banco ?? ''),
             fecha_cobro: String(c.fecha_cobro), monto: Number(c.monto),
-          })), empresa)
-        await enviarMail({ para: email, asunto: cuerpo.asunto, texto: cuerpo.texto, html: cuerpo.html, adjuntos, responderA })
+          })), empresa, { pie })
+        await enviarMail({ para: email, asunto: cuerpo.asunto, texto: cuerpo.texto, html: cuerpo.html, adjuntos, responderA, nombreRemitente })
         const r: ResultadoAviso = { destinatario, estado: 'enviado', email, adjuntos: nombres, error: '' }
         resultados.push(r)
         await registrar(r)
@@ -225,10 +219,35 @@ export const avisoPagoService = {
     if (dto.a_contador) {
       // El contador recibe el par completo: sin el comprobante ve la deuda pero
       // no puede cerrar el asiento.
-      await mandarA('contador', await emailDelContador(), [...comprobantes, ...((adjFactura.data ?? []) as any[])])
+      await mandarA('contador', config.aviso.contador_email_efectivo, [...comprobantes, ...((adjFactura.data ?? []) as any[])])
     }
 
     return { resultados }
+  },
+
+  /**
+   * Mail de prueba desde Compras › Configuración: sale con el remitente, el
+   * Reply-To y el pie configurados, para ver cómo le llega a un tercero. A
+   * diferencia del aviso, un fallo SÍ se devuelve como error: es lo que se
+   * quiere saber.
+   */
+  async probar(para: string): Promise<{ ok: true; para: string; remitente: string; message_id: string }> {
+    if (!esEmailValido(para)) throw new PagosHttpError(400, 'EMAIL_INVALIDO')
+    if (!estaConfigurado()) throw new PagosHttpError(409, 'MAIL_NO_CONFIGURADO', { falta: loQueFalta() })
+    pagosConfigService.olvidarCache()
+    const config = await pagosConfigService.obtener()
+    const empresa = (await getEmpresa()).nombre_fantasia
+    const cuerpo = armarPrueba(empresa, config.aviso.pie_texto)
+    try {
+      const r = await enviarMail({
+        para, asunto: cuerpo.asunto, texto: cuerpo.texto, html: cuerpo.html,
+        responderA: responderAEfectivo(config.aviso.responder_a) ?? undefined,
+        nombreRemitente: nombreRemitenteEfectivo(config.aviso.nombre_remitente, empresa) ?? undefined,
+      })
+      return { ok: true, para, remitente: config.aviso.remitente_efectivo, message_id: r.messageId }
+    } catch (e) {
+      throw new PagosHttpError(502, 'MAIL_NO_ENVIADO', { mensaje: e instanceof Error ? e.message : 'no se pudo enviar' })
+    }
   },
 
   /** Lo que ya se mandó de esta orden, para que la ficha no lo repita a ciegas. */

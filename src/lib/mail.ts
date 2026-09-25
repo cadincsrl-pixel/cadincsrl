@@ -38,6 +38,49 @@ export interface MailAEnviar {
   adjuntos?: AdjuntoMail[]
   /** Para que las respuestas del proveedor caigan en una casilla que se lee. */
   responderA?: string
+  /**
+   * El NOMBRE que ve quien recibe («CADINC Pagos»), de la configuración de
+   * Compras (20260929i). La DIRECCIÓN no se configura desde la pantalla: es
+   * la de `SMTP_FROM` / `SMTP_USER`, que tiene que coincidir con la cuenta
+   * SMTP o el servidor rechaza el envío.
+   */
+  nombreRemitente?: string
+}
+
+/**
+ * Separa `SMTP_FROM` en nombre y dirección. Acepta «dir@x», «Nombre <dir@x>»
+ * y «"Nombre" <dir@x>». Pura, para los tests.
+ */
+export function parsearFrom(from: string): { nombre: string; direccion: string } {
+  const t = (from ?? '').trim()
+  const m = t.match(/^\s*"?([^"<]*?)"?\s*<\s*([^<>\s]+)\s*>\s*$/)
+  if (m) return { nombre: (m[1] ?? '').trim(), direccion: (m[2] ?? '').trim() }
+  return { nombre: '', direccion: t }
+}
+
+/** Saca lo que rompería el encabezado From (comillas, <>, saltos de línea). */
+function limpiarNombre(s: string | null | undefined): string {
+  return String(s ?? '').replace(/[\u0000-\u001f\u007f"<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+}
+
+/**
+ * El From que sale: la dirección siempre del env; el nombre, el pedido (si
+ * hay) o el que ya traía `SMTP_FROM`. Pura: recibe el `SMTP_FROM` efectivo.
+ */
+export function armarFrom(fromEnv: string, nombreRemitente?: string | null): { name: string; address: string } {
+  const { nombre, direccion } = parsearFrom(fromEnv)
+  return { name: limpiarNombre(nombreRemitente) || limpiarNombre(nombre), address: direccion }
+}
+
+/** Cómo se ve el From, para mostrarlo en la pantalla: «"Nombre" <dir@x>». */
+export function fromComoTexto(f: { name: string; address: string }): string {
+  if (!f.address) return ''
+  return f.name ? `"${f.name}" <${f.address}>` : f.address
+}
+
+/** El From efectivo con este env y este nombre. '' si no hay dirección. */
+export function remitenteEfectivo(nombreRemitente?: string | null): string {
+  return fromComoTexto(armarFrom(cfg().from, nombreRemitente))
 }
 
 const cfg = () => ({
@@ -105,8 +148,11 @@ export async function enviarMail(m: MailAEnviar): Promise<{ messageId: string }>
     throw new Error(`El correo no está configurado en el servidor (falta ${loQueFalta().join(', ')})`)
   }
   const c = cfg()
+  const f = armarFrom(c.from, m.nombreRemitente)
   const info = await getTransporter().sendMail({
-    from: c.from,
+    // Objeto y no texto: nodemailer codifica el nombre (tildes) y no hay forma
+    // de inyectar otro encabezado desde la configuración.
+    from: f.name ? { name: f.name, address: f.address } : f.address,
     to: m.para,
     replyTo: m.responderA ?? undefined,
     subject: m.asunto,

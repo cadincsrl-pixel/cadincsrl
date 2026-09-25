@@ -52,7 +52,7 @@ vi.mock('../../../src/lib/supabase.js', () => {
 })
 
 import pagos from '../../../src/modules/pagos/pagos.routes.js'
-import { pagosConfigService, configDesdeJson } from '../../../src/modules/pagos/config.service.js'
+import { pagosConfigService, baseDesdeJson, resolverEmailContador, cambiosParaDb, PagosConfigPatchSchema, nombreRemitenteEfectivo, responderAEfectivo } from '../../../src/modules/pagos/config.service.js'
 import { TributoSchema } from '../../../src/modules/pagos/pagos.schema.js'
 
 const perfil = (p: Fila): Fila => ({ rol: 'operador', activo: true, rol_base: null, permisos: { pagos: p } })
@@ -70,7 +70,13 @@ describe('GET /config', () => {
     state.profile = perfil({ lectura: true, tabs: ['facturas'] })
     const r = await pagos.request('/config')
     expect(r.status).toBe(200)
-    expect(await r.json()).toEqual({ tributos: { jurisdiccion_default_id: 24 } })
+    const j = await r.json()
+    // Lo que ya leía el alta de la factura sigue igual.
+    expect(j.tributos).toEqual({ jurisdiccion_default_id: 24 })
+    // Sin plazos en la base → los de hoy.
+    expect(j.cheques).toEqual({ plazos: [0, 7, 15, 30, 45, 60, 90] })
+    expect(j.aviso).toMatchObject({ contador_email: null, responder_a: null, nombre_remitente: null, pie_texto: null })
+    expect(j.aviso.smtp).toHaveProperty('configurado')
   })
   it('cachea; guardar la renueva', async () => {
     await pagosConfigService.obtener()
@@ -79,9 +85,23 @@ describe('GET /config', () => {
     await pagosConfigService.guardar({ tributo_jurisdiccion_default_id: 17 }, 'u-1')
     expect((await pagosConfigService.obtener()).tributos.jurisdiccion_default_id).toBe(17)
   })
-  it('configDesdeJson: basura → null', () => {
-    expect(configDesdeJson(null)).toEqual({ tributos: { jurisdiccion_default_id: null } })
-    expect(configDesdeJson({ tributo_jurisdiccion_default_id: 'x' })).toEqual({ tributos: { jurisdiccion_default_id: null } })
+  it('baseDesdeJson: basura → null / plazos por defecto', () => {
+    const b = baseDesdeJson(null)
+    expect(b.tributo_jurisdiccion_default_id).toBeNull()
+    expect(b.plazos_cheque).toEqual([0, 7, 15, 30, 45, 60, 90])
+    expect(baseDesdeJson({ tributo_jurisdiccion_default_id: 'x', plazos_cheque: 'x' }).tributo_jurisdiccion_default_id).toBeNull()
+    // Ordenados, sin repetir, sin fuera de rango.
+    expect(baseDesdeJson({ plazos_cheque: [30, 0, 30, 400, -1] }).plazos_cheque).toEqual([0, 30])
+    expect(baseDesdeJson({ aviso_contador_email: '  ' }).aviso_contador_email).toBeNull()
+  })
+  it('GET devuelve los avisos y plazos guardados', async () => {
+    state.profile = perfil({ lectura: true, tabs: ['facturas'] })
+    state.config = { tributo_jurisdiccion_default_id: 24, aviso_contador_email: 'estudio@contable.com.ar',
+      aviso_nombre_remitente: 'CADINC Pagos', aviso_pie_texto: 'Consultas: pagos@cadinc.com.ar', plazos_cheque: [0, 30, 60] }
+    const j = await (await pagos.request('/config')).json()
+    expect(j.aviso).toMatchObject({ contador_email: 'estudio@contable.com.ar', contador_email_efectivo: 'estudio@contable.com.ar',
+      contador_fuente: 'config', nombre_remitente: 'CADINC Pagos', pie_texto: 'Consultas: pagos@cadinc.com.ar' })
+    expect(j.cheques.plazos).toEqual([0, 30, 60])
   })
 })
 
@@ -98,10 +118,76 @@ describe('PATCH /config', () => {
     const r = await patch({ tributo_jurisdiccion_default_id: 17 })
     expect(r.status).toBe(200)
     expect(state.rpcs).toContainEqual({ fn: 'pagos_guardar_config', args: { p_cambios: { tributo_jurisdiccion_default_id: 17 }, p_user_id: 'u-1' } })
-    const r2 = await patch({ plazos_cheque: [0, 30] })
-    expect(await r2.json()).toMatchObject({ error: 'CONFIG_INVALIDA', campo: 'plazos_cheque' })
+    const r2 = await patch({ clave_inventada: 1 })
+    expect(await r2.json()).toMatchObject({ error: 'CONFIG_INVALIDA', campo: 'clave_inventada' })
     state.error = { message: 'CONFIG_INVALIDA', details: '{"clave":"tributo_jurisdiccion_default_id","motivo":"jurisdiccion_inexistente_o_inactiva"}' }
     expect((await patch({ tributo_jurisdiccion_default_id: 999 })).status).toBe(400)
+  })
+})
+
+describe('PATCH /config — avisos y plazos (20260929i)', () => {
+  beforeEach(() => { state.profile = perfil({ lectura: true, tabs: ['configuracion'], configurar: true }) })
+  it('traduce los nombres de la API a las claves de la base', async () => {
+    const r = await patch({ contador_email: ' Estudio@Contable.com.ar ', responder_a: '', nombre_remitente: 'CADINC Pagos',
+      pie_texto: 'Consultas al 381-4123456', plazos_cheque: [0, 30] })
+    expect(r.status).toBe(200)
+    expect(state.rpcs.find((x) => x.fn === 'pagos_guardar_config')?.args).toEqual({ p_user_id: 'u-1', p_cambios: {
+      aviso_contador_email: 'estudio@contable.com.ar', aviso_responder_a: null, aviso_nombre_remitente: 'CADINC Pagos',
+      aviso_pie_texto: 'Consultas al 381-4123456', plazos_cheque: [0, 30] } })
+  })
+  it('email malo → 400 EMAIL_INVALIDO, sin llegar a la RPC', async () => {
+    const r = await patch({ contador_email: 'contador@' })
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({ error: 'EMAIL_INVALIDO', campo: 'contador_email' })
+    expect(state.rpcs.find((x) => x.fn === 'pagos_guardar_config')).toBeUndefined()
+  })
+  it('pie con CBU o alias → 400 PIE_CON_CBU', async () => {
+    for (const pie of ['Transferir a 0070399520000003055000', 'CBU 0070 3995 2000 0003 0550 00', 'Alias: norte.distrib']) {
+      const r = await patch({ pie_texto: pie })
+      expect(await r.json()).toMatchObject({ error: 'PIE_CON_CBU', campo: 'pie_texto' })
+    }
+  })
+  it('nombre con <> y plazos inválidos → CONFIG_INVALIDA', async () => {
+    expect(await (await patch({ nombre_remitente: 'CADINC <x>' })).json()).toMatchObject({ error: 'CONFIG_INVALIDA', campo: 'nombre_remitente' })
+    for (const plazos of [[], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], [0, 366], [-1], [7.5], [30, 30]]) {
+      expect(await (await patch({ plazos_cheque: plazos })).json()).toMatchObject({ error: 'CONFIG_INVALIDA' })
+    }
+  })
+  it('el error de la base (motivo) vuelve con el código de la pantalla y la clave de la API', async () => {
+    state.error = { message: 'CONFIG_INVALIDA', details: '{"clave":"aviso_pie_texto","motivo":"pie_con_cbu"}' }
+    const r = await patch({ pie_texto: 'hola' })
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({ error: 'PIE_CON_CBU', campo: 'pie_texto', detail: { clave: 'pie_texto' } })
+  })
+  it('cambiosParaDb omite lo no mandado', () => {
+    expect(cambiosParaDb(PagosConfigPatchSchema.parse({ plazos_cheque: [15] }))).toEqual({ plazos_cheque: [15] })
+  })
+})
+
+describe('probar-mail', () => {
+  it('mismo guard que PATCH', async () => {
+    state.profile = perfil({ lectura: true, tabs: ['configuracion'] })
+    const r = await pagos.request('/config/probar-mail', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ para: 'a@b.com' }) })
+    expect(r.status).toBe(403)
+  })
+})
+
+describe('resolverEmailContador: pantalla → env → perfil', () => {
+  it('orden y fuente', async () => {
+    const perfilFn = vi.fn(async () => 'perfil@x.com')
+    expect(await resolverEmailContador('conf@x.com', { env: 'env@x.com', delPerfil: perfilFn })).toEqual({ email: 'conf@x.com', fuente: 'config' })
+    expect(await resolverEmailContador(null, { env: 'env@x.com', delPerfil: perfilFn })).toEqual({ email: 'env@x.com', fuente: 'env' })
+    expect(perfilFn).not.toHaveBeenCalled()
+    expect(await resolverEmailContador('', { env: '', delPerfil: perfilFn })).toEqual({ email: 'perfil@x.com', fuente: 'perfil' })
+    expect(await resolverEmailContador(null, { env: 'malo', delPerfil: async () => null })).toEqual({ email: null, fuente: null })
+    expect(await resolverEmailContador(null, { env: '', delPerfil: async () => { throw new Error('auth caído') } })).toEqual({ email: null, fuente: null })
+  })
+  it('responder a y nombre del remitente caen al env / nombre de fantasía', () => {
+    expect(responderAEfectivo('a@x.com', 'env@x.com')).toBe('a@x.com')
+    expect(responderAEfectivo(null, 'env@x.com')).toBe('env@x.com')
+    expect(responderAEfectivo(null, '')).toBeNull()
+    expect(nombreRemitenteEfectivo('CADINC Pagos', 'CADINC')).toBe('CADINC Pagos')
+    expect(nombreRemitenteEfectivo('  ', 'CADINC')).toBe('CADINC')
   })
 })
 

@@ -60,6 +60,30 @@ function esc(s: unknown): string {
 }
 
 /**
+ * ¿El texto trae algo con forma de CBU/CVU o de alias? Espejo de
+ * `_pagos_pie_con_cbu` (20260929i): la base no deja guardar un pie así, y
+ * `armarCuerpo` lo vuelve a mirar antes de imprimirlo.
+ *   · 22 dígitos seguidos, o separados de a uno por espacio o guion;
+ *   · una palabra de 6–20 caracteres [a-z0-9.-] con una letra y un punto en
+ *     el medio (norte.distrib). Los dominios web (www.… o .com/.ar/…) pasan.
+ */
+export function pieConCbu(texto: string | null | undefined): boolean {
+  const t = String(texto ?? '')
+  if (/(\d[ -]?){21}\d/.test(t)) return true
+  return t.toLowerCase().split(/[^a-z0-9.-]+/).some((tok) => {
+    const w = tok.replace(/^[.-]+|[.-]+$/g, '')
+    return /^[a-z0-9.-]{6,20}$/.test(w) && /[a-z]/.test(w) && /[a-z0-9]\.[a-z0-9]/.test(w)
+      && !/^www\./.test(w) && !/\.(com|ar|net|org|gob|gov|edu|io|info)$/.test(w)
+  })
+}
+
+/** El pie que se imprime: recortado, y nada si viola la regla del CBU. */
+export function pieSeguro(pie: string | null | undefined): string {
+  const t = String(pie ?? '').trim().slice(0, 500)
+  return t && !pieConCbu(t) ? t : ''
+}
+
+/**
  * El cuerpo del mail. Exportado para poder probarlo sin SMTP: es donde se
  * decide qué ve un tercero, así que se testea.
  */
@@ -69,7 +93,10 @@ export function armarCuerpo(
   facturas: FacturaDelAviso[],
   cheques: ChequeDelAviso[],
   empresa: string,
+  opts?: { pie?: string | null },
 ): CuerpoMail {
+  // Texto al pie de la configuración de Compras: texto plano, escapado.
+  const pie = pieSeguro(opts?.pie)
   const op = String(o.numero_fmt ?? `OP-${o.numero}`)
   const prov = String(o.proveedor_nom ?? '')
   const forma = FORMA_LABEL[String(o.forma_pago ?? '')] ?? String(o.forma_pago ?? '')
@@ -112,6 +139,7 @@ export function armarCuerpo(
   ${cheques.length > 0 ? `<div style="font-weight:700;margin:0 0 4px">${cheques.length === 1 ? 'Cheque entregado' : 'Cheques entregados'}</div>
   <table style="border-collapse:collapse;margin:0 0 14px">${filasCheques}</table>` : ''}
   <p style="margin:0 0 12px">${esc(cierre)}</p>
+  ${pie ? `<p style="margin:0 0 12px;color:#444;white-space:pre-line">${esc(pie)}</p>` : ''}
   <div style="color:#999;font-size:11px;border-top:1px solid #DDD;padding-top:8px">
     Correo generado por el sistema de gestión de ${esc(empresa)}.
   </div>
@@ -137,6 +165,7 @@ export function armarCuerpo(
           `  N° ${c.numero}${c.banco ? ` · ${c.banco}` : ''}  se cobra el ${fmtF(c.fecha_cobro)}  ${fmtM(c.monto)}`), '']
       : []),
     cierre,
+    ...(pie ? ['', pie] : []),
   ].filter((l) => l !== '' || true)
 
   return { asunto, texto: lineas.join('\n'), html }
@@ -161,4 +190,26 @@ export function destinatariosProveedor(x: {
   const emails = pedidos.length ? pedidos : porDefecto.length ? porDefecto
     : (x.contactos.length === 0 && padron) ? [padron] : []
   return { emails, pedidos, conocidos }
+}
+
+/**
+ * El mail de prueba de Compras › Configuración: dice qué es y lleva el mismo
+ * pie que el aviso real, así se ve cómo queda.
+ */
+export function armarPrueba(empresa: string, pieConfig?: string | null): CuerpoMail {
+  const pie = pieSeguro(pieConfig)
+  const asunto = `${empresa} — Prueba de correo de avisos de pago`
+  const texto = [
+    `${empresa} — Prueba de correo`, '',
+    'Este es un mail de prueba enviado desde Compras › Configuración.',
+    'Así les llega el aviso de pago a proveedores y al contador.',
+    ...(pie ? ['', pie] : []),
+  ].join('\n')
+  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;color:#1C1C1E;max-width:620px">
+  <div style="font-size:18px;font-weight:700;color:#1A365D">${esc(empresa)}</div>
+  <div style="color:#666;margin:2px 0 14px">Prueba de correo</div>
+  <p style="margin:0 0 12px">Este es un mail de prueba enviado desde Compras › Configuración. Así les llega el aviso de pago a proveedores y al contador.</p>
+  ${pie ? `<p style="margin:0 0 12px;color:#444;white-space:pre-line">${esc(pie)}</p>` : ''}
+</div>`
+  return { asunto, texto, html }
 }

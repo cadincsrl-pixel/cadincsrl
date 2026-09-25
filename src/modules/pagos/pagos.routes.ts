@@ -24,6 +24,7 @@
  */
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
 import { authMiddleware } from '../../middleware/auth.js'
 import { requirePermiso, requireFlag, requireTab, tieneFlag } from '../../middleware/permission.js'
 import { PagosHttpError } from './pagos.errors.js'
@@ -433,9 +434,21 @@ pagos.patch('/config', lectura, requireTab('pagos', 'configuracion'), requireFla
       const issue = r.error.issues[0]
       const claves = issue?.code === 'unrecognized_keys' ? ((issue as { keys?: string[] }).keys ?? []) : []
       const clave = claves[0] ?? (issue?.path?.map(String).join('.') || null)
-      return c.json({ error: 'CONFIG_INVALIDA', campo: clave, detail: { clave, mensaje: issue?.message ?? 'dato inválido' } }, 400)
+      // EMAIL_INVALIDO y PIE_CON_CBU tienen su propio mensaje en la pantalla;
+      // el resto es CONFIG_INVALIDA con el motivo en el detalle.
+      const msg = issue?.message ?? ''
+      const error = msg === 'EMAIL_INVALIDO' || msg === 'PIE_CON_CBU' ? msg : 'CONFIG_INVALIDA'
+      return c.json({ error, campo: clave, detail: { clave, motivo: /^[A-Z_]+$/.test(msg) ? msg.toLowerCase() : null, mensaje: msg || 'dato inválido' } }, 400)
     }
   }),
   handler(async (c) => pagosConfigService.guardar(c.req.valid('json'), c.get('user').id, dbPagos(c))))
+
+// Mail de prueba con el remitente, el Reply-To y el pie configurados (20260929i).
+// Mismo guard que PATCH: es parte de configurar los avisos.
+pagos.post('/config/probar-mail', lectura, requireTab('pagos', 'configuracion'), requireFlag('pagos', 'configurar'),
+  zValidator('json', z.object({ para: z.string().trim().max(254) }), (r, c) => {
+    if (!r.success) return c.json({ error: 'EMAIL_INVALIDO', campo: 'para' }, 400)
+  }),
+  handler(async (c) => avisoPagoService.probar(c.req.valid('json').para)))
 
 export default pagos

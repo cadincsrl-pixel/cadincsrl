@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { armarCuerpo } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
-import { esEmailValido } from '../../../src/lib/mail.js'
+import { armarCuerpo, armarPrueba, pieConCbu } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
+import { esEmailValido, parsearFrom, armarFrom, fromComoTexto } from '../../../src/lib/mail.js'
 import { destinatariosProveedor } from '../../../src/modules/pagos/aviso-pago.cuerpo.js'
 
 // El aviso de pago sale a TERCEROS (proveedor y estudio contable), así que lo
@@ -36,6 +36,39 @@ describe('armarCuerpo', () => {
         expect(texto).not.toContain('norte.distrib')
       }
     }
+  })
+
+  it('el CBU tampoco entra por el pie: un pie con CBU o alias no se imprime', () => {
+    for (const pie of ['Pagar al 0070399520000003055000', 'CBU 0070 3995 2000 0003 0550 00', 'alias norte.distrib']) {
+      for (const para of ['proveedor', 'contador'] as const) {
+        const c = armarCuerpo(para, ORDEN, FACTURAS, CHEQUES, 'CADINC SRL', { pie })
+        for (const texto of [c.html, c.texto, c.asunto]) {
+          expect(texto).not.toContain('0070399520000003055000')
+          expect(texto).not.toContain('0070 3995')
+          expect(texto).not.toContain('norte.distrib')
+        }
+      }
+    }
+  })
+
+  it('el pie se imprime escapado, en html y en texto', () => {
+    const pie = 'Consultas: pagos@cadinc.com.ar · www.cadinc.com.ar <b>x</b>'
+    const c = armarCuerpo('proveedor', ORDEN, FACTURAS, CHEQUES, 'CADINC SRL', { pie })
+    expect(c.texto).toContain(pie)
+    expect(c.html).toContain('&lt;b&gt;x&lt;/b&gt;')
+    expect(c.html).not.toContain('<b>x</b>')
+    const sin = armarCuerpo('proveedor', ORDEN, FACTURAS, CHEQUES, 'CADINC SRL')
+    expect(sin.texto).not.toContain('Consultas')
+    expect(armarPrueba('CADINC', pie).html).toContain('&lt;b&gt;')
+  })
+
+  it('pieConCbu: CBU/CVU y alias sí; dominios, mails, teléfonos y palabras comunes no', () => {
+    expect(pieConCbu('0070399520000003055000')).toBe(true)
+    expect(pieConCbu('0070-3995-2000-0003-0550-00')).toBe(true)
+    expect(pieConCbu('Alias: Norte.Distrib.')).toBe(true)
+    expect(pieConCbu('Consultas: pagos@cadinc.com.ar o www.cadinc.com.ar')).toBe(false)
+    expect(pieConCbu('Tel 381-4123456, de lunes-viernes. Gracias por su atención')).toBe(false)
+    expect(pieConCbu('')).toBe(false)
   })
 
   it('el asunto dice de qué se trata y cuánto, sin abrirlo', () => {
@@ -123,5 +156,24 @@ describe('destinatariosProveedor (varios contactos, 20260925e)', () => {
     expect(destinatariosProveedor({ pedidos: [], contactos: [{ email: 'x@y.com', recibe_avisos: false }], delPadron: '' }).emails).toEqual([])
     // Con contactos y todos destildados, NO cae al email viejo del padrón.
     expect(destinatariosProveedor({ pedidos: [], contactos: [{ email: 'x@y.com', recibe_avisos: false }], delPadron: 'viejo@p.com' }).emails).toEqual([])
+  })
+})
+
+describe('From del mail', () => {
+  it('parsea SMTP_FROM con y sin nombre', () => {
+    expect(parsearFrom('pagos@cadinc.com.ar')).toEqual({ nombre: '', direccion: 'pagos@cadinc.com.ar' })
+    expect(parsearFrom('CADINC SRL <pagos@cadinc.com.ar>')).toEqual({ nombre: 'CADINC SRL', direccion: 'pagos@cadinc.com.ar' })
+    expect(parsearFrom('"CADINC, SRL" <pagos@cadinc.com.ar>')).toEqual({ nombre: 'CADINC, SRL', direccion: 'pagos@cadinc.com.ar' })
+  })
+  it('la dirección sale SIEMPRE del env; el nombre, del configurado o del que traía SMTP_FROM', () => {
+    expect(armarFrom('CADINC SRL <pagos@cadinc.com.ar>', 'CADINC Pagos')).toEqual({ name: 'CADINC Pagos', address: 'pagos@cadinc.com.ar' })
+    expect(armarFrom('CADINC SRL <pagos@cadinc.com.ar>', null)).toEqual({ name: 'CADINC SRL', address: 'pagos@cadinc.com.ar' })
+    expect(armarFrom('pagos@cadinc.com.ar', undefined)).toEqual({ name: '', address: 'pagos@cadinc.com.ar' })
+    expect(fromComoTexto(armarFrom('pagos@cadinc.com.ar', 'CADINC Pagos'))).toBe('"CADINC Pagos" <pagos@cadinc.com.ar>')
+  })
+  it('el nombre no puede inyectar encabezados ni cambiar la dirección', () => {
+    const f = armarFrom('pagos@cadinc.com.ar', 'X\r\nBcc: robo@x.com "<otro@x.com>"')
+    expect(f.address).toBe('pagos@cadinc.com.ar')
+    expect(f.name).not.toMatch(/[\r\n<>"]/)
   })
 })
