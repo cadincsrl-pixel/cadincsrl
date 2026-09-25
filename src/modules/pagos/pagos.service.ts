@@ -951,6 +951,20 @@ export const pagosService = {
     }
   },
 
+  /**
+   * POST /facturas/:id/pasar-a-deuda (20260929n): la factura entró con el
+   * importador como «de meses ya pagados» pero se debe. La RPC exige el flag
+   * efectivo pago_a_reconstruir y que no tenga pagos ni NC aplicadas
+   * (FACTURA_NO_A_RECONSTRUIR / FACTURA_CON_PAGOS). La ruta ya chequeó
+   * `aprobar_facturas`. Devuelve la fila de v_pagos_facturas.
+   */
+  async pasarADeuda(id: number, userId: string, verPii: boolean) {
+    const fila = rpcOk<Record<string, unknown>>(
+      await supabase.rpc('pagos_pasar_a_deuda', { p_factura_id: id, p_user_id: userId }))
+    console.info(`[pagos] factura ${id}: pasada a deuda (user ${userId})`)
+    return enmascararFila(fila, verPii)
+  },
+
   // ═══════════════════════════════════ Órdenes ════════════════════════════════
 
   // ── Órdenes de pago ──────────────────────────────────────────────────

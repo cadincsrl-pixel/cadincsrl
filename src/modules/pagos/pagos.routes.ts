@@ -218,6 +218,17 @@ pagos.post('/facturas/:id/aplicar-nc', lectura, tabPago, zValidator('json', Apli
   return pagosService.aplicarNc(idParam(c), c.req.valid('json'), userId, verPiiDe(perfil))
 }))
 
+// «Es deuda: no se pagó» (20260929n): la importó el ARCA de meses ya pagados
+// pero se debe. Saca la marca pago_a_reconstruir y vuelve al circuito normal.
+pagos.post('/facturas/:id/pasar-a-deuda', lectura, tabFactura, handler(async (c) => {
+  const userId = c.get('user').id
+  const perfil = await perfilDe(userId)
+  if (!(esAdmin(perfil) || flagPagos(perfil, 'aprobar_facturas'))) {
+    throw new PagosHttpError(403, 'SIN_PERMISO', { flag: 'aprobar_facturas' })
+  }
+  return pagosService.pasarADeuda(idParam(c), userId, verPiiDe(perfil))
+}))
+
 // Imputar una importada de ARCA: concepto + reparto por obra (20260927b).
 pagos.post('/facturas/:id/imputar', actualizacion, tabFactura, zValidator('json', ImputarFacturaSchema), handler(async (c) =>
   imputarService.imputar(idParam(c), c.req.valid('json'), c.get('user').id, await verPii(c))))
