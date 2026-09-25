@@ -629,7 +629,7 @@ export const LineaOrdenSchema = z.object({
 })
 export type LineaOrdenDto = z.infer<typeof LineaOrdenSchema>
 
-export const CreateOrdenSchema = z.object({
+const OrdenBaseSchema = z.object({
   proveedor_id: Id,
   fecha:        FechaISO,
   fecha_cobro:  FechaISO.nullable().optional(),
@@ -644,7 +644,10 @@ export const CreateOrdenSchema = z.object({
   cheques:      z.array(ChequeSchema).max(50).optional().default([]),
   /** De qué cuenta propia (tesoreria_cuentas) salió la plata. Opcional (20260926g). */
   cuenta_origen_id: Id.nullable().optional(),
-}).superRefine((o, ctx) => {
+})
+
+/** La misma factura dos veces con el mismo tipo en una OP. */
+function lineasSinDuplicar(o: { lineas: { factura_id?: number | null; tipo: string }[] }, ctx: z.RefinementCtx) {
   const vistas = new Set<string>()
   o.lineas.forEach((l, i) => {
     if (l.factura_id == null) return
@@ -652,8 +655,38 @@ export const CreateOrdenSchema = z.object({
     if (vistas.has(k)) ctx.addIssue({ code: 'custom', path: ['lineas', i, 'factura_id'], message: 'LINEA_DUPLICADA' })
     vistas.add(k)
   })
-})
+}
+
+export const CreateOrdenSchema = OrdenBaseSchema.superRefine(lineasSinDuplicar)
 export type CreateOrdenDto = z.infer<typeof CreateOrdenSchema>
+
+/**
+ * «Pagar en lote» (20260929t): N órdenes, una por proveedor, todo o nada.
+ * Cada orden tiene la MISMA forma que `POST /ordenes`; la `fecha` y la
+ * `cuenta_origen_id` de arriba son las del lote: la fecha de una orden, si
+ * viene, tiene que ser la del lote (una sola fecha de pago), y la cuenta de
+ * una orden, si viene (aunque sea null), pisa la del lote.
+ */
+export const MAX_ORDENES_LOTE = 30
+export const OrdenDeLoteSchema = OrdenBaseSchema.extend({ fecha: FechaISO.optional() }).superRefine(lineasSinDuplicar)
+export const LoteOrdenesSchema = z.object({
+  fecha:            FechaISO,
+  cuenta_origen_id: Id.nullable().optional(),
+  ordenes:          z.array(OrdenDeLoteSchema).min(1).max(MAX_ORDENES_LOTE),
+}).superRefine((d, ctx) => {
+  const provs = new Set<number>()
+  const facts = new Set<number>()
+  d.ordenes.forEach((o, i) => {
+    if (provs.has(o.proveedor_id)) ctx.addIssue({ code: 'custom', path: ['ordenes', i, 'proveedor_id'], message: 'PROVEEDOR_REPETIDO_EN_LOTE' })
+    provs.add(o.proveedor_id)
+    if (o.fecha && o.fecha !== d.fecha) ctx.addIssue({ code: 'custom', path: ['ordenes', i, 'fecha'], message: 'FECHA_DISTINTA_DEL_LOTE' })
+    for (const f of new Set(o.lineas.map((l) => l.factura_id).filter((x): x is number => x != null))) {
+      if (facts.has(f)) ctx.addIssue({ code: 'custom', path: ['ordenes', i, 'lineas'], message: 'FACTURA_REPETIDA_EN_LOTE' })
+      facts.add(f)
+    }
+  })
+})
+export type LoteOrdenesDto = z.infer<typeof LoteOrdenesSchema>
 
 /**
  * A quién avisarle del pago. No es automático al emitir la OP por decisión del

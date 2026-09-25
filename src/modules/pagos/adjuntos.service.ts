@@ -87,8 +87,13 @@ export interface AdjuntoProcesado {
  * cheques subida dos veces, o el comprobante repetido como foto) queda UNA
  * vez —el índice `(orden_id, hash)` lo rebotaría con ADJ_DUPLICADO—: se
  * conserva el primero, se le suman las obs y se borra la copia del bucket.
+ * Con `reemplazos`, cada copia queda anotada con el path que la reemplaza.
  */
-export async function procesarPendientes(adjuntos: (AdjuntoPendienteDto & { obs?: string })[]): Promise<AdjuntoProcesado[]> {
+export async function procesarPendientes(
+  adjuntos: (AdjuntoPendienteDto & { obs?: string })[],
+  /** Si se pasa, se anota «copia → la que quedó» (lo usa la foto de cada echeq, 20260929u). */
+  reemplazos?: Map<string, string>,
+): Promise<AdjuntoProcesado[]> {
   const out: AdjuntoProcesado[] = []
   for (const a of adjuntos) {
     if (!a.storage_path.startsWith(PREFIJO_COMPROBANTE_PENDIENTE) || a.storage_path.includes('..')) {
@@ -112,7 +117,10 @@ export async function procesarPendientes(adjuntos: (AdjuntoPendienteDto & { obs?
   for (const a of out) {
     const previo = unicos.find((u) => u.hash_sha256 === a.hash_sha256)
     if (!previo) { unicos.push(a); continue }
-    if (a.storage_path !== previo.storage_path) copias.push(a.storage_path)
+    if (a.storage_path !== previo.storage_path) {
+      copias.push(a.storage_path)
+      reemplazos?.set(a.storage_path, previo.storage_path)
+    }
     if (a.obs && a.obs !== previo.obs) previo.obs = [previo.obs, a.obs].filter(Boolean).join(' · ')
   }
   await borrarDelBucket(copias)

@@ -112,6 +112,8 @@ const STATUS_POR_CODIGO: Record<string, number> = {
   IMPORTACION_CON_ERRORES: 422,
   // Pagadas en lote con tarjeta / billetera (20260927h)
   FORMA_NO_COINCIDE_CUENTA: 400, FECHA_ANTERIOR_A_FACTURA: 400, FACTURA_SIN_SALDO: 409, FACTURA_YA_APROBADA: 409,
+  // Pagar en lote (20260929t): el error de un bloque trae { indice, proveedor_id }.
+  PROVEEDOR_REPETIDO_EN_LOTE: 400, FACTURA_REPETIDA_EN_LOTE: 400, FECHA_DISTINTA_DEL_LOTE: 400,
   // Jurisdicción del tributo y configuración de Compras (20260929f)
   JURISDICCION_NO_EXISTE: 400, CONFIG_INVALIDA: 400,
   // Avisos de pago (20260929i)

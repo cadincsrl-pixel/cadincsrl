@@ -19,7 +19,7 @@
  * Rutas literales (`/facturas/resumen`, `/facturas/export`, `/facturas/aprobar`,
  * `/facturas/periodo-iva-sugerido`, `/facturas/importar-arca`, `/facturas/imputar-lote`,
  * `/facturas/marcar-pagadas`,
- * `/ordenes/resumen`, `/ordenes/upload-comprobante`, `/ordenes/comprobante-pendiente`,
+ * `/ordenes/resumen`, `/ordenes/lote`, `/ordenes/upload-comprobante`, `/ordenes/comprobante-pendiente`,
  * `/proveedores/saldos`, `/proveedores/export`) van ANTES de `/:id`.
  */
 import { Hono } from 'hono'
@@ -48,7 +48,7 @@ import {
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
   UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema, LeerChequeSchema, CompletarConLecturaSchema,
   CompletarDesgloseSchema, LeerAdjuntoSchema,
-  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
+  ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, LoteOrdenesSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
   ListConceptosQuerySchema, CreateConceptoSchema, UpdateConceptoSchema,
   PeriodoIvaSugeridoQuerySchema, ImportarRecibidosSchema, DeshacerImportacionSchema, ImputarFacturaSchema, ImputarLoteSchema, MarcarPagadasSchema,
@@ -307,6 +307,13 @@ pagos.delete('/ordenes/comprobante-pendiente', lectura, registrarPagos, tabPago,
 // pagos o desde «Ya está pagada» en facturas.
 pagos.post('/cheques/leer', lectura, registrarPagos, tabPago, zValidator('json', LeerChequeSchema), handler(async (c) =>
   chequesService.leer(c.req.valid('json'))))
+
+// «Pagar en lote» (20260929t): N OP, una por proveedor, todo o nada. Mismas
+// guardias que POST /ordenes; el error de un bloque trae { indice, proveedor_id }.
+pagos.post('/ordenes/lote', lectura, registrarPagos, tabPago, zValidator('json', LoteOrdenesSchema), handler(async (c) => {
+  const userId = c.get('user').id
+  return pagosService.registrarOrdenesLote(c.req.valid('json'), userId, await perfilDe(userId))
+}))
 
 pagos.get('/ordenes/:id', lectura, tabPago, handler(async (c) =>
   pagosService.detalleOrden(idParam(c), await verPii(c), c.get('accessToken'))))

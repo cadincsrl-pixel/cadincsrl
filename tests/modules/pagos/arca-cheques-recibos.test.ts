@@ -71,7 +71,8 @@ import pagos from '../../../src/modules/pagos/pagos.routes.js'
 import { hoyAR } from '../../../src/modules/pagos/pagos.util.js'
 import { avisoLetraCondicion } from '../../../src/modules/pagos/condicion-iva.js'
 import { cambiosProveedorDesdePadron } from '../../../src/modules/pagos/proveedores.service.js'
-import { adjuntosDeCheques, chequesParaRpc, propuestaDeCheque } from '../../../src/modules/pagos/cheques.service.js'
+import { adjuntosDeCheques, chequesParaRpc, chocaConEmitido, propuestaDeCheque } from '../../../src/modules/pagos/cheques.service.js'
+import { comprobanteFaltante } from '../../../src/modules/pagos/pagos.service.js'
 import {
   ChequeSchema, CreateOrdenSchema, CreateProveedorSchema, DatosPagoSchema, ListOrdenesQuerySchema, TIPOS_ADJ_ORDEN, UpdateProveedorSchema,
 } from '../../../src/modules/pagos/pagos.schema.js'
@@ -267,9 +268,19 @@ describe('leer la foto de un cheque', () => {
   it('avisa si el cheque ya se entregó en otra OP emitida', async () => {
     state.profile = CONTADOR
     iaChequeMock.mockResolvedValue({ ok: true, lectura: LEIDO, modelo: 'claude-opus-5' })
-    state.cheques = [{ orden_id: 9, numero: '12345678', banco: 'Banco de Galicia', pagos_ordenes: { numero: 12, estado: 'emitida' } }]
+    // Mismo número, banco y librador (de tercero, como lo guarda la pantalla): lo que frena el trigger.
+    state.cheques = [{ orden_id: 9, numero: '12345678', banco: 'Banco de Galicia', librador: `Constructora Sur SA · CUIT ${CUIT_OK}`, pagos_ordenes: { numero: 12, estado: 'emitida' } }]
     const body = await (await post('/cheques/leer', BODY)).json()
     expect(body.avisos[0]).toMatchObject({ codigo: 'CHEQUE_YA_ENTREGADO', severidad: 'error', orden_ids: [9] })
+  })
+
+  it('NO avisa por un cheque de tercero con el mismo número pero otro banco y librador (falso positivo de la OP-0240)', async () => {
+    state.profile = CONTADOR
+    // El echeq propio N° 3080 del Galicia vs. el cheque de TERCERO N° 3080 endosado a El Limón.
+    iaChequeMock.mockResolvedValue({ ok: true, lectura: { ...LEIDO, numero: '3080', librador: 'CADINC SRL', librador_cuit: null, es_echeq: true }, modelo: 'm' })
+    state.cheques = [{ orden_id: 240, numero: '3080', banco: '', librador: 'No informado en el detalle del endoso', pagos_ordenes: { numero: 240, estado: 'emitida' } }]
+    const body = await (await post('/cheques/leer', BODY)).json()
+    expect(body.avisos.map((a: Fila) => a.codigo)).not.toContain('CHEQUE_YA_ENTREGADO')
   })
 
   it('si la IA no puede leer → 422 CHEQUE_ILEGIBLE (con el path, para adjuntarla igual)', async () => {
@@ -405,11 +416,14 @@ describe('foto del cheque al emitir la OP', () => {
     expect(() => adjuntosDeCheques([{ numero: '1', foto_path: 'ordenes/pendientes/a.exe' }])).toThrow()
   })
 
-  it('chequesParaRpc saca foto_path', () => {
-    expect(chequesParaRpc([{ numero: '1', monto: 1, foto_path: 'x' }])).toEqual([{ numero: '1', monto: 1 }])
+  it('chequesParaRpc deja foto_path (resuelto contra el dedupe) para que la RPC sepa qué echeq trae archivo', () => {
+    expect(chequesParaRpc([{ numero: '1', monto: 1, foto_path: 'x' }, { numero: '2', monto: 1 }])).toEqual([
+      { numero: '1', monto: 1, foto_path: 'x' }, { numero: '2', monto: 1, foto_path: null },
+    ])
+    expect(chequesParaRpc([{ numero: '1', monto: 1, foto_path: 'copia' }], new Map([['copia', 'quedo']]))[0]!.foto_path).toBe('quedo')
   })
 
-  it('POST /ordenes adjunta la foto como tipo cheque y la RPC recibe el cheque sin foto_path', async () => {
+  it('POST /ordenes adjunta la foto como tipo cheque y la RPC recibe el cheque con su foto_path', async () => {
     state.profile = CONTADOR
     state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const res = await post('/ordenes', {
@@ -423,19 +437,93 @@ describe('foto del cheque al emitir la OP', () => {
     expect(adj[0]).toMatchObject({ tipo: 'cheque', storage_path: 'ordenes/pendientes/ch.jpg', obs: 'Cheque N° 12345678', mime_type: 'image/jpeg' })
     expect(typeof adj[0]!.hash_sha256).toBe('string')
     const cheques = (args.p_orden as Fila).cheques as Fila[]
-    expect(cheques[0]).not.toHaveProperty('foto_path')
-    expect(cheques[0]).toMatchObject({ numero: '12345678', monto: 100 })
+    expect(cheques[0]).toMatchObject({ numero: '12345678', monto: 100, foto_path: 'ordenes/pendientes/ch.jpg' })
   })
 
-  it('la foto del cheque NO reemplaza el comprobante de un echeq (COMPROBANTE_REQUERIDO)', async () => {
+  it('echeq: si CADA echeq trae su archivo, el comprobante aparte es opcional (20260929u)', async () => {
     state.profile = CONTADOR
     state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
     const res = await post('/ordenes', {
       proveedor_id: 1, fecha: HOY, forma_pago: 'echeq', lineas: [{ factura_id: 5, monto: 100 }],
-      cheques: [{ numero: '1', fecha_cobro: HOY, monto: 100, foto_path: 'ordenes/pendientes/ch.jpg' }],
+      cheques: [
+        { numero: '1', fecha_cobro: HOY, monto: 60, foto_path: 'ordenes/pendientes/e1.pdf' },
+        { numero: '2', fecha_cobro: HOY, monto: 40, foto_path: 'ordenes/pendientes/e2.pdf' },
+      ],
+    })
+    expect(res.status).toBe(200)
+    const args = llamada('pagos_registrar_orden')!
+    expect((args.p_adjuntos as Fila[]).map((a) => a.tipo)).toEqual(['cheque', 'cheque'])
+    expect(((args.p_orden as Fila).cheques as Fila[]).map((c) => c.foto_path)).toEqual(['ordenes/pendientes/e1.pdf', 'ordenes/pendientes/e2.pdf'])
+  })
+
+  it('echeq: si a uno le falta el archivo y no hay comprobante, COMPROBANTE_REQUERIDO dice cuál', async () => {
+    state.profile = CONTADOR
+    state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
+    const res = await post('/ordenes', {
+      proveedor_id: 1, fecha: HOY, forma_pago: 'echeq', lineas: [{ factura_id: 5, monto: 100 }],
+      cheques: [
+        { numero: '1', fecha_cobro: HOY, monto: 60, foto_path: 'ordenes/pendientes/e1.pdf' },
+        { numero: '2', fecha_cobro: HOY, monto: 40 },
+      ],
     })
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toBe('COMPROBANTE_REQUERIDO')
+    expect(await res.json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', detail: { forma_pago: 'echeq', cheques_sin_archivo: ['2'] } })
+    expect(llamada('pagos_registrar_orden')).toBeUndefined()
+  })
+
+  it('echeq con un echeq sin archivo pero CON comprobante: pasa (como siempre)', async () => {
+    state.profile = CONTADOR
+    state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
+    const res = await post('/ordenes', {
+      proveedor_id: 1, fecha: HOY, forma_pago: 'echeq', lineas: [{ factura_id: 5, monto: 100 }],
+      cheques: [{ numero: '1', fecha_cobro: HOY, monto: 100 }],
+      adjuntos: [{ tipo: 'comprobante_pago', storage_path: 'ordenes/pendientes/c.pdf', nombre_archivo: 'c.pdf', mime_type: 'application/pdf' }],
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('transferencia sigue pidiendo el comprobante; cheque físico sigue sin pedirlo', async () => {
+    state.profile = CONTADOR
+    state.proveedores = [{ id: 1, cbu: '2850590940090418135201' }]
+    state.facturas = [{ id: 5, clase: 'factura', created_by: 'otro', aprobada_por: 'diego', proveedor_id: 1 }]
+    const trf = await post('/ordenes', { proveedor_id: 1, fecha: HOY, forma_pago: 'transferencia', lineas: [{ factura_id: 5, monto: 100 }] })
+    expect((await trf.json()).error).toBe('COMPROBANTE_REQUERIDO')
+    const ch = await post('/ordenes', {
+      proveedor_id: 1, fecha: HOY, forma_pago: 'cheque', lineas: [{ factura_id: 5, monto: 100 }],
+      cheques: [{ numero: '1', fecha_cobro: HOY, monto: 100 }],
+    })
+    expect(ch.status).toBe(200)
+  })
+
+  it('comprobanteFaltante: la regla pura', () => {
+    expect(comprobanteFaltante('echeq', false, [{ numero: '1', foto_path: 'a' }])).toBeNull()
+    expect(comprobanteFaltante('echeq', false, [])).toEqual({ forma_pago: 'echeq', cheques_sin_archivo: [] })
+    expect(comprobanteFaltante('echeq', true, [{ numero: '1' }])).toBeNull()
+    expect(comprobanteFaltante('transferencia', false, [])).toEqual({ forma_pago: 'transferencia' })
+    expect(comprobanteFaltante('cheque', false, [{ numero: '1' }])).toBeNull()
+    expect(comprobanteFaltante('efectivo', false, undefined)).toBeNull()
+  })
+
+  it('«ya pagada al cargar» con echeq: mismas reglas (cada echeq con archivo alcanza)', async () => {
+    state.profile = perfil(null, 'admin')
+    const base = {
+      proveedor_id: 1, tipo_comprobante: 'A', numero: '0001-00000007', fecha: HOY, total: 100, descripcion: 'Hierro 8 mm',
+      concepto_id: 2, imputaciones: [{ obra_cod: 'CC 1', monto: 100 }],
+    }
+    const conFoto = await post('/facturas', { ...base, orden: { fecha: HOY, forma_pago: 'echeq', cheques: [{ numero: '9', fecha_cobro: HOY, monto: 100, foto_path: 'ordenes/pendientes/e9.pdf' }] } })
+    expect(conFoto.status).toBe(200)
+    const sinFoto = await post('/facturas', { ...base, numero: '0001-00000008', orden: { fecha: HOY, forma_pago: 'echeq', cheques: [{ numero: '9', fecha_cobro: HOY, monto: 100 }] } })
+    expect(await sinFoto.json()).toMatchObject({ error: 'COMPROBANTE_REQUERIDO', detail: { campo: 'orden.comprobante', cheques_sin_archivo: ['9'] } })
+  })
+
+  it('chocaConEmitido: el mismo criterio que fn_pagos_cheque_unico (número + banco + librador)', () => {
+    const p = { numero: '3080', banco: 'Banco Galicia', librador: 'Juan Pérez', librador_cuit: null, es_propio: null }
+    expect(chocaConEmitido(p, { numero: '3080', banco: '', librador: 'No informado en el detalle del endoso' })).toBe(false)
+    expect(chocaConEmitido(p, { numero: '3080', banco: 'banco galicia', librador: '' })).toBe(true)          // propio, se sabe o no
+    expect(chocaConEmitido(p, { numero: '3080', banco: 'Banco Galicia', librador: 'JUAN PEREZ' })).toBe(true) // tercero, norm_txt
+    expect(chocaConEmitido({ ...p, es_propio: true }, { numero: '3080', banco: 'Banco Galicia', librador: 'Juan Pérez' })).toBe(false)
+    expect(chocaConEmitido({ ...p, es_propio: false }, { numero: '3080', banco: 'Banco Galicia', librador: '' })).toBe(false)
+    expect(chocaConEmitido(p, { numero: '30800', banco: 'Banco Galicia', librador: '' })).toBe(false)
   })
 })
 

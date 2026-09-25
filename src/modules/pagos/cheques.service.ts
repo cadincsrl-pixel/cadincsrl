@@ -164,9 +164,57 @@ export function adjuntosDeCheques(
   })
 }
 
-/** Los cheques como los recibe la RPC: sin la foto (va como adjunto). */
-export function chequesParaRpc<T extends { foto_path?: string | null }>(cheques: readonly T[] | undefined): Omit<T, 'foto_path'>[] {
-  return (cheques ?? []).map(({ foto_path: _f, ...resto }) => resto)
+/**
+ * Los cheques como los recibe la RPC. La foto va como adjunto aparte; en el
+ * cheque queda sólo su `foto_path` (el path que sobrevivió al dedupe de
+ * `procesarPendientes`, vía `reemplazos`), para que `_pagos_emitir_orden`
+ * sepa si CADA echeq trae su archivo (20260929u). La RPC no lo guarda en
+ * `pagos_cheques`: sólo lo mira.
+ */
+export function chequesParaRpc<T extends { foto_path?: string | null }>(
+  cheques: readonly T[] | undefined, reemplazos?: ReadonlyMap<string, string>,
+): (Omit<T, 'foto_path'> & { foto_path: string | null })[] {
+  return (cheques ?? []).map(({ foto_path, ...resto }) => {
+    const path = foto_path?.trim() || null
+    return { ...resto, foto_path: path ? (reemplazos?.get(path) ?? path) : null }
+  })
+}
+
+/**
+ * El librador como lo guarda la pantalla si el cheque queda «de tercero»:
+ * «Nombre · CUIT n» (ver `leerFotoCheque` en el editor de cheques). Si es
+ * propio, la pantalla guarda ''.
+ */
+export function libradorComoSeGuarda(p: Pick<PropuestaCheque, 'librador' | 'librador_cuit'>): string {
+  return [p.librador?.trim(), p.librador_cuit ? `CUIT ${p.librador_cuit}` : null].filter(Boolean).join(' · ')
+}
+
+export interface ChequeEmitido {
+  orden_id: number
+  numero: string | null
+  banco: string | null
+  librador: string | null
+  pagos_ordenes: { numero: number } | { numero: number }[]
+}
+
+/**
+ * ¿El trigger `fn_pagos_cheque_unico` frenaría este cheque contra `c` (un
+ * cheque de una OP emitida)? Mismo criterio: norm_txt(número), norm_txt(banco)
+ * y norm_txt(librador) iguales (`normTxt` es su espejo exacto; null → '').
+ *
+ * El librador depende de cómo se cargue: propio → '' y de tercero → el leído
+ * (`libradorComoSeGuarda`). Si la foto dice de quién es, se usa ése; si no se
+ * sabe (`es_propio` null), se avisa si choca de cualquiera de las dos formas.
+ */
+export function chocaConEmitido(
+  p: Pick<PropuestaCheque, 'numero' | 'banco' | 'librador' | 'librador_cuit' | 'es_propio'>, c: Pick<ChequeEmitido, 'numero' | 'banco' | 'librador'>,
+): boolean {
+  if (!p.numero) return false
+  if (normTxt(c.numero ?? '') !== normTxt(p.numero)) return false
+  if (normTxt(c.banco ?? '') !== normTxt(p.banco ?? '')) return false
+  const deTercero = libradorComoSeGuarda(p)
+  const posibles = p.es_propio === true ? [''] : p.es_propio === false ? [deTercero] : ['', deTercero]
+  return posibles.map(normTxt).includes(normTxt(c.librador ?? ''))
 }
 
 export const chequesService = {
@@ -183,16 +231,18 @@ export const chequesService = {
     }
     const { propuesta, avisos } = propuestaDeCheque(ia.lectura)
 
-    // ¿Ya se entregó este cheque en otra OP emitida? Mismo criterio que el
-    // trigger trg_pagos_cheque_unico (número + banco normalizados); acá sólo
-    // avisa, el trigger es el que frena al emitir.
+    // ¿Ya se entregó este cheque en otra OP emitida? EXACTAMENTE el criterio
+    // del trigger trg_pagos_cheque_unico (20260929u): número + banco +
+    // librador normalizados con norm_txt, sólo contra OPs 'emitida'. Antes
+    // miraba sólo el número y avisaba de más: el echeq N° 3080 del Galicia
+    // «chocaba» con el cheque de TERCERO N° 3080 (sin banco, otro librador)
+    // endosado en la OP-0240, que el trigger no frena. Acá sólo avisa; el
+    // trigger es el que frena al emitir.
     if (propuesta.numero) {
       const { data } = await supabase.from('pagos_cheques')
-        .select('orden_id, numero, banco, pagos_ordenes!inner(numero, estado)')
-        .eq('numero', propuesta.numero).eq('pagos_ordenes.estado', 'emitida').limit(10)
-      const bancoNorm = normTxt(propuesta.banco ?? '')
-      const iguales = ((data ?? []) as { orden_id: number; banco: string | null; pagos_ordenes: { numero: number } | { numero: number }[] }[])
-        .filter((c) => !bancoNorm || !c.banco || normTxt(c.banco) === bancoNorm)
+        .select('orden_id, numero, banco, librador, pagos_ordenes!inner(numero, estado)')
+        .ilike('numero', `%${propuesta.numero}%`).eq('pagos_ordenes.estado', 'emitida').limit(50)
+      const iguales = ((data ?? []) as ChequeEmitido[]).filter((c) => chocaConEmitido(propuesta, c))
       if (iguales.length > 0) {
         const op = iguales[0]!.pagos_ordenes
         const numOp = Array.isArray(op) ? op[0]?.numero : op?.numero

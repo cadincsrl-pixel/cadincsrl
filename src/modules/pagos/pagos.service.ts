@@ -42,7 +42,7 @@ import {
   esBoolQ, ESTADOS_FACTURA, CAMPOS_CONGELADOS, CAMPOS_QUE_DESAPRUEBAN,
   FORMAS_CON_COMPROBANTE_OBLIGATORIO, FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
-  type CreateOrdenDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
+  type CreateOrdenDto, type LoteOrdenesDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
   type ImputacionDto, type RegistrarFinnegansDto, type AplicarNcDto, sumaAplicaA,
 } from './pagos.schema.js'
 import {
@@ -278,6 +278,110 @@ export function validarCheques(forma: string, cheques: ChequeDto[] | undefined, 
   const suma = sumaCentavos(lista.map((c) => c.monto))
   if (!cuadra(suma, montoPagado)) {
     throw errorDeCampo('SUMA_CHEQUES_DISTINTA', campo, { suma, monto_pagado: aCentavos(montoPagado) })
+  }
+}
+
+/**
+ * ¿Falta el comprobante de pago? (null = no falta). Transferencia y e-cheq lo
+ * piden (FORMAS_CON_COMPROBANTE_OBLIGATORIO), con una excepción (20260929u,
+ * pedido del dueño): en un E-CHEQ el PDF/foto de cada echeq ES el
+ * comprobante, así que si TODOS los cheques traen su archivo (`foto_path`)
+ * el comprobante aparte es opcional. Si alguno no lo trae, sigue faltando, y
+ * el detalle dice cuáles. Espejo de `_pagos_emitir_orden`, que es la que
+ * manda; y de `comprobanteObligatorio` en el frontend.
+ */
+export function comprobanteFaltante(
+  forma: string, tieneComprobante: boolean, cheques: readonly Pick<ChequeDto, 'numero' | 'foto_path'>[] | undefined,
+): { forma_pago: string; cheques_sin_archivo?: string[] } | null {
+  if (!(FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(forma) || tieneComprobante) return null
+  if (forma !== 'echeq') return { forma_pago: forma }
+  const lista = cheques ?? []
+  const sinArchivo = lista.filter((c) => !c.foto_path?.trim()).map((c) => c.numero)
+  if (lista.length > 0 && sinArchivo.length === 0) return null
+  return { forma_pago: forma, cheques_sin_archivo: sinArchivo }
+}
+
+/**
+ * Lo que `POST /ordenes` valida antes de tocar archivos o la base, igual para
+ * la OP suelta y para cada orden de un lote: fecha, forma, cheques,
+ * comprobante obligatorio y las separaciones de funciones por factura (admin
+ * exento). La RPC vuelve a validar todo; esto adelanta el error al campo.
+ */
+export async function validarOrden(dto: CreateOrdenDto, userId: string, perfil: Perfil | null): Promise<{ montoPagado: number; formaPago: string }> {
+  const hoy = hoyAR()
+  if (dto.fecha > hoy) throw errorDeCampo('FECHA_FUTURA', 'fecha', { hoy })
+  if (dto.fecha_cobro && dto.fecha_cobro < dto.fecha) throw errorDeCampo('FECHA_COBRO_INVALIDA', 'fecha_cobro')
+
+  // Desde el 2026-09-25 la nota de crédito no es una línea de la OP (es un
+  // comprobante aplicado a la factura): toda OP mueve plata.
+  const montoPagado = sumaCentavos(dto.lineas.map((l) => l.monto))
+  const formaPago: string = dto.forma_pago ?? ''
+  if (!formaPago) throw errorDeCampo('FORMA_PAGO_REQUERIDA', 'forma_pago')
+  validarCheques(formaPago, dto.cheques, dto.fecha, montoPagado)
+  const tipos = new Set(dto.adjuntos.map((a) => a.tipo))
+  const falta = comprobanteFaltante(formaPago, tipos.has('comprobante_pago'), dto.cheques)
+  if (falta) throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { ...falta, tipo: 'comprobante_pago' })
+
+  // Separación de funciones, por factura, antes de la RPC (admin exento).
+  const facturaIds = [...new Set(dto.lineas.map((l) => l.factura_id).filter((x): x is number => x != null))]
+  if (facturaIds.length > 0) {
+    const { data: facts, error } = await supabase
+      .from('pagos_facturas').select('id, clase, created_by, aprobada_por, proveedor_id').in('id', facturaIds)
+    if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
+    const porId = new Map(((facts ?? []) as { id: number; clase: string; created_by: string | null; aprobada_por: string | null; proveedor_id: number }[]).map((f) => [f.id, f]))
+    for (const fid of facturaIds.sort((a, b) => a - b)) {
+      const f = porId.get(fid)
+      if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE', { factura_id: fid })
+      if (f.clase === 'nota_credito') throw new PagosHttpError(409, 'NC_NO_SE_PAGA', { factura_id: fid })
+      if (f.proveedor_id !== dto.proveedor_id) throw new PagosHttpError(409, 'FACTURA_OTRO_PROVEEDOR', { factura_id: fid })
+      if (!esAdmin(perfil)) {
+        if (f.created_by === userId) throw new PagosHttpError(403, 'NO_PUEDE_PAGAR_PROPIA', { factura_id: fid })
+        if (f.aprobada_por === userId) throw new PagosHttpError(403, 'NO_PUEDE_PAGAR_LO_QUE_APROBO', { factura_id: fid })
+      }
+    }
+  }
+  return { montoPagado, formaPago }
+}
+
+/** Los adjuntos pendientes de una OP: los que manda el form + las fotos de sus cheques. */
+function adjuntosPendientesDeOrden(dto: CreateOrdenDto) {
+  return [...dto.adjuntos, ...adjuntosDeCheques(dto.cheques, dto.adjuntos)]
+}
+
+/** Una OP como la reciben `pagos_registrar_orden` y cada elemento de `pagos_emitir_ordenes_lote`. */
+function ordenParaRpc(dto: CreateOrdenDto, montoPagado: number, formaPago: string, adjuntos: AdjuntoProcesado[], reemplazos?: ReadonlyMap<string, string>) {
+  return {
+    orden: {
+      proveedor_id: dto.proveedor_id, fecha: dto.fecha,
+      // Con cheques la fecha de cobro de la OP la deriva la RPC (la primera
+      // que cae); lo que venga acá se ignora.
+      fecha_cobro: dto.fecha_cobro ?? null,
+      forma_pago: formaPago, referencia: dto.referencia ?? '', obs: dto.obs ?? '',
+      monto_pagado: montoPagado, monto_nc: 0,
+      cheques: chequesParaRpc(dto.cheques, reemplazos),
+      // De qué cuenta propia salió la plata (20260926g). La RPC la valida.
+      cuenta_origen_id: dto.cuenta_origen_id ?? null,
+    },
+    lineas: dto.lineas.map((l) => ({ tipo: l.tipo, factura_id: l.factura_id ?? null, monto: aCentavos(l.monto) })),
+    adjuntos,
+  }
+}
+
+/**
+ * Corre la validación de UNA orden de un lote y, si falla, le suma al
+ * detalle `{ indice, proveedor_id }` (mismo formato que devuelve la RPC del
+ * lote), así el modal sabe qué bloque pintar.
+ */
+async function enBloque<T>(indice: number, proveedorId: number, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (err instanceof PagosHttpError) {
+      const d = err.detail
+      const base = d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, unknown> : d === undefined ? {} : { mensaje: d }
+      throw new PagosHttpError(err.status, err.code, { ...base, indice, proveedor_id: proveedorId })
+    }
+    throw err
   }
 }
 
@@ -634,17 +738,17 @@ export const pagosService = {
       if (o.fecha > hoyAR()) throw errorDeCampo('FECHA_FUTURA', 'orden.fecha', { hoy: hoyAR() })
       validarCheques(o.forma_pago, o.cheques, o.fecha, dto.total, 'orden.')
       if (o.fecha_cobro && o.fecha_cobro < o.fecha) throw errorDeCampo('FECHA_COBRO_INVALIDA', 'orden.fecha_cobro')
-      if ((FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(o.forma_pago) && !o.comprobante) {
-        throw errorDeCampo('COMPROBANTE_REQUERIDO', 'orden.comprobante', { forma_pago: o.forma_pago })
-      }
+      const falta = comprobanteFaltante(o.forma_pago, !!o.comprobante, o.cheques)
+      if (falta) throw errorDeCampo('COMPROBANTE_REQUERIDO', 'orden.comprobante', falta)
       const comprobantes = o.comprobante ? [{ ...o.comprobante, tipo: 'comprobante_pago' as const }] : []
       const fotos = adjuntosDeCheques(o.cheques, comprobantes)
-      if (comprobantes.length || fotos.length) adjuntosOrden = await procesarPendientes([...comprobantes, ...fotos])
+      const reemplazos = new Map<string, string>()
+      if (comprobantes.length || fotos.length) adjuntosOrden = await procesarPendientes([...comprobantes, ...fotos], reemplazos)
       pOrden = {
         fecha: o.fecha, forma_pago: o.forma_pago, fecha_cobro: o.fecha_cobro ?? null,
         referencia: o.referencia ?? '', obs: o.obs ?? '',
         monto_pagado: aCentavos(dto.total), monto_nc: 0,
-        cheques: chequesParaRpc(o.cheques),
+        cheques: chequesParaRpc(o.cheques, reemplazos),
         adjuntos: adjuntosOrden,
         // De qué cuenta propia salió la plata (20260926g). La RPC la valida.
         cuenta_origen_id: o.cuenta_origen_id ?? null,
@@ -1277,66 +1381,21 @@ export const pagosService = {
    * tras el commit mueve los archivos a `ordenes/<id>/`.
    */
   async registrarOrden(dto: CreateOrdenDto, userId: string, perfil: Perfil | null) {
-    const hoy = hoyAR()
-    if (dto.fecha > hoy) throw errorDeCampo('FECHA_FUTURA', 'fecha', { hoy })
-    if (dto.fecha_cobro && dto.fecha_cobro < dto.fecha) throw errorDeCampo('FECHA_COBRO_INVALIDA', 'fecha_cobro')
-
-    // Desde el 2026-09-25 la nota de crédito no es una línea de la OP (es un
-    // comprobante aplicado a la factura): toda OP mueve plata.
-    const montoPagado = sumaCentavos(dto.lineas.map((l) => l.monto))
-    const formaPago: string = dto.forma_pago ?? ''
-    if (!formaPago) throw errorDeCampo('FORMA_PAGO_REQUERIDA', 'forma_pago')
-    validarCheques(formaPago, dto.cheques, dto.fecha, montoPagado)
-    const tipos = new Set(dto.adjuntos.map((a) => a.tipo))
-    if ((FORMAS_CON_COMPROBANTE_OBLIGATORIO as readonly string[]).includes(formaPago) && !tipos.has('comprobante_pago')) {
-      throw errorDeCampo('COMPROBANTE_REQUERIDO', 'adjuntos', { forma_pago: formaPago, tipo: 'comprobante_pago' })
-    }
-
-    // Separación de funciones, por factura, antes de la RPC (admin exento).
-    const facturaIds = [...new Set(dto.lineas.map((l) => l.factura_id).filter((x): x is number => x != null))]
-    if (facturaIds.length > 0) {
-      const { data: facts, error } = await supabase
-        .from('pagos_facturas').select('id, clase, created_by, aprobada_por, proveedor_id').in('id', facturaIds)
-      if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
-      const porId = new Map(((facts ?? []) as { id: number; clase: string; created_by: string | null; aprobada_por: string | null; proveedor_id: number }[]).map((f) => [f.id, f]))
-      for (const fid of facturaIds.sort((a, b) => a - b)) {
-        const f = porId.get(fid)
-        if (!f) throw new PagosHttpError(404, 'FACTURA_NO_EXISTE', { factura_id: fid })
-        if (f.clase === 'nota_credito') throw new PagosHttpError(409, 'NC_NO_SE_PAGA', { factura_id: fid })
-        if (f.proveedor_id !== dto.proveedor_id) throw new PagosHttpError(409, 'FACTURA_OTRO_PROVEEDOR', { factura_id: fid })
-        if (!esAdmin(perfil)) {
-          if (f.created_by === userId) throw new PagosHttpError(403, 'NO_PUEDE_PAGAR_PROPIA', { factura_id: fid })
-          if (f.aprobada_por === userId) throw new PagosHttpError(403, 'NO_PUEDE_PAGAR_LO_QUE_APROBO', { factura_id: fid })
-        }
-      }
-    }
+    const { montoPagado, formaPago } = await validarOrden(dto, userId, perfil)
 
     // Las fotos de los cheques (20260925p) van como adjuntos tipo `cheque`.
     // No cuentan como comprobante_pago: la transferencia/echeq lo sigue pidiendo.
-    const adjuntos = await procesarPendientes([...dto.adjuntos, ...adjuntosDeCheques(dto.cheques, dto.adjuntos)])
+    const reemplazos = new Map<string, string>()
+    const adjuntos = await procesarPendientes(adjuntosPendientesDeOrden(dto), reemplazos)
     const avisos: Aviso[] = []
     const yaUsados = await ordenesConHash(adjuntos.filter((a) => a.tipo === 'comprobante_pago').map((a) => a.hash_sha256))
     if (yaUsados.length > 0) avisos.push({ code: 'COMPROBANTE_YA_USADO', orden_ids: yaUsados })
 
     let res: { orden: Record<string, unknown>; facturas: unknown[] }
     try {
+      const rpc = ordenParaRpc(dto, montoPagado, formaPago, adjuntos, reemplazos)
       res = rpcOk(await supabase.rpc('pagos_registrar_orden', {
-        p_orden: {
-          proveedor_id: dto.proveedor_id, fecha: dto.fecha,
-          // Con cheques la fecha de cobro de la OP la deriva la RPC (la primera
-          // que cae); lo que venga acá se ignora.
-          fecha_cobro: dto.fecha_cobro ?? null,
-          forma_pago: formaPago, referencia: dto.referencia ?? '', obs: dto.obs ?? '',
-          monto_pagado: montoPagado, monto_nc: 0,
-          cheques: chequesParaRpc(dto.cheques),
-          // De qué cuenta propia salió la plata (20260926g). La RPC la valida.
-          cuenta_origen_id: dto.cuenta_origen_id ?? null,
-        },
-        p_lineas: dto.lineas.map((l) => ({
-          tipo: l.tipo, factura_id: l.factura_id ?? null, monto: aCentavos(l.monto),
-        })),
-        p_adjuntos: adjuntos,
-        p_user_id:  userId,
+        p_orden: rpc.orden, p_lineas: rpc.lineas, p_adjuntos: rpc.adjuntos, p_user_id: userId,
       }))
     } catch (err) {
       await borrarDelBucket(adjuntos.map((a) => a.storage_path))
@@ -1345,6 +1404,67 @@ export const pagosService = {
     const ordenId = Number((res.orden as { id?: number }).id)
     if (ordenId && adjuntos.length) await moverPendientesAOrden(ordenId, adjuntos)
     return { ...enmascararRespuesta(res, verPiiDe(perfil)), avisos }
+  },
+
+  /**
+   * POST /ordenes/lote (20260929t): «Pagar en lote». N órdenes, una por
+   * proveedor, en UNA transacción (`pagos_emitir_ordenes_lote`): si una falla
+   * no se crea ninguna. Cada orden pasa por las MISMAS validaciones que
+   * `registrarOrden` (`validarOrden`: cheques, comprobante, separación de
+   * funciones) y su error sale con el código de siempre más
+   * `{ indice, proveedor_id }` en el detalle, para que el modal lo pinte en
+   * el bloque de ese proveedor.
+   *
+   * Diferencia con la OP suelta: si la RPC rebota, los archivos NO se borran
+   * del bucket. En un lote el error es de UN bloque y los comprobantes de los
+   * demás están bien: la persona corrige o excluye ese bloque y reintenta sin
+   * volver a subir todo. Si cierra el modal, el modal los borra (y el barrido
+   * de pendientes se lleva lo que quede).
+   */
+  async registrarOrdenesLote(dto: LoteOrdenesDto, userId: string, perfil: Perfil | null) {
+    const hoy = hoyAR()
+    if (dto.fecha > hoy) throw errorDeCampo('FECHA_FUTURA', 'fecha', { hoy })
+    const ordenes: CreateOrdenDto[] = dto.ordenes.map((o) => ({
+      ...o,
+      fecha: dto.fecha,
+      cuenta_origen_id: o.cuenta_origen_id !== undefined ? o.cuenta_origen_id : (dto.cuenta_origen_id ?? null),
+    }))
+
+    // 1) Validar TODO antes de tocar archivos.
+    const validadas: { montoPagado: number; formaPago: string }[] = []
+    for (const [i, o] of ordenes.entries()) {
+      validadas.push(await enBloque(i, o.proveedor_id, () => validarOrden(o, userId, perfil)))
+    }
+
+    // 2) Hashear los adjuntos de cada orden.
+    const adjuntosPorOrden: AdjuntoProcesado[][] = []
+    const reemplazos = new Map<string, string>()
+    for (const [i, o] of ordenes.entries()) {
+      adjuntosPorOrden.push(await enBloque(i, o.proveedor_id, () => procesarPendientes(adjuntosPendientesDeOrden(o), reemplazos)))
+    }
+    const avisos: (Aviso & { indice: number; proveedor_id: number })[] = []
+    for (const [i, adj] of adjuntosPorOrden.entries()) {
+      const yaUsados = await ordenesConHash(adj.filter((a) => a.tipo === 'comprobante_pago').map((a) => a.hash_sha256))
+      if (yaUsados.length > 0) avisos.push({ code: 'COMPROBANTE_YA_USADO', orden_ids: yaUsados, indice: i, proveedor_id: ordenes[i]!.proveedor_id })
+    }
+
+    // 3) Todo o nada.
+    const res = rpcOk<{ ordenes: { indice: number; proveedor_id: number; orden: Record<string, unknown>; facturas: unknown[] }[] }>(
+      await supabase.rpc('pagos_emitir_ordenes_lote', {
+        p_ordenes: ordenes.map((o, i) => ordenParaRpc(o, validadas[i]!.montoPagado, validadas[i]!.formaPago, adjuntosPorOrden[i]!, reemplazos)),
+        p_user_id: userId,
+      }))
+
+    for (const r of res.ordenes) {
+      const ordenId = Number((r.orden as { id?: number }).id)
+      const adj = adjuntosPorOrden[r.indice] ?? []
+      if (ordenId && adj.length) await moverPendientesAOrden(ordenId, adj)
+    }
+    const verPii = verPiiDe(perfil)
+    return {
+      ordenes: res.ordenes.map((r) => ({ indice: r.indice, proveedor_id: r.proveedor_id, ...enmascararRespuesta({ orden: r.orden, facturas: r.facturas }, verPii) })),
+      avisos,
+    }
   },
 
   /**
