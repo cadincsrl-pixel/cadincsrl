@@ -47,6 +47,10 @@ async function cargar(liqId: number, db: SupabaseClient): Promise<{ liq: Liquida
         conyuge_a_cargo: l.conyuge_a_cargo === true,
         hijos_a_cargo: n(l.hijos_a_cargo),
         modalidad_contratacion: (l.modalidad_contratacion as string | null) ?? null,
+        f931_condicion: (l.f931_condicion_efectiva as string | null) ?? null,
+        f931_actividad: (l.f931_actividad_efectiva as string | null) ?? null,
+        f931_modalidad: (l.f931_modalidad_efectiva as string | null) ?? null,
+        jubilado: l.jubilado === true,
         dias_trabajados: r.dias_trabajados == null ? null : n(r.dias_trabajados),
         horas_trabajadas: r.horas_trabajadas == null ? null : n(r.horas_trabajadas),
         total_remunerativo: n(r.total_remunerativo), total_no_remunerativo: n(r.total_no_remunerativo),
@@ -76,9 +80,13 @@ export const exportarService = {
   async lsd(liqId: number, db: SupabaseClient) {
     const { liq, empleados } = await cargar(liqId, db)
     const fecha = fechaDeValores({ tipo: liq.tipo, periodo: liq.periodo, quincena: liq.quincena })
-    const det = await rpc<number | null>(db, 'sueldos_valor_parametro', { p_clave: 'detraccion_por_empleado', p_fecha: fecha })
+    const [det, loc] = await Promise.all([
+      rpc<number | null>(db, 'sueldos_valor_parametro', { p_clave: 'detraccion_por_empleado', p_fecha: fecha }),
+      rpc<number | null>(db, 'sueldos_valor_parametro', { p_clave: 'f931_localidad', p_fecha: fecha }),
+    ])
     const factor = liq.tipo === 'mensual' ? 1 : liq.tipo === 'quincena' ? 0.5 : 0
-    return generarLsd({ cuit: CUIT_EMPRESA, liquidacion: liq, empleados, detraccion: n(det) * factor })
+    const codigos = loc != null && n(loc) > 0 ? { localidad: String(Math.round(n(loc))) } : {}
+    return generarLsd({ cuit: CUIT_EMPRESA, liquidacion: liq, empleados, detraccion: n(det) * factor, codigos })
   },
 
   /** TXT para dar de alta en el LSD los conceptos del empleador con su concepto ARCA. */

@@ -37,8 +37,11 @@
  *     (básico, asistencia, antigüedad…): solo lo que cargue el liquidador. Sí
  *     corren los aportes y contribuciones porcentuales sobre lo que haya.
  *   · Detracción (parámetro `detraccion_por_empleado`): baja la base de la
- *     contribución de seguridad social (`parametro_clave = contrib_patronal_pct`);
- *     mitad en cada quincena, entera en la mensual, nada en las demás.
+ *     contribución de seguridad social (`parametro_clave = contrib_patronal_pct`,
+ *     o `contrib_patronal_jubilado_pct` para jubilados); mitad en cada quincena,
+ *     entera en la mensual, nada en las demás.
+ *   · Jubilados (`legajo.jubilado`): no entran los conceptos `excluye_jubilados`
+ *     (INSSJP, obra social, contribución general) y sí los `solo_jubilados`.
  *   · Fondo de cese: contribución con destino `fondo_cese`; no resta del neto.
  */
 
@@ -90,6 +93,10 @@ export interface ConceptoMotor {
   orden: number
   automatico: boolean
   activo: boolean
+  /** No se aplica a jubilados (aportes y contribuciones de obra social e INSSJP, contribución general). */
+  excluye_jubilados?: boolean
+  /** Se aplica solo a jubilados (contribución previsional reducida). */
+  solo_jubilados?: boolean
   valor: ValorConcepto | null
 }
 
@@ -134,6 +141,8 @@ export interface LegajoMotor {
   fecha_egreso: string | null
   afiliado_sindicato: boolean
   rifl: boolean
+  /** Jubilado que sigue trabajando: sin INSSJP ni obra social, contribución previsional reducida. */
+  jubilado?: boolean
   titulo_nivel: 'A' | 'B' | 'C' | null
 }
 
@@ -363,6 +372,9 @@ function cumpleCondicion(c: Condicion, legajo: LegajoMotor, anios: number): bool
   }
 }
 
+/** Contribuciones de seguridad social cuya base baja por la detracción (Ley 27.430). */
+const PARAMETROS_CON_DETRACCION = new Set(['contrib_patronal_pct', 'contrib_patronal_jubilado_pct'])
+
 const esRegular = (t: TipoLiquidacion) => t === 'quincena' || t === 'mensual'
 
 /** ¿Corresponde aplicar en esta liquidación un concepto que es mensual (una vez por mes)? */
@@ -546,7 +558,7 @@ export function calcularRecibo(inp: EntradaMotor): ResultadoCalculo {
         if (pct == null) { sinValor.push(k.codigo); return }
         if (k.base === 'sereno_zona_a' && !tocaMensual(liq)) return
         let b = base(k.base)
-        if (k.parametro_clave === 'contrib_patronal_pct') b = Math.max(0, r2(b - detraccion()))
+        if (k.parametro_clave && PARAMETROS_CON_DETRACCION.has(k.parametro_clave)) b = Math.max(0, r2(b - detraccion()))
         let cant: number | null = null
         let factorAnios = 1
         if (k.unidad === 'anios') {
@@ -584,6 +596,7 @@ export function calcularRecibo(inp: EntradaMotor): ResultadoCalculo {
   const entraSolo = (k: ConceptoMotor): boolean => {
     if (!k.automatico || omitir.has(k.codigo)) return false
     if (!cumpleCondicion(k.condicion, legajo, anios)) return false
+    if (legajo.jubilado ? k.excluye_jubilados === true : k.solo_jubilados === true) return false
     const haber = k.tipo === 'remunerativo' || k.tipo === 'no_remunerativo'
     if (haber && !regular) return false
     // Mensuales: una sola vez por mes.

@@ -65,6 +65,7 @@ export function legajoMotor(l: Fila): LegajoMotor {
     fecha_egreso: (l.fecha_egreso as string | null) ?? null,
     afiliado_sindicato: l.afiliado_sindicato === true,
     rifl: l.rifl === true,
+    jubilado: l.jubilado === true,
     titulo_nivel: t === 'A' || t === 'B' || t === 'C' ? t : null,
   }
 }
