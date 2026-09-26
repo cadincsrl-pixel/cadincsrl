@@ -106,6 +106,20 @@ describe('UOCRA quincena', () => {
     expect(imp(r, 'contrib_rifl')).toBe(r2(683020.8 * 0.05))
   })
 
+  it('jubilado: sin INSSJP ni obra social, contribución previsional 10,77 % con detracción', () => {
+    const r = calcularRecibo({ legajo: legajo({ jubilado: true }), liquidacion: Q2, valores: valoresUocra(), entradas: { horas_normales: 88 } })
+    expect(imp(r, 'jubilacion')).toBe(r2(683020.8 * 0.11))
+    expect(imp(r, 'ley_19032')).toBeUndefined()
+    expect(imp(r, 'obra_social')).toBeUndefined()
+    expect(imp(r, 'contrib_os')).toBeUndefined()
+    expect(imp(r, 'contrib_ss')).toBeUndefined()
+    expect(imp(r, 'contrib_ss_jubilado')).toBe(r2((683020.8 - 3501.84) * 0.1077))
+    // Y el que no es jubilado no lleva la reducida.
+    const n = calcularRecibo({ legajo: legajo(), liquidacion: Q2, valores: valoresUocra(), entradas: { horas_normales: 88 } })
+    expect(imp(n, 'contrib_ss_jubilado')).toBeUndefined()
+    expect(imp(n, 'contrib_ss')).toBeDefined()
+  })
+
   it('sereno (mensual en convenio quincenal): media escala por quincena', () => {
     const r = calcularRecibo({ legajo: legajo({ categoria_id: 13 }), liquidacion: Q2, valores: valoresUocra(), entradas: {} })
     expect(imp(r, 'basico')).toBe(r2(999495 / 2))

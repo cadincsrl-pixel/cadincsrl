@@ -56,6 +56,11 @@ export interface EmpleadoExport {
   conyuge_a_cargo: boolean
   hijos_a_cargo: number
   modalidad_contratacion: string | null
+  /** Códigos del F.931 del legajo (o los del convenio). Null = los por defecto. */
+  f931_condicion?: string | null
+  f931_actividad?: string | null
+  f931_modalidad?: string | null
+  jubilado?: boolean
   dias_trabajados: number | null
   horas_trabajadas: number | null
   total_remunerativo: number
@@ -167,27 +172,29 @@ export function resumenContador(liq: LiquidacionExport, empleados: EmpleadoExpor
 
 // ── LSD ─────────────────────────────────────────────────────────────────────
 
-/** Códigos del F.931 por defecto (registro 04). A confirmar con el contador. */
+/**
+ * Códigos del F.931 del registro 04. Condición, actividad y modalidad salen de cada
+ * legajo (o de su convenio: UOCRA 5/003/24, UECARA y Camioneros 1/049/8, jubilados
+ * condición 2), tal como los declara el F.931 de CADINC. Lo de acá es el último recurso.
+ */
 export interface CodigosF931 {
-  situacion: string        // 2 — 01 activo
-  condicion: string        // 2 — 01 servicios comunes
-  actividad: string        // 3
-  modalidad: string        // 3 — 008 tiempo indeterminado (ver MODALIDADES)
-  siniestrado: string      // 2
-  localidad: string        // 2 — zona
+  situacion: string        // 2 — 1 activo
+  condicion: string        // 2 — texto, alineado a la izquierda
+  actividad: string        // 3 — con ceros
+  modalidad: string        // 3 — texto, alineado a la izquierda
+  siniestrado: string      // 2 — texto, alineado a la izquierda
+  localidad: string        // 2 — parámetro f931_localidad (84 en el F.931 de CADINC)
   tipo_empresa: string     // 1
   obra_social: string      // 6 — si el legajo no tiene código
 }
 
 export const CODIGOS_F931_DEFAULT: CodigosF931 = {
-  situacion: '01', condicion: '01', actividad: '049', modalidad: '008', siniestrado: '00', localidad: '00',
+  situacion: '1', condicion: '1', actividad: '049', modalidad: '8', siniestrado: '0', localidad: '00',
   tipo_empresa: '1', obra_social: '000000',
 }
 
-/** modalidad_contratacion del legajo → código F.931 (los conocidos; el resto usa el default). */
-const MODALIDADES: Record<string, string> = {
-  tiempo_indeterminado: '008', tiempo_parcial: '001', plazo_fijo: '014', eventual: '010', temporada: '012', periodo_prueba: '027',
-}
+/** Código sin ceros a la izquierda: la planilla de ARCA arma condición/modalidad/siniestrado como texto. */
+const codTxt = (v: string) => String(v).trim().replace(/^0+(?=\d)/, '')
 
 /** Conceptos ARCA que exigen la cantidad en el registro 03 (Guía 15). */
 const PIDE_CANTIDAD = new Set(['120003', '150000', '130000', '130001', '130002', '130003'])
@@ -221,7 +228,9 @@ export function generarLsd(args: {
   const cod = { ...CODIGOS_F931_DEFAULT, ...(args.codigos ?? {}) }
   const avisos: AvisoExport[] = []
   if (liq.estado !== 'cerrada') avisos.push({ codigo: 'LIQUIDACION_NO_CERRADA', detalle: { estado: liq.estado } })
-  avisos.push({ codigo: 'CODIGOS_F931_A_CONFIRMAR', detalle: { ...cod } })
+  const sinCodigos = args.empleados.filter(e => !e.f931_condicion || !e.f931_actividad || !e.f931_modalidad)
+  if (sinCodigos.length) avisos.push({ codigo: 'CODIGOS_F931_POR_DEFECTO', detalle: { codigos: { condicion: cod.condicion, actividad: cod.actividad, modalidad: cod.modalidad }, empleados: sinCodigos.map(e => e.nombre) } })
+  if (cod.localidad === '00') avisos.push({ codigo: 'SIN_LOCALIDAD_F931' })
   avisos.push({ codigo: 'BASES_SIN_TOPE', detalle: { mensaje: 'Las bases imponibles 1–9 se informan iguales a la remuneración, sin el tope de ANSES: revisar con el contador los sueldos altos.' } })
   if (!liq.fecha_pago) avisos.push({ codigo: 'SIN_FECHA_PAGO' })
   const periodo = liq.periodo.slice(0, 7).replace('-', '')
@@ -276,9 +285,9 @@ export function generarLsd(args: {
     out.push('04' + cuil
       + (e.conyuge_a_cargo ? '1' : '0') + cero(String(e.hijos_a_cargo ?? 0), 2)
       + '1' /* CCT */ + '1' /* SCVO */ + '0' /* reducción */ + cod.tipo_empresa + '0' /* tipo de operación */
-      + cero(cod.situacion, 2) + izq(cod.condicion, 2) + cero(cod.actividad, 3)
-      + izq(MODALIDADES[e.modalidad_contratacion ?? ''] ?? cod.modalidad, 3)
-      + izq(cod.siniestrado, 2) + cero(cod.localidad, 2)
+      + cero(cod.situacion, 2) + izq(codTxt(e.f931_condicion || cod.condicion), 2) + cero(e.f931_actividad || cod.actividad, 3)
+      + izq(codTxt(e.f931_modalidad || cod.modalidad), 3)
+      + izq(codTxt(cod.siniestrado), 2) + cero(cod.localidad, 2)
       + cero(cod.situacion, 2) + '01' + '00' + '00' + '00' + '00' // situaciones de revista 1–3 con su día de inicio
       + cero(String(dias), 2) + cero(String(horas), 3)
       + '00000' /* % aporte adicional SS */ + '00000' /* contribución tarea diferencial */

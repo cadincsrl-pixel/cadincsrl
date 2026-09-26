@@ -101,8 +101,22 @@ describe('LSD (diseño de la planilla oficial de ARCA)', () => {
   })
   it('totales, avisos y nombre del archivo', () => {
     expect(r.registros).toEqual({ '01': 1, '02': 1, '03': 4, '04': 1 })
-    expect(r.avisos.map(a => a.codigo)).toEqual(expect.arrayContaining(['CODIGOS_F931_A_CONFIRMAR', 'BASES_SIN_TOPE', 'SIN_CUIL', 'SIN_CODIGO_ARCA']))
+    expect(r.avisos.map(a => a.codigo)).toEqual(expect.arrayContaining(['CODIGOS_F931_POR_DEFECTO', 'SIN_LOCALIDAD_F931', 'BASES_SIN_TOPE', 'SIN_CUIL', 'SIN_CODIGO_ARCA']))
     expect(r.archivo).toBe('LSD_202609_LIQ-0005.txt')
+  })
+  it('registro 04 con los códigos del legajo: obrero UOCRA 5/003/24, jubilado 2/049/1, localidad 84', () => {
+    const x = generarLsd({ cuit: '33717191949', liquidacion: LIQ, codigos: { localidad: '84' }, empleados: [
+      emp({ f931_condicion: '5', f931_actividad: '003', f931_modalidad: '24' }),
+      emp({ legajo_id: 2, cuil: '20134383764', f931_condicion: '2', f931_actividad: '049', f931_modalidad: '1', jubilado: true, obra_social_codigo: '000000' }),
+    ] })
+    const r04 = x.contenido.split('\r\n').filter(l => l.startsWith('04'))
+    for (const l of r04) expect(l).toHaveLength(370)
+    // situación(2) condición(2) actividad(3) modalidad(3) siniestrado(2) localidad(2) desde la posición 21
+    expect(r04[0]!.slice(21, 35)).toBe('015 00324 0 84')
+    expect(r04[1]!.slice(21, 35)).toBe('012 0491  0 84')
+    expect(r04[1]!.slice(62, 68)).toBe('000000')
+    expect(x.avisos.map(a => a.codigo)).not.toContain('CODIGOS_F931_POR_DEFECTO')
+    expect(x.avisos.map(a => a.codigo)).not.toContain('SIN_LOCALIDAD_F931')
   })
   it('SAC fuera de junio/diciembre y SAC proporcional sin días: avisa', () => {
     const x = generarLsd({ cuit: '33717191949', liquidacion: LIQ, empleados: [emp({ lineas: [

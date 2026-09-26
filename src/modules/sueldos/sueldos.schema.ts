@@ -20,6 +20,16 @@ const Codigo = z.string().trim().regex(/^[a-z0-9_]{1,40}$/, 'CODIGO_INVALIDO')
 const CodigoArca = z.string().trim().regex(/^\d{6}$/, 'CODIGO_ARCA_INVALIDO').nullable()
 const Zona = z.string().trim().toUpperCase().regex(/^[A-Z0-9]{1,5}$/, 'ZONA_INVALIDA')
 
+/** Código del F.931 (condición, actividad, modalidad): 1 a 3 dígitos; vacío = el del convenio. */
+const CodigoF931 = z.string().trim().transform(s => (s === '' ? null : s))
+  .refine(s => s === null || /^\d{1,3}$/.test(s), 'F931_CODIGO_INVALIDO').nullable()
+const CamposF931 = {
+  f931_condicion: CodigoF931.optional(),
+  f931_actividad: CodigoF931.optional(),
+  f931_modalidad: CodigoF931.optional(),
+}
+
+
 /** 'true'/'1'/'si' en query string. */
 export const esBoolQ = (v: string | undefined | null) => !!v && ['1', 'true', 'si', 'sí'].includes(v.trim().toLowerCase())
 
@@ -33,6 +43,7 @@ export const ConvenioCreateSchema = z.object({
   unidad_basico: z.enum(['hora', 'mes'], 'UNIDAD_INVALIDA'),
   obs: Texto(1000).optional(),
   activo: z.boolean().optional(),
+  ...CamposF931,
 })
 export const ConvenioUpdateSchema = z.object({
   nombre: Texto(120).min(2, 'NOMBRE_REQUERIDO').optional(),
@@ -41,6 +52,7 @@ export const ConvenioUpdateSchema = z.object({
   unidad_basico: z.enum(['hora', 'mes'], 'UNIDAD_INVALIDA').optional(),
   obs: Texto(1000).optional(),
   activo: z.boolean().optional(),
+  ...CamposF931,
 })
 
 export const CategoriaCreateSchema = z.object({
@@ -99,6 +111,8 @@ const ConceptoBase = z.object({
   orden: z.number().int().min(0).max(999),
   automatico: z.boolean(),
   activo: z.boolean(),
+  excluye_jubilados: z.boolean(),
+  solo_jubilados: z.boolean(),
   obs: Texto(1000),
 })
 export const ConceptoCreateSchema = ConceptoBase.partial().extend({
@@ -181,12 +195,13 @@ const LegajoCampos = {
   titulo_nivel: z.enum(['A', 'B', 'C'], 'TITULO_INVALIDO').nullable(),
   carnet_profesional: Texto(60),
   rifl: z.boolean(),
+  jubilado: z.boolean(),
   obra_cod_habitual: Texto(60).nullable(),
   activo: z.boolean(),
   obs: Texto(2000),
 }
 
-const LegajoCamposSchema = z.object(LegajoCampos).partial()
+const LegajoCamposSchema = z.object(LegajoCampos).partial().extend(CamposF931)
 
 export const LegajoCreateSchema = LegajoCamposSchema.extend({
   leg: Texto(10).nullable().optional(),
