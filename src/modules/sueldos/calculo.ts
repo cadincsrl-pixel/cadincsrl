@@ -307,6 +307,24 @@ export function diasEntre(desde: string, hasta: string): number {
   return n > 0 ? n : 0
 }
 
+/**
+ * Días entre dos fechas (inclusive) con MES DE 30 DÍAS SIEMPRE, el criterio del
+ * contador (27/09/2026) para mensualizados y SAC: el último día del mes (28, 29
+ * o 31) cuenta como 30, así un mes completo da 30 y un semestre 180.
+ */
+export function dias30(desde: string, hasta: string): number {
+  if (hasta < desde) return 0
+  const a = parseISO(desde), b = parseISO(hasta)
+  const dia = (iso: string, y: number, m: number) => {
+    const d = Number(iso.slice(8, 10))
+    const ultimo = new Date(Date.UTC(y, m, 0)).getUTCDate()
+    return d === ultimo ? 30 : Math.min(d, 30)
+  }
+  const d1 = Math.min(Number(desde.slice(8, 10)), 30)
+  const d2 = dia(hasta, b.y, b.m)
+  return (b.y - a.y) * 360 + (b.m - a.m) * 30 + (d2 - d1) + 1
+}
+
 /** Rango devengado de la liquidación: 1–15 / 16–fin para quincenas; el mes para lo demás. */
 export function rangoPeriodo(l: LiquidacionMotor): { desde: string; hasta: string } {
   const { y, m } = parseISO(l.periodo)
@@ -768,7 +786,9 @@ export function remuneracionesMensuales(historial: HistorialFila[]): { periodo: 
 /**
  * SAC = 50 % de la mejor remuneración mensual del semestre, proporcional a
  * los días trabajados en el semestre (ingreso después del 1º o egreso antes
- * del fin: Ley 23.041). `hasta` corta el semestre (liquidación final).
+ * del fin: Ley 23.041), contados con meses de 30 días (contador, 27/09/2026:
+ * el mes del egreso entra proporcional a los días trabajados). `hasta` corta el
+ * semestre (liquidación final).
  */
 export function calcularSac(args: {
   historial: HistorialFila[]
@@ -784,11 +804,12 @@ export function calcularSac(args: {
   let mejor: { periodo: string; remunerativo: number } | null = null
   for (const x of meses) if (!mejor || x.remunerativo > mejor.remunerativo) mejor = x
   if (!mejor) avisos.push({ codigo: 'SIN_HISTORIAL', detalle: { desde: rango.desde, hasta: rango.hasta } })
-  const diasSem = diasEntre(rango.desde, rango.hasta)
+  // Meses de 30 días (semestre = 180): el mes del egreso entra por los días trabajados.
+  const diasSem = dias30(rango.desde, rango.hasta)
   const ini = args.fecha_ingreso && args.fecha_ingreso > rango.desde ? args.fecha_ingreso : rango.desde
   let fin = rango.hasta
   for (const f of [args.fecha_egreso, args.hasta]) if (f && f < fin) fin = f
-  const computados = Math.min(diasSem, diasEntre(ini, fin))
+  const computados = Math.min(diasSem, dias30(ini, fin))
   const importe = mejor ? r2((mejor.remunerativo / 2) * (computados / diasSem)) : 0
   return {
     anio: args.anio, semestre: args.semestre, desde: rango.desde, hasta: rango.hasta, meses,
@@ -952,7 +973,7 @@ export function entradasPorDefecto(args: {
       const fin = args.fecha_egreso && args.fecha_egreso < hasta ? args.fecha_egreso : hasta
       const total = liq.tipo === 'quincena' ? 15 : 30
       const parcial = ini !== desde || fin !== hasta
-      e.dias_trabajados = parcial ? Math.min(total, diasEntre(ini, fin)) : total
+      e.dias_trabajados = parcial ? Math.min(total, dias30(ini, fin)) : total
       e.presentismo = true
     }
   }

@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   calcularRecibo, calcularSac, calcularVacaciones, calcularFinal, diasVacacionesPorAntiguedad,
-  aniosAntiguedad, rangoPeriodo, cuilValido, cbuValido, r2, totalesDe, entradasPorDefecto, lineasParaGuardar,
+  aniosAntiguedad, rangoPeriodo, dias30, cuilValido, cbuValido, r2, totalesDe, entradasPorDefecto, lineasParaGuardar,
   CalculoError, type LiquidacionMotor, type HistorialFila,
 } from '../../../src/modules/sueldos/calculo.js'
 import { valoresUocra, valoresUecara, valoresCamioneros, legajo } from './fixtures.js'
@@ -247,10 +247,27 @@ describe('SAC, vacaciones y final', () => {
     expect(s.importe).toBe(625000)
     expect(s.proporcional).toBe(false)
   })
+  it('mes de 30 días siempre: febrero y meses de 31 cuentan 30; egreso a mitad de mes por días', () => {
+    expect(dias30('2026-02-01', '2026-02-28')).toBe(30)
+    expect(dias30('2026-01-01', '2026-01-31')).toBe(30)
+    expect(dias30('2026-07-01', '2026-12-31')).toBe(180)
+    expect(dias30('2026-02-10', '2026-02-28')).toBe(21)
+    expect(dias30('2026-03-01', '2026-03-10')).toBe(10)
+    expect(dias30('2026-09-16', '2026-09-30')).toBe(15)
+    expect(dias30('2026-02-16', '2026-02-28')).toBe(15)
+    expect(dias30('2026-03-31', '2026-03-31')).toBe(1)
+    // SAC de quien egresa el 10/12: jul–nov 150 + 10 días de diciembre.
+    expect(calcularSac({ historial: hist, anio: 2026, semestre: 2, fecha_ingreso: '2020-01-01', fecha_egreso: '2026-12-10' }).dias_computados).toBe(160)
+    // Mensualizado que ingresa el 10/02: 21 días.
+    expect(entradasPorDefecto({ liquidacion: { tipo: 'mensual', periodo: '2026-02-01', quincena: null }, unidad_basico: 'mes', fecha_ingreso: '2026-02-10', fecha_egreso: null }).dias_trabajados).toBe(21)
+  })
+
   it('SAC proporcional si ingresó en el semestre; sin historial avisa', () => {
     const s = calcularSac({ historial: hist, anio: 2026, semestre: 2, fecha_ingreso: '2026-10-01' })
-    expect(s.dias_computados).toBe(92)
-    expect(s.importe).toBe(r2(625000 * 92 / 184))
+    // Meses de 30 días: oct–dic = 90 de 180.
+    expect(s.dias_semestre).toBe(180)
+    expect(s.dias_computados).toBe(90)
+    expect(s.importe).toBe(r2(625000 * 90 / 180))
     const v = calcularSac({ historial: [], anio: 2026, semestre: 1, fecha_ingreso: null })
     expect(v.importe).toBe(0)
     expect(v.avisos[0]?.codigo).toBe('SIN_HISTORIAL')
@@ -275,8 +292,8 @@ describe('SAC, vacaciones y final', () => {
       fecha_egreso: '2026-09-30', fecha_ingreso: '2020-01-01', historial: hist, unidad_basico: 'hora',
       valor_escala: 6468, horas_dia: 9, divisor: 25, dias_gozados: 0,
     })
-    expect(f.sac_proporcional.dias_computados).toBe(92)
-    expect(f.sac_proporcional.importe).toBe(r2(625000 * 92 / 184))
+    expect(f.sac_proporcional.dias_computados).toBe(90)
+    expect(f.sac_proporcional.importe).toBe(r2(625000 * 90 / 180))
     expect(f.vacaciones_no_gozadas.dias_anuales).toBe(21)
     expect(f.vacaciones_no_gozadas.dias).toBe(r2(21 * 273 / 365))
     expect(f.vacaciones_no_gozadas.importe).toBe(r2(f.vacaciones_no_gozadas.dias * 58212))
