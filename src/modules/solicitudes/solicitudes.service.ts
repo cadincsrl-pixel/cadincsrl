@@ -12,14 +12,12 @@ import type {
 
 type ItemEstado = 'pendiente' | 'comprado' | 'de_deposito' | 'en_proveedor' | 'retirado' | 'de_stock_cliente' | 'enviado' | 'rechazado'
 
-// ── Feature flag ─────────────────────────────────────────────
-// Si USE_RPC_RESOLVER === 'true', resolverItem{Compra,Despacho} usan las
-// RPCs transaccionales en Postgres. Por defecto (flag ausente o distinto)
-// se mantiene el camino legacy no-transaccional para poder hacer rollback
-// instantáneo sin redeploy.
-function useRpcResolver(): boolean {
-  return process.env.USE_RPC_RESOLVER === 'true'
-}
+// Compra y despacho resuelven SIEMPRE por las RPC transaccionales
+// (resolver_item_compra / resolver_item_despacho). Hasta el 26/09 estaban
+// detrás de USE_RPC_RESOLVER y producción usaba un camino legacy de varias
+// escrituras sueltas: si fallaba la cuenta del cliente, el renglón quedaba
+// resuelto sin fila, y el despacho no miraba el saldo. 20261007a las dejó
+// listas (sin herramientas en la cuenta; stock negativo con aviso).
 
 // ── HttpError + mapper de errores de RPC ──────────────────────
 // El handler de rutas (itemHandler) respeta esta clase: si se lanza,
@@ -549,9 +547,7 @@ export const solicitudesService = {
 
     // Camino RPC: el evento 'comprado' lo escribe la RPC DENTRO de la TX
     // (atómico). No escribir acá para no duplicar.
-    const item = useRpcResolver()
-      ? await this.comprarItemViaRPC(itemId, dto, token, userId)
-      : await this.comprarItemLegacy(itemId, dto, token, userId)
+    const item = await this.comprarItemViaRPC(itemId, dto, token, userId)
     const resuelto = await this._promoverSiYaEnviado(item, token, userId)
     const marcado = await this._marcarEsperandoPrecio(resuelto, dto, itemId, token, userId)
     if (!catalogo) return marcado
@@ -768,9 +764,7 @@ export const solicitudesService = {
 
     // Camino RPC: el evento 'despachado' lo escribe la RPC DENTRO de la TX.
     // Camino legacy: lo escribe al final del método. Sin doble escritura.
-    const item = useRpcResolver()
-      ? await this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
-      : await this.despacharItemLegacy(itemId, dto, token, userId, forzarSinStock)
+    const item = await this.despacharItemViaRPC(itemId, dto, token, userId, forzarSinStock)
 
     // Sin `precio_al_resolver` el renglon sale en 0 a proposito: se marca
     // "esperando precio" para que caiga en la lista de pendientes de tasar en
@@ -838,13 +832,20 @@ export const solicitudesService = {
   ) {
     const supabase = createSupabaseClient(token)
     // supabaseAdmin: SECURITY DEFINER revocada de `authenticated` (migración 20260527).
-    const { error } = await supabaseAdmin.rpc('resolver_item_despacho', {
+    const { data: rpcData, error } = await supabaseAdmin.rpc('resolver_item_despacho', {
       p_item_id:          itemId,
       p_precio_unit:      dto.precio_unit,
       p_user_id:          userId,
       p_forzar_sin_stock: forzarSinStock,
     })
     if (error) throw mapRpcError(error)
+    // Sin stock suficiente se despacha igual (decisión del dueño 26/09: «dejar
+    // stock negativo hasta que estemos bien pulidos pero avisar»): la RPC
+    // devuelve cómo quedó la ficha y la pantalla lo avisa.
+    const fila = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as { material_id?: number | null; stock_actual_post?: number | null; stock_forzado?: boolean } | null
+    const avisoStock = fila?.stock_forzado
+      ? { material_id: fila.material_id ?? null, stock_actual: Number(fila.stock_actual_post ?? 0) }
+      : null
     // La RPC ya registra en materiales_a_cuenta_cliente (y en stock,
     // si corresponde) dentro de la transacción. NO llamar a
     // _registrarMaterialCliente acá — sería doble registro.
@@ -855,115 +856,7 @@ export const solicitudesService = {
       .eq('id', itemId)
       .maybeSingle()
     if (selErr) throw new Error(selErr.message)
-    return item
-  },
-
-  // ── Camino legacy (fallback de rollback) ──────────────────
-  // NO TOCAR sin coordinar: es el path que se activa cuando
-  // USE_RPC_RESOLVER no está en 'true'. Preserva el comportamiento
-  // histórico (múltiples llamadas no-transaccionales).
-  async comprarItemLegacy(itemId: number, dto: ComprarItemDto, token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
-      .from('solicitud_compra_item')
-      .update({
-        estado:            'comprado',
-        proveedor_id:      dto.proveedor_id,
-        precio_unit:       dto.precio_unit,
-        factura_id:        dto.factura_id ?? null,
-        fecha_resolucion:  new Date().toISOString().slice(0, 10),
-        pagado_por:        dto.pagado_por ?? 'cadinc',
-        cantidad_comprada: dto.cantidad_comprada ?? null,
-      })
-      .eq('id', itemId)
-      .eq('estado', 'pendiente')
-      .select('*, solicitud_compra(id, obra_cod)')
-      .maybeSingle()
-    if (error) throw new Error(error.message)
-    if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
-
-    // NOTA: comprar = pedido al proveedor, el material todavía no llegó.
-    // Para destino depósito, el stock NO entra acá — entra al RECIBIR
-    // (cuando se marca enviado vía remito, ver remitos-envio.service).
-    // Acá solo se registra la compra.
-    await this._registrarMaterialCliente(itemId, data.solicitud_id, token, userId)
-
-    // Evento del timeline (el camino RPC lo escribe adentro de la TX; acá,
-    // en legacy, es best-effort). cantidad = la comprada si difiere.
-    await registrarItemEvento(supabase, {
-      itemId,
-      solicitudId:    data.solicitud_id ?? null,
-      accion:         'comprado',
-      estadoAnterior: 'pendiente',
-      estadoNuevo:    'comprado',
-      cantidad:       data.cantidad_comprada ?? data.cantidad ?? null,
-      meta: {
-        proveedor_id:       dto.proveedor_id,
-        precio_unit:        dto.precio_unit,
-        factura_id:         dto.factura_id ?? null,
-        pagado_por:         dto.pagado_por ?? 'cadinc',
-        queda_en_proveedor: false,
-      },
-      userId,
-    })
-    return data
-  },
-
-  // El legacy nunca validó saldo — siempre permitía quedar en negativo.
-  // El parámetro `forzarSinStock` no cambia el comportamiento del despacho
-  // (el legacy no valida saldo), pero se registra en el evento del timeline.
-  async despacharItemLegacy(
-    itemId: number,
-    dto: DespacharItemDto,
-    token: string,
-    userId: string,
-    forzarSinStock: boolean = false,
-  ) {
-    const supabase = createSupabaseClient(token)
-    const { data, error } = await supabase
-      .from('solicitud_compra_item')
-      .update({
-        estado:           'de_deposito',
-        precio_unit:      dto.precio_unit,
-        fecha_resolucion: new Date().toISOString().slice(0, 10),
-      })
-      .eq('id', itemId)
-      .eq('estado', 'pendiente')
-      .select('*, solicitud_compra(id, obra_cod)')
-      .maybeSingle()
-    if (error) throw new Error(error.message)
-    if (!data) throw new Error('Ítem no encontrado o ya fue procesado')
-
-    // Descontar stock si el ítem tiene material_id vinculado
-    if (data.material_id) {
-      await sumarStock(data.material_id, -Number(data.cantidad), userId)
-      await supabase.from('stock_movimientos').insert({
-        material_id:       data.material_id,
-        tipo:              'salida',
-        cantidad:          data.cantidad,
-        motivo:            'despacho_obra',
-        obra_cod:          data.solicitud_compra?.obra_cod ?? null,
-        solicitud_item_id: itemId,
-        fecha:             new Date().toISOString().slice(0, 10),
-        created_by:        userId,
-      })
-    }
-
-    await this._registrarMaterialCliente(itemId, data.solicitud_id, token, userId)
-
-    // Evento del timeline (el camino RPC lo escribe adentro de la TX; acá,
-    // en legacy, es best-effort).
-    await registrarItemEvento(supabase, {
-      itemId,
-      solicitudId:    data.solicitud_id ?? null,
-      accion:         'despachado',
-      estadoAnterior: 'pendiente',
-      estadoNuevo:    'de_deposito',
-      cantidad:       data.cantidad ?? null,
-      meta:           { precio_unit: dto.precio_unit, forzar_sin_stock: forzarSinStock },
-      userId,
-    })
-    return data
+    return item && avisoStock ? { ...item, aviso_stock: avisoStock } : item
   },
 
   /**
@@ -1704,87 +1597,5 @@ export const solicitudesService = {
     if (sol?.obras?.es_deposito === true) {
       throw new HttpError(400, 'DESPACHO_A_DEPOSITO')
     }
-  },
-
-  // Registra UN ítem resuelto en materiales_a_cuenta_cliente (se llama al comprar o despachar)
-  async _registrarMaterialCliente(itemId: number, solicitudId: number, token: string, userId: string) {
-    const supabase = createSupabaseClient(token)
-
-    const { data: item } = await supabase
-      .from('solicitud_compra_item')
-      .select('*')
-      .eq('id', itemId)
-      .maybeSingle()
-    if (!item || !['comprado', 'de_deposito', 'enviado'].includes(item.estado)) return
-
-    const { data: sol } = await supabase
-      .from('solicitud_compra')
-      .select('obra_cod')
-      .eq('id', solicitudId)
-      .maybeSingle()
-    if (!sol) return
-
-    // No registrar si la obra es depósito (es reposición de stock, no a cuenta del cliente)
-    const { data: obra } = await supabase
-      .from('obras')
-      .select('es_deposito')
-      .eq('cod', sol.obra_cod)
-      .maybeSingle()
-    if (obra?.es_deposito) return
-
-    // Una HERRAMIENTA nunca se factura al cliente como material: es un activo de
-    // CADINC que va y vuelve, no un consumible.
-    //
-    // Este NO es el unico camino a MCC, y hay que saberlo: `retirar_de_proveedor`
-    // (stock en proveedor -> retiro con remito) y `comprar_faltante_item` escriben
-    // por su cuenta y tienen su propio guard por clase (migracion 20260902w). Las
-    // RPCs resolver_item_compra/_despacho tambien insertan, pero estan dormidas
-    // (USE_RPC_RESOLVER=false); si alguien prende el flag, la fuga vuelve por ahi.
-    if (item.clase === 'herramienta') return
-
-    // Despacho de depósito interno siempre es 'cadinc' (el material es propio
-    // de CADINC, no aplica "cliente paga directo" aunque el item lo tenga seteado).
-    // Para compras 'comprado' o 'enviado' (retirado vía remito), respetar el
-    // `pagado_por` del item.
-    const pagadoPor = item.estado === 'de_deposito'
-      ? 'cadinc'
-      : (item.pagado_por ?? 'cadinc')
-
-    // Cantidad efectiva: la comprada si difiere de la solicitada, si no la solicitada.
-    const cantidadEfectiva = item.cantidad_comprada ?? item.cantidad
-
-    const registro = {
-      obra_cod:         sol.obra_cod,
-      solicitud_id:     solicitudId,
-      item_id:          item.id,
-      // El color del renglón entra en la descripción: es lo que imprime el PDF
-      // del certificado y el Excel de la cuenta corriente (20260913t).
-      descripcion:      descConColor(item.descripcion, item.color),
-      cantidad:         cantidadEfectiva,
-      unidad:           item.unidad,
-      precio_unit:      item.precio_unit ?? 0,
-      precio_total:     cantidadEfectiva * (item.precio_unit ?? 0),
-      origen:           item.estado === 'comprado' ? 'proveedor' : 'deposito',
-      proveedor_id:     item.proveedor_id,
-      factura_id:       item.factura_id,
-      fecha_resolucion: item.fecha_resolucion ?? new Date().toISOString().slice(0, 10),
-      pagado_por:       pagadoPor,
-      created_by:       userId,
-      updated_by:       userId,
-    }
-
-    const { data: existing } = await supabase
-      .from('materiales_a_cuenta_cliente')
-      .select('id')
-      .eq('item_id', item.id)
-      .maybeSingle()
-
-    // Con chequeo de error (revisión 23/09): antes, si la base rechazaba la
-    // fila (MCC_COBRADO, un CHECK), el renglón quedaba comprado SIN cuenta del
-    // cliente y la respuesta era 200.
-    const { error: errMcc } = existing
-      ? await supabase.from('materiales_a_cuenta_cliente').update({ ...registro, updated_by: userId }).eq('item_id', item.id)
-      : await supabase.from('materiales_a_cuenta_cliente').insert(registro)
-    if (errMcc) throw mapRpcError(errMcc)
   },
 }

@@ -9,7 +9,7 @@
  *  - `supabase` (service role, para leer profiles.permisos en el handler).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ── Estado mutable compartido entre test y mock ────────────────
 // `vi.hoisted` evita el TDZ (vi.mock se hoistea y leería undefined si no).
@@ -114,12 +114,8 @@ beforeEach(() => {
   rpcMock.mockReset()
   fromSolicitudesMock.mockReset()
   state.profile = null
-  process.env.USE_RPC_RESOLVER = 'true'
 })
 
-afterEach(() => {
-  delete process.env.USE_RPC_RESOLVER
-})
 
 describe('POST /items/:itemId/despachar — check forzar_sin_stock', () => {
   it('sin forzar_sin_stock llama al service y devuelve 200', async () => {

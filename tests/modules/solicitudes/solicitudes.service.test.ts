@@ -8,11 +8,11 @@
  *     - `from(table)` como chainable (.select/.update/.insert/.eq/...),
  *       con `.maybeSingle()` / `.single()` retornando el {data, error}
  *       que configuramos por test.
- * - Manejamos `process.env.USE_RPC_RESOLVER` vía beforeEach/afterEach
+ * - Compra y despacho van siempre por la RPC (desde el 26/09 no hay flag).
  *   para evitar leaks entre tests.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CreateSolicitudSchema } from '../../../src/modules/solicitudes/solicitudes.schema.js'
 
 // ── Mock del módulo supabase antes de importar el service ─────
@@ -81,59 +81,16 @@ beforeEach(() => {
   rpcMock.mockReset()
   fromMock.mockReset()
   fromMock.mockImplementation(() => neutro())
-  delete process.env.USE_RPC_RESOLVER
 })
 
-afterEach(() => {
-  delete process.env.USE_RPC_RESOLVER
-})
-
-// ── comprarItem: dispatcher según flag ────────────────────────
-describe('comprarItem dispatcher', () => {
+// ── comprarItem: siempre por la RPC ───────────────────────────
+describe('comprarItem (RPC)', () => {
   const itemId = 42
   const userId = 'user-uuid'
   const token  = 'jwt-token'
   const dto    = { proveedor_id: 7, precio_unit: 100.5, factura_id: null }
 
-  it('con flag off (default) llama al camino legacy y NO invoca rpc()', async () => {
-    const itemRow = {
-      id: itemId,
-      solicitud_id: 10,
-      estado: 'comprado',
-      material_id: null,
-      cantidad: 2,
-      unidad: 'unid',
-      descripcion: 'Tornillos',
-      precio_unit: 100.5,
-      proveedor_id: 7,
-      factura_id: null,
-      fecha_resolucion: '2026-04-22',
-      solicitud_compra: { id: 10, obra_cod: 'OBRA-1' },
-    }
-
-    // Secuencia esperada en legacy:
-    //  1) update solicitud_compra_item → itemRow
-    //  2) _registrarMaterialCliente: select item → itemRow
-    //  3) select solicitud_compra → { obra_cod }
-    //  4) select obras → { es_deposito: false }
-    //  5) select materiales_a_cuenta_cliente existing → null
-    //  6) insert materiales_a_cuenta_cliente
-    fromMock
-      .mockReturnValueOnce(chainable({ data: itemRow, error: null }))
-      .mockReturnValueOnce(chainable({ data: { ...itemRow, estado: 'comprado' }, error: null }))
-      .mockReturnValueOnce(chainable({ data: { obra_cod: 'OBRA-1' }, error: null }))
-      .mockReturnValueOnce(chainable({ data: { es_deposito: false }, error: null }))
-      .mockReturnValueOnce(chainable({ data: null, error: null }))
-      .mockReturnValueOnce(chainable({ data: null, error: null }))
-
-    const res = await solicitudesService.comprarItem(itemId, dto as any, token, userId)
-
-    expect(rpcMock).not.toHaveBeenCalled()
-    expect(res).toEqual(itemRow)
-  })
-
-  it('con flag on invoca rpc("resolver_item_compra") con los params correctos', async () => {
-    process.env.USE_RPC_RESOLVER = 'true'
+  it('siempre invoca rpc("resolver_item_compra") con los params correctos (26/09: sin camino legacy)', async () => {
 
     rpcMock.mockResolvedValueOnce({ data: [{ item_id: itemId, estado: 'comprado' }], error: null })
     fromMock.mockReturnValueOnce(chainable({
@@ -159,58 +116,33 @@ describe('comprarItem dispatcher', () => {
   })
 })
 
-// ── despacharItem dispatcher: flag off → legacy ────────────────
-describe('despacharItem dispatcher', () => {
+// ── despacharItem: stock negativo con aviso (20261007a) ─────────
+describe('despacharItem: sin stock se despacha igual y avisa', () => {
   const itemId = 55
   const userId = 'user-uuid'
   const token  = 'jwt-token'
 
-  it('con flag off (default) llama al camino legacy y NO invoca rpc()', async () => {
-    // Item sin material_id → legacy salta el bloque de stock y va
-    // directo a _registrarMaterialCliente. Secuencia esperada:
-    //   1) update solicitud_compra_item → itemRow
-    //   2) select solicitud_compra_item (dentro de _registrar)
-    //   3) select solicitud_compra → { obra_cod }
-    //   4) select obras → { es_deposito: false }
-    //   5) select materiales_a_cuenta_cliente existing → null
-    //   6) insert materiales_a_cuenta_cliente
-    const itemRow = {
-      id: itemId,
-      solicitud_id: 10,
-      estado: 'de_deposito',
-      material_id: null,
-      cantidad: 2,
-      unidad: 'unid',
-      descripcion: 'Material X',
-      precio_unit: 50,
-      fecha_resolucion: '2026-04-22',
-      solicitud_compra: { id: 10, obra_cod: 'OBRA-1' },
-    }
+  it('stock_forzado → la respuesta trae aviso_stock con el saldo que quedó', async () => {
+    rpcMock.mockResolvedValueOnce({ data: [{ item_id: itemId, material_id: 9, stock_actual_post: -3, stock_forzado: true }], error: null })
+    fromMock.mockReturnValueOnce(chainable({ data: { id: itemId, estado: 'de_deposito', solicitud_compra: { id: 10, obra_cod: 'OBRA-1' } }, error: null }))
+    const res = await solicitudesService.despacharItemViaRPC(itemId, { precio_unit: 50 } as any, token, userId)
+    expect(res).toMatchObject({ id: itemId, aviso_stock: { material_id: 9, stock_actual: -3 } })
+  })
 
-    fromMock
-      .mockReturnValueOnce(chainable({ data: itemRow, error: null }))
-      .mockReturnValueOnce(chainable({ data: { ...itemRow }, error: null }))
-      .mockReturnValueOnce(chainable({ data: { obra_cod: 'OBRA-1' }, error: null }))
-      .mockReturnValueOnce(chainable({ data: { es_deposito: false }, error: null }))
-      .mockReturnValueOnce(chainable({ data: null, error: null }))
-      .mockReturnValueOnce(chainable({ data: null, error: null }))
-
-    const res = await solicitudesService.despacharItem(itemId, { precio_unit: 50 } as any, token, userId)
-
-    expect(rpcMock).not.toHaveBeenCalled()
-    expect(res).toEqual(itemRow)
+  it('con stock alcanza → sin aviso_stock', async () => {
+    rpcMock.mockResolvedValueOnce({ data: [{ item_id: itemId, material_id: 9, stock_actual_post: 4, stock_forzado: false }], error: null })
+    fromMock.mockReturnValueOnce(chainable({ data: { id: itemId, estado: 'de_deposito', solicitud_compra: { id: 10, obra_cod: 'OBRA-1' } }, error: null }))
+    const res = await solicitudesService.despacharItemViaRPC(itemId, { precio_unit: 50 } as any, token, userId)
+    expect(res).not.toHaveProperty('aviso_stock')
   })
 })
 
-// ── despacharItem con flag RPC ─────────────────────────────────
+// ── despacharItem por la RPC ───────────────────────────────────
 describe('despacharItem (RPC)', () => {
   const itemId = 55
   const userId = 'user-uuid'
   const token  = 'jwt-token'
 
-  beforeEach(() => {
-    process.env.USE_RPC_RESOLVER = 'true'
-  })
 
   it('sin forzar_sin_stock pasa p_forzar_sin_stock: false', async () => {
     rpcMock.mockResolvedValueOnce({ data: [{ item_id: itemId }], error: null })
@@ -347,9 +279,6 @@ describe('comprarItemViaRPC propaga HttpError', () => {
   const token  = 'jwt-token'
   const dto    = { proveedor_id: 1, precio_unit: 10, factura_id: null }
 
-  beforeEach(() => {
-    process.env.USE_RPC_RESOLVER = 'true'
-  })
 
   it('ITEM_NO_EXISTE → lanza HttpError 404', async () => {
     rpcMock.mockResolvedValueOnce({
@@ -406,9 +335,6 @@ describe('despacharItemViaRPC propaga HttpError', () => {
   const token  = 'jwt-token'
   const dto    = { precio_unit: 50 }
 
-  beforeEach(() => {
-    process.env.USE_RPC_RESOLVER = 'true'
-  })
 
   it('STOCK_INSUFICIENTE → 400 con detail JSON {material_id, stock_actual, cantidad_solicitada}', async () => {
     rpcMock.mockResolvedValueOnce({

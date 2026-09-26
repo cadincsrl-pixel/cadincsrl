@@ -19,7 +19,7 @@ export type RegistrarItemEventoArgs = {
 
 // Inserta un evento. BEST-EFFORT: si falla, NO propaga el error — la traza no
 // debe tumbar la operación de negocio (compra/despacho/envío). Solo loguea.
-// Cuando se consoliden las RPCs (USE_RPC_RESOLVER), estas escrituras se moverán
+// Compra y despacho ya escriben su evento dentro de la RPC (26/09); las demás escrituras se moverán
 // adentro de las funciones para que sean atómicas con el cambio de estado.
 export async function registrarItemEvento(
   sb: SupabaseClient,

@@ -104,6 +104,8 @@ export const VERBOS: Record<string, string> = {
   deshacer: 'deshacer',
   // Cuenta corriente: EPP que se le cobra al cliente (20261002a).
   'epp-a-cargo': 'cambiar a cargo de quién es el EPP',
+  // Pañol: deshacer un retorno o cierre (20261007b).
+  'anular-retorno': 'anular retorno',
   // Sueldos (2026-09-26). `cerrar`, `reabrir`, `anular`, `contabilizar` y `generar` ya están arriba.
   paritaria: 'nueva paritaria',
 }

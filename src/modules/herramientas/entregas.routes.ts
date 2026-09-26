@@ -247,4 +247,28 @@ entregas.post(
   },
 )
 
+// POST /api/herramientas/entregas/:id/anular-retorno — deshacer un retorno o
+// cierre cargado en el pañol (20261007b). Los de «↩ Devuelve» del pedido se
+// corrigen desde el pedido (RETORNO_DEL_PEDIDO).
+const AnularRetornoSchema = z.object({ motivo: z.string().trim().min(1).max(300) })
+entregas.post(
+  '/entregas/:id/anular-retorno',
+  requirePermiso('herramientas', 'actualizacion'), requireTab('herramientas', ['salidas', 'retornos']),
+  zValidator('json', AnularRetornoSchema),
+  async (c) => {
+    const id = Number(c.req.param('id'))
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID_INVALIDO' }, 400)
+    const { data, error } = await supabase.rpc('anular_retorno_herramienta', {
+      p_id: id, p_motivo: c.req.valid('json').motivo, p_user_id: c.get('user').id,
+    })
+    if (error) {
+      const msg = error.message || ''
+      const code = ['MOTIVO_REQUERIDO', 'RETORNO_NO_EXISTE', 'NO_ES_RETORNO_VIVO', 'RETORNO_DEL_PEDIDO'].find(k => msg.includes(k))
+      if (code) return c.json({ error: code }, code === 'RETORNO_NO_EXISTE' ? 404 : code === 'MOTIVO_REQUERIDO' ? 400 : 409)
+      return c.json({ error: msg }, 500)
+    }
+    return c.json(data)
+  },
+)
+
 export default entregas
