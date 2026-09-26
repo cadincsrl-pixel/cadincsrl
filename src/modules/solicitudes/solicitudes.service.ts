@@ -333,6 +333,9 @@ export const solicitudesService = {
       if (errCab) throw new Error(errCab.message)
       if (!cab) throw new HttpError(404, 'SOLICITUD_NO_EXISTE')
       if (!allowed.includes(cab.obra_cod)) throw new HttpError(403, 'OBRA_SIN_ACCESO')
+      // Pasar el pedido a otra obra también exige alcance sobre la NUEVA
+      // (revisión 26/09: solo se miraba la vieja).
+      if (dto.obra_cod && !allowed.includes(dto.obra_cod)) throw new HttpError(403, 'OBRA_SIN_ACCESO')
     }
 
     // Actualizar cabecera
@@ -346,6 +349,11 @@ export const solicitudesService = {
         .from('solicitud_compra')
         .update(updateData)
         .eq('id', id)
+      // Con renglones resueltos la obra no se cambia (20261005a): la cuenta del
+      // cliente, el stock, los remitos y el pañol quedarían en la vieja.
+      if (error?.message?.includes('OBRA_CON_RENGLONES_RESUELTOS')) {
+        throw new HttpError(409, 'OBRA_CON_RENGLONES_RESUELTOS')
+      }
       if (error) throw new Error(error.message)
     }
 
