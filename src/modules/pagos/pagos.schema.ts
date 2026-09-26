@@ -600,6 +600,40 @@ export const LeerChequeSchema = z.object({
 })
 export type LeerChequeDto = z.infer<typeof LeerChequeSchema>
 
+/**
+ * «Soltá acá los comprobantes de pagos» (2026-09-25): un comprobante de
+ * transferencia, e-cheq, cheque, recibo del proveedor o resumen de cuenta ya
+ * subido a `ordenes/pendientes/`. No crea nada.
+ */
+export const LeerComprobantePagoSchema = LeerChequeSchema
+export type LeerComprobantePagoDto = LeerChequeDto
+
+/**
+ * Registrar un pago QUE YA SE HIZO (conciliación): OP reconstruida para
+ * facturas «pago a reconstruir», con los papeles como adjuntos.
+ */
+export const ReconstruirPagoSchema = z.object({
+  proveedor_id:     z.number().int().positive(),
+  fecha:            FechaISO,
+  forma_pago:       z.enum(['transferencia', 'echeq', 'cheque', 'efectivo', 'otro']),
+  monto_pagado:     Monto,
+  cuenta_origen_id: z.number().int().positive().nullable().optional(),
+  referencia:       z.string().trim().min(3).max(500),
+  obs:              z.string().trim().max(1000).optional(),
+  cheques:          z.array(z.object({
+    numero:      z.string().trim().min(1).max(40),
+    banco:       z.string().trim().max(80),
+    fecha_cobro: FechaISO,
+    monto:       Monto,
+    es_propio:   z.boolean(),
+    librador:    z.string().trim().max(200),
+  })).max(50).optional(),
+  lineas:           z.array(z.object({ factura_id: z.number().int().positive(), monto: Monto })).min(1).max(200),
+  a_cuenta:         MontoNoNeg.optional(),
+  adjuntos:         z.array(AdjuntoPendienteSchema).max(20).default([]),
+})
+export type ReconstruirPagoDto = z.infer<typeof ReconstruirPagoSchema>
+
 /** Comprobante ANTES de la fila de la OP: va a `ordenes/pendientes/`. */
 export const UploadComprobantePendienteSchema = z.object({
   tipo:           z.enum(TIPOS_ADJ_ORDEN).default('comprobante_pago'),

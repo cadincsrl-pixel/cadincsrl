@@ -34,6 +34,7 @@ import { proveedoresService, enmascararProveedor } from './proveedores.service.j
 import { pagosAdjuntosService } from './adjuntos.service.js'
 import { lecturaService } from './lectura.service.js'
 import { desgloseService } from './desglose.service.js'
+import { comprobantesPagoService } from './comprobantes-pago.service.js'
 import { conceptosService } from './conceptos.service.js'
 import { chequesService } from './cheques.service.js'
 import { importarArcaService } from './importar-arca.service.js'
@@ -46,7 +47,7 @@ import {
   ListFacturasQuerySchema, FacturasResumenQuerySchema, CreateFacturaSchema, UpdateFacturaSchema,
   MotivoSchema, CorregidaSchema, AprobarLoteSchema,
   UploadUrlFacturaSchema, RegistrarAdjFacturaSchema, UploadUrlOrdenSchema, RegistrarAdjOrdenSchema,
-  UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema, LeerChequeSchema, CompletarConLecturaSchema,
+  UploadComprobantePendienteSchema, BorrarPendienteSchema, UploadUrlLecturaSchema, LeerFacturaSchema, LeerChequeSchema, LeerComprobantePagoSchema, ReconstruirPagoSchema, CompletarConLecturaSchema,
   CompletarDesgloseSchema, LeerAdjuntoSchema,
   ListOrdenesQuerySchema, OrdenesResumenQuerySchema, CreateOrdenSchema, LoteOrdenesSchema, UpdateOrdenSchema, AvisarPagoSchema, RegistrarFinnegansSchema, AplicarNcSchema, ContactosProveedorSchema,
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
@@ -314,6 +315,16 @@ pagos.post('/cheques/leer', lectura, registrarPagos, tabPago, zValidator('json',
 
 // «Pagar en lote» (20260929t): N OP, una por proveedor, todo o nada. Mismas
 // guardias que POST /ordenes; el error de un bloque trae { indice, proveedor_id }.
+// «Soltá acá los comprobantes de pagos» (2026-09-25): lee transferencia,
+// e-cheq, cheque, recibo del proveedor o resumen de cuenta. NO crea nada.
+pagos.post('/comprobantes/leer', lectura, registrarPagos, tabPago, zValidator('json', LeerComprobantePagoSchema), handler(async (c) =>
+  comprobantesPagoService.leer(c.req.valid('json'))))
+
+// Registrar un pago que YA SE HIZO (conciliación): OP reconstruida para
+// facturas «pago a reconstruir». Literal antes de /ordenes/:id.
+pagos.post('/ordenes/reconstruir', lectura, registrarPagos, tabPago, zValidator('json', ReconstruirPagoSchema), handler(async (c) =>
+  comprobantesPagoService.reconstruir(c.req.valid('json'), c.get('user').id)))
+
 pagos.post('/ordenes/lote', lectura, registrarPagos, tabPago, zValidator('json', LoteOrdenesSchema), handler(async (c) => {
   const userId = c.get('user').id
   return pagosService.registrarOrdenesLote(c.req.valid('json'), userId, await perfilDe(userId))

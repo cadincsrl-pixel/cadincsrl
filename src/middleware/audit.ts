@@ -81,6 +81,8 @@ export const VERBOS: Record<string, string> = {
   imputar: 'imputar', 'pasar-a-deuda': 'pasar a deuda (no se había pagado)', 'completar-con-lectura': 'adjuntar el archivo leído', marcar: 'marcar saldo', importar: 'importar', vencimiento: 'cambiar vencimiento',
   adjunto: 'adjuntar certificado', 'descartar-pendiente': 'descartar adjunto pendiente',
   // Compras: factura «archivo primero» (20260924u).
+  // POST /pagos/ordenes/reconstruir (2026-09-25): un pago que ya se hizo.
+  reconstruir: 'registrar pago reconstruido',
   'upload-lectura': 'subir adjunto', leer: 'leer comprobante', 'lectura-pendiente': 'descartar lectura',
   // Completar el desglose de una factura ya cargada (20260924v).
   desglose: 'completar desglose', 'leer-adjunto': 'leer comprobante',
@@ -174,6 +176,8 @@ export const ENTIDADES: Record<string, string> = {
   'pagos/ordenes': 'orden de pago', 'pagos/ordenes/adjuntos': 'adjunto de orden de pago',
   'pagos/proveedores': 'proveedor (pagos)', 'pagos/catalogos': 'catálogo',
   'pagos/conceptos': 'concepto de compra', 'pagos/cheques': 'cheque',
+  // «Soltá acá los comprobantes de pagos» (2026-09-25): POST /pagos/comprobantes/leer → «leer comprobante comprobante de pago» (no crea nada).
+  'pagos/comprobantes': 'comprobante de pago',
   // Facturación de venta. PUT /facturacion/clientes/5/obras → «obras del cliente 5».
   facturacion: 'factura de venta', 'facturacion/facturas': 'factura de venta',
   'facturacion/clientes': 'cliente', 'facturacion/clientes/obras': 'obras del cliente',
