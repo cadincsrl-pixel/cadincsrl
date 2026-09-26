@@ -941,3 +941,14 @@ export const ListProveedoresQuerySchema = z.object({
   offset:         z.coerce.number().int().min(0).default(0),
 })
 export type ListProveedoresQuery = z.infer<typeof ListProveedoresQuerySchema>
+
+/** «Sale de la cuenta» automática (20261009e): qué cuenta tomaría la OP sin elegir. */
+export const CuentaOrigenSugeridaSchema = z.object({
+  proveedor_id: z.number().int().positive().nullable().optional(),
+  forma_pago:   z.enum(FORMAS_PAGO_OP),
+  cheques:      z.array(z.object({
+    banco:     z.string().max(120).nullable().optional(),
+    es_propio: z.boolean().optional(),
+  })).max(100).optional(),
+})
+export type CuentaOrigenSugeridaDto = z.infer<typeof CuentaOrigenSugeridaSchema>

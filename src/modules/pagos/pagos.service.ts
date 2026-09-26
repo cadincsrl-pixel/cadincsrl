@@ -43,7 +43,7 @@ import {
   FORMAS_CON_FECHA_COBRO,
   type CreateFacturaDto, type UpdateFacturaDto, type ListFacturasQuery, type FacturasResumenQuery,
   type CreateOrdenDto, type LoteOrdenesDto, type UpdateOrdenDto, type ListOrdenesQuery, type OrdenesResumenQuery, type ChequeDto,
-  type ImputacionDto, type RegistrarFinnegansDto, type AplicarNcDto, sumaAplicaA,
+  type ImputacionDto, type RegistrarFinnegansDto, type AplicarNcDto, sumaAplicaA, type CuentaOrigenSugeridaDto,
 } from './pagos.schema.js'
 import {
   pagosAdjuntosService, procesarPendientes, hashearPendientes, unificarPorHash, archivoEnVariosBloques, borrarDelBucket, moverPendientesAOrden, ordenesConHash, hashDelBucket, BUCKET,
@@ -1664,5 +1664,25 @@ export const pagosService = {
     if (error) throw mapRpcError(error)
     return ((data ?? []) as Array<{ id: number; tipo: string; nombre: string; banco: string; moneda: string }>)
       .sort((a, b) => (orden[a.tipo] ?? 9) - (orden[b.tipo] ?? 9))
+  },
+
+  /**
+   * La cuenta que la OP toma sola si nadie elige «Sale de la cuenta»
+   * (20261009e, `_pagos_cuenta_origen_sugerida`): la pantalla la muestra antes
+   * de confirmar. La regla vive solo en la base; acá no se repite.
+   */
+  async cuentaOrigenSugerida(dto: CuentaOrigenSugeridaDto, token?: string | null) {
+    const sb = token ? createSupabaseClient(token) : supabase
+    const { data, error } = await sb.rpc('_pagos_cuenta_origen_sugerida', {
+      p_proveedor_id: dto.proveedor_id ?? null,
+      p_forma:        dto.forma_pago,
+      p_cheques:      dto.cheques ?? [],
+    })
+    if (error) throw mapRpcError(error)
+    const id = (data as number | null) ?? null
+    if (id == null) return { cuenta_origen_id: null, nombre: null }
+    const { data: cta, error: eCta } = await sb.from('tesoreria_cuentas').select('id, nombre').eq('id', id).maybeSingle()
+    if (eCta) throw mapRpcError(eCta)
+    return { cuenta_origen_id: id, nombre: (cta as { nombre: string } | null)?.nombre ?? null }
   },
 }

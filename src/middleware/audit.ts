@@ -35,7 +35,7 @@ export interface RutaAuditada {
 }
 
 /** POSTs que son consultas (geocoding, sugerencia de km): no son mutaciones. */
-const SIN_AUDITAR = [/^logistica\/maps\//, /^sueldos\/liquidaciones\/[^/]+\/recibos\/calcular$/]
+const SIN_AUDITAR = [/^logistica\/maps\//, /^pagos\/cuentas-origen\/sugerida$/, /^sueldos\/liquidaciones\/[^/]+\/recibos\/calcular$/]
 
 /**
  * Verbo al final de la ruta → acción legible. Se sacan de la cola todos los

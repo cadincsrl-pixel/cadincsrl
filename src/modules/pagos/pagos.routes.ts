@@ -53,6 +53,7 @@ import {
   ListProveedoresQuerySchema, CreateProveedorSchema, UpdateProveedorSchema, DatosPagoSchema,
   ListConceptosQuerySchema, CreateConceptoSchema, UpdateConceptoSchema,
   PeriodoIvaSugeridoQuerySchema, ImportarRecibidosSchema, DeshacerImportacionSchema, ImputarFacturaSchema, ImputarLoteSchema, MarcarPagadasSchema,
+  CuentaOrigenSugeridaSchema,
 } from './pagos.schema.js'
 import { quiereDescargar } from '../../lib/signed-url.js'
 
@@ -479,6 +480,11 @@ pagos.get('/catalogos/obras', lectura, handler(async () => pagosService.catalogo
 // De qué cuenta propia sale la plata («Sale de la cuenta», 20260926g). La
 // leen el modal de pago y el de factura ya pagada.
 pagos.get('/cuentas-origen', lectura, tabPago, handler(async (c) => pagosService.cuentasOrigen(c.get('accessToken'))))
+
+// La que la OP toma sola si nadie la elige (20261009e). POST por los cheques;
+// no crea nada (sin auditoría: SIN_AUDITAR en audit.ts).
+pagos.post('/cuentas-origen/sugerida', lectura, tabPago, zValidator('json', CuentaOrigenSugeridaSchema), handler(async (c) =>
+  pagosService.cuentaOrigenSugerida(c.req.valid('json'), c.get('accessToken'))))
 
 // ═══════════════════════════════════ Configuración (20260929f) ══════════════
 // GET: lectura, sin tab (el alta de la factura lee la jurisdicción por
