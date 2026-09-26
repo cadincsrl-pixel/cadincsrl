@@ -869,6 +869,8 @@ export const CreateProveedorSchema = z.object({
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   /** Cómo se le paga normalmente (20260930a): la forma con que nacen sus facturas. Null = transferencia. */
   forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
+  /** Cuenta de tesorería que le debita el banco (20261009a). Con débito automático, sus facturas se pagan solas al imputarse. */
+  debito_cuenta_id: z.number().int().positive().nullable().optional(),
   /** El 45 % del ICL de sus facturas es pago a cuenta de IVA (gasoil de camiones, 20261001a). */
   icl_computa_pago_a_cuenta: z.boolean().optional(),
   ...Habituales,
@@ -891,6 +893,7 @@ export const UpdateProveedorSchema = z.object({
   vencimiento_modo: z.enum(VENCIMIENTO_MODOS).optional(),
   cierre_dia:       z.number().int().min(1).max(31).nullable().optional(),
   forma_pago_habitual: z.enum(FORMAS_PREVISTAS).nullable().optional(),
+  debito_cuenta_id: z.number().int().positive().nullable().optional(),
   icl_computa_pago_a_cuenta: z.boolean().optional(),
   ...Habituales,
   contacto:        Texto(120).optional(),
