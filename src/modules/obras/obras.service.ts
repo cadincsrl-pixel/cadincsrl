@@ -267,6 +267,13 @@ export const obrasService = {
     const { data: reabiertas, error: e2 } = await supabaseAdmin
       .from('cierres').select('sem_key').eq('obra_cod', cod).eq('estado', 'pendiente').lt('sem_key', vie)
     if (e2) throw new Error(e2.message)
+    // Herramientas que siguen «en obra» según el pañol (revisión 26/09): se
+    // archivaban obras con herramientas afuera (CC-019 quedó con 45) y después
+    // nadie las reclamaba. Se cierran en Herramientas › Retornos: volvió,
+    // perdida, rota o baja en obra (20261005d).
+    const { data: herr, error: e3 } = await supabaseAdmin
+      .from('v_herr_entregas_obras').select('cant_en_obra').eq('cod', cod).maybeSingle()
+    if (e3) throw new Error(e3.message)
 
     const partes: string[] = []
     if (horasSem && horasSem.length > 0) {
@@ -277,6 +284,10 @@ export const obrasService = {
     if (reabiertas && reabiertas.length > 0) {
       const semanas = reabiertas.map(r => String(r.sem_key).slice(0, 10)).sort()
       partes.push(`${semanas.length} semana${semanas.length === 1 ? '' : 's'} reabierta${semanas.length === 1 ? '' : 's'} sin volver a cerrar (${semanas.join(', ')})`)
+    }
+    const enObra = Number(herr?.cant_en_obra ?? 0)
+    if (enObra > 0) {
+      partes.push(`${enObra} herramienta${enObra === 1 ? '' : 's'} en obra sin volver al pañol (cerralas en Herramientas › Retornos)`)
     }
     return partes.length ? partes.join(' y ') : null
   },

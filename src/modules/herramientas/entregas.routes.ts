@@ -78,6 +78,9 @@ const RetornoSchema = z.object({
   })).min(1).max(200),
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   nota:  z.string().max(500).nullish(),
+  // Qué pasó con la herramienta (20261005d). Sin mandar = volvió al pañol.
+  // Fuera de 'volvio' la nota es el motivo y es obligatoria (la RPC lo exige).
+  cierre: z.enum(['volvio', 'perdida', 'rota', 'baja_en_obra']).optional(),
 })
 
 const bool = (v?: string) => v === '1' || v === 'true'
@@ -119,6 +122,19 @@ entregas.get(
     return c.json({ items: data ?? [], total: count ?? 0, limit: q.limit, offset: q.offset })
   },
 )
+
+// GET /api/herramientas/entregas/alertas — campana del topbar (20261005e):
+// obras con herramientas en obra hace más de 60 días, o archivadas con algo
+// afuera. Una fila por obra; la vista ya agrega.
+entregas.get('/entregas/alertas', requirePermiso('herramientas', 'lectura'), requireTab('herramientas', ['salidas', 'retornos']), async (c) => {
+  const { data, error } = await supabase
+    .from('v_herr_alertas_en_obra')
+    .select('obra_cod, obra_nom, archivada, unidades, salidas, desde')
+    .order('archivada', { ascending: false })
+    .order('desde', { ascending: true })
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data ?? [])
+})
 
 // GET /api/herramientas/entregas/stats
 entregas.get('/entregas/stats', requirePermiso('herramientas', 'lectura'), requireTab('herramientas', ['salidas', 'retornos']), async (c) => {
@@ -204,7 +220,8 @@ entregas.patch(
   },
 )
 
-// POST /api/herramientas/entregas/retornos — la herramienta volvió al pañol.
+// POST /api/herramientas/entregas/retornos — la herramienta volvió al pañol,
+// o se cierra sin volver: perdida, rota o baja en obra (20261005d).
 // RPC SECURITY DEFINER (siempre con el cliente admin, §9): lockea cada salida
 // y rechaza devolver más de lo que sigue en obra.
 entregas.post(
@@ -218,10 +235,11 @@ entregas.post(
       p_fecha:   dto.fecha,
       p_nota:    dto.nota ?? null,
       p_user_id: c.get('user').id,
+      p_cierre:  dto.cierre ?? 'volvio',
     })
     if (error) {
       const msg = error.message || ''
-      const code = ['SIN_ITEMS', 'SALIDA_NO_EXISTE', 'SALIDA_NO_DEVOLVIBLE', 'CANTIDAD_INVALIDA'].find(k => msg.includes(k))
+      const code = ['SIN_ITEMS', 'SALIDA_NO_EXISTE', 'SALIDA_NO_DEVOLVIBLE', 'CANTIDAD_INVALIDA', 'MOTIVO_REQUERIDO', 'CIERRE_INVALIDO'].find(k => msg.includes(k))
       if (code) return c.json({ error: code, detail: (error as { details?: string }).details ?? null }, 400)
       return c.json({ error: msg }, 500)
     }

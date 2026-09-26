@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const { estado } = vi.hoisted(() => ({
-  estado: { horas: [] as Array<{ leg: string; horas: number }>, cierres: [] as Array<{ sem_key: string }> },
+  estado: { horas: [] as Array<{ leg: string; horas: number }>, cierres: [] as Array<{ sem_key: string }>, enObra: 0 },
 }))
 
 vi.mock('../../../src/lib/supabase.js', () => ({
@@ -14,6 +14,8 @@ vi.mock('../../../src/lib/supabase.js', () => ({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const b: any = {}
       for (const m of ['select', 'eq', 'gte', 'lte', 'gt', 'lt']) b[m] = () => b
+      // Herramientas en obra según el pañol (v_herr_entregas_obras, 26/09).
+      b.maybeSingle = async () => ({ data: estado.enObra > 0 ? { cant_en_obra: estado.enObra } : null, error: null })
       b.then = (res: (v: unknown) => unknown) =>
         Promise.resolve({ data: tabla === 'horas' ? estado.horas : estado.cierres, error: null }).then(res)
       return b
@@ -27,7 +29,7 @@ vi.mock('../../../src/lib/obras-usuario.js', () => ({
 
 import { obrasService } from '../../../src/modules/obras/obras.service.js'
 
-beforeEach(() => { estado.horas = []; estado.cierres = [] })
+beforeEach(() => { estado.horas = []; estado.cierres = []; estado.enObra = 0 })
 
 describe('obrasService.motivoNoArchivar', () => {
   it('sin horas esta semana ni semanas reabiertas: null', async () => {
@@ -45,5 +47,9 @@ describe('obrasService.motivoNoArchivar', () => {
     estado.horas = [{ leg: '001', horas: 8 }]
     estado.cierres = [{ sem_key: '2026-08-21' }]
     expect(await obrasService.motivoNoArchivar('CC-001')).toMatch(/8 horas de 1 trabajador .* y 1 semana reabierta/)
+  })
+  it('herramientas que siguen en obra según el pañol', async () => {
+    estado.enObra = 45
+    expect(await obrasService.motivoNoArchivar('CC-001')).toBe('45 herramientas en obra sin volver al pañol (cerralas en Herramientas › Retornos)')
   })
 })
