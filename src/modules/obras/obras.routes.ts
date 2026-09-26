@@ -40,6 +40,8 @@ obras.get('/', requirePermisoOr([
   { modulo: 'tarja', accion: 'lectura' },
   { modulo: 'certificaciones', accion: 'lectura' },
   { modulo: 'herramientas', accion: 'lectura' },
+  // Sueldos: la obra habitual del legajo es el centro de costo del asiento.
+  { modulo: 'sueldos', accion: 'lectura' },
 ]), async (c) => {
   const token  = c.get('accessToken')
   const userId = c.get('user').id

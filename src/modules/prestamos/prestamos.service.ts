@@ -50,6 +50,16 @@ export const prestamosService = {
     return data
   },
 
+  /** Código de la liquidación de Sueldos que generó este movimiento, o null. */
+  async liquidacionDeSueldos(id: number): Promise<string | null> {
+    const { data, error } = await supabaseAdmin.from('prestamos')
+      .select('sueldos_liquidacion_id, liquidacion:sueldos_liquidaciones(codigo)').eq('id', id).maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data?.sueldos_liquidacion_id) return null
+    const l = (Array.isArray(data.liquidacion) ? data.liquidacion[0] : data.liquidacion) as { codigo?: string } | null
+    return l?.codigo ?? `#${data.sueldos_liquidacion_id}`
+  },
+
   async delete(id: number, token: string) {
     const supabase = createSupabaseClient(token)
     const { error } = await supabase.from('prestamos').delete().eq('id', id)

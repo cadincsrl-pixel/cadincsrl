@@ -39,6 +39,10 @@ prestamos.post('/', zValidator('json', CreatePrestamoSchema), async (c) => {
 prestamos.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'))
   if (!Number.isFinite(id)) return c.json({ error: 'ID_INVALIDO' }, 400)
+  // El descuento que registró una liquidación de Sueldos se deshace reabriendo
+  // o anulando esa liquidación, no desde acá (quedaría el recibo descontando).
+  const liq = await prestamosService.liquidacionDeSueldos(id)
+  if (liq) return c.json({ error: 'PRESTAMO_DE_SUELDOS', detail: { liquidacion: liq } }, 409)
   const data = await prestamosService.delete(id, c.get('accessToken'))
   return c.json(data)
 })
