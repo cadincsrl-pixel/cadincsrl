@@ -105,3 +105,15 @@ export const MarcarConsumibleSchema = z.object({
   motivo:   z.string().trim().max(120).optional(),
 })
 export type MarcarConsumibleDto = z.infer<typeof MarcarConsumibleSchema>
+
+/**
+ * EPP que se le cobra al cliente (20261002a). Por defecto un EPP es gasto de
+ * CADINC; esto lo marca (o lo vuelve atrás) renglón por renglón, desde Cargar
+ * precios. Mismo tope que el consumible.
+ */
+export const MarcarEppACargoSchema = z.object({
+  obra_cod: z.string().min(1),
+  item_ids: z.array(z.number().int().positive()).min(1).max(500),
+  marcar:   z.boolean(),
+})
+export type MarcarEppACargoDto = z.infer<typeof MarcarEppACargoSchema>

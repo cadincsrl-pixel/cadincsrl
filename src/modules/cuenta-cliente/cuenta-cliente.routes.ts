@@ -14,7 +14,7 @@ import { cuentaClienteService, CcHttpError } from './cuenta-cliente.service.js'
 import {
   CrearCobroSchema, EditarCobroSchema, UploadComprobanteCobroSchema,
   CuentaCorrienteQuerySchema, CUENTA_ESTADOS, ImputarPagadoSchema, type CuentaCorrienteQuery,
-  EmitirCertificadoSchema, AnularCertificadoSchema, MarcarConsumibleSchema,
+  EmitirCertificadoSchema, AnularCertificadoSchema, MarcarConsumibleSchema, MarcarEppACargoSchema,
 } from './cuenta-cliente.schema.js'
 import type { CuentaFiltro } from './cuenta-cliente.service.js'
 import { getObrasDelUsuarioCached, validarObraDelUsuario } from '../../lib/obras-usuario.js'
@@ -167,6 +167,23 @@ cuentaCliente.post('/consumible', soloCuenta, requirePermiso('certificaciones', 
                || (await tieneFlag(userId, 'certificaciones', 'marcar_consumibles', false))
     if (!puede) return c.json({ error: 'SIN_PERMISO_MARCAR_CONSUMIBLES' }, 403)
     return c.json(await cuentaClienteService.marcarConsumible(dto, userId))
+  }))
+
+// POST /api/cuenta-cliente/epp-a-cargo
+// EPP que se le cobra al cliente (20261002a, pedido del dueño 26/09): la
+// excepción a «el EPP es gasto de CADINC», renglón por renglón desde Cargar
+// precios. Mete plata en la deuda del cliente, así que pide `cargar_precios`
+// (no alcanza `marcar_consumibles`, que sólo SACA de la deuda). La RPC rechaza
+// llave en mano, cobrados, certificados y lo que no es EPP.
+cuentaCliente.post('/epp-a-cargo', soloCuenta, requirePermiso('certificaciones', 'actualizacion'),
+  zValidator('json', MarcarEppACargoSchema), handler(async (c) => {
+    const dto = c.req.valid('json')
+    const userId = c.get('user').id
+    await validarObraDelUsuario(userId, dto.obra_cod, 'certificaciones')
+    if (!(await tieneFlag(userId, 'certificaciones', 'cargar_precios', false))) {
+      return c.json({ error: 'SIN_PERMISO_CARGAR_PRECIOS' }, 403)
+    }
+    return c.json(await cuentaClienteService.marcarEppACargo(dto, userId))
   }))
 
 // GET /api/cuenta-cliente/pendientes-precio

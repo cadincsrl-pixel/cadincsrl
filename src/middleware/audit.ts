@@ -102,6 +102,8 @@ export const VERBOS: Record<string, string> = {
   verificar: 'verificar en ARCA',
   // Compras: deshacer una importación de «Mis Comprobantes» (20260929k).
   deshacer: 'deshacer',
+  // Cuenta corriente: EPP que se le cobra al cliente (20261002a).
+  'epp-a-cargo': 'cambiar a cargo de quién es el EPP',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
