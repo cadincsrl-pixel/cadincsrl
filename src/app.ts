@@ -72,6 +72,7 @@ import asistenteRoutes from './modules/asistente/asistente.routes.js'
 import pagosRoutes from './modules/pagos/pagos.routes.js'
 import facturacionRoutes from './modules/facturacion/facturacion.routes.js'
 import contabilidadRoutes from './modules/contabilidad/contabilidad.routes.js'
+import sueldosRoutes from './modules/sueldos/sueldos.routes.js'
 import facturacionInternalRoutes from './modules/facturacion/facturacion.internal.routes.js'
 import empresaRoutes from './modules/empresa/empresa.routes.js'
 import catalogosRoutes from './modules/catalogos/catalogos.routes.js'
@@ -177,6 +178,8 @@ app.route('/api/asistente', asistenteRoutes)
 app.route('/api/pagos', pagosRoutes)
 app.route('/api/facturacion', facturacionRoutes)
 app.route('/api/contabilidad', contabilidadRoutes)
+// Sueldos (2026-09-26): legajos, convenios, liquidaciones y recibos.
+app.route('/api/sueldos', sueldosRoutes)
 // Datos de la empresa (tanda 6, 20260929a): GET para todos, PATCH admin.configurar.
 app.route('/api/empresa', empresaRoutes)
 // Catálogos compartidos (tanda 6, 20260929f): jurisdicciones de Compras y Ventas.

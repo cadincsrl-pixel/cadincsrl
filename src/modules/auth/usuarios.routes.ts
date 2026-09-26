@@ -136,6 +136,11 @@ const ModuloPermisosSchema = z.object({
   // Tanda 6 (20260929a): editar la configuración del módulo (Ventas,
   // Compras) y, en `admin`, los Datos de la empresa. Default false.
   configurar:            z.boolean().optional(),
+  // Sueldos (2026-09-26, 20261004a–f): crear/editar liquidaciones y recibos,
+  // y cerrar/reabrir/anular/contabilizar. `configurar` y `ver_pii` (CUIL/CBU)
+  // ya estaban arriba. Default false.
+  liquidar:              z.boolean().optional(),
+  cerrar_liquidaciones:  z.boolean().optional(),
   obras_scope:     z.enum(['todas', 'asignadas']).optional(),
 })
 

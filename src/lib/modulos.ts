@@ -23,8 +23,12 @@ export const MODULOS = [
   'pagos',
   'facturacion',
   'contabilidad',
+  'sueldos',
   'admin',
 ] as const
+// 2026-09-26: `sueldos` (legajos, convenios UOCRA/UECARA/Camioneros,
+// liquidaciones y recibos, asiento al cerrar). Flags: liquidar,
+// cerrar_liquidaciones, configurar y ver_pii (CUIL/CBU).
 // 2026-09-24: `contabilidad` (plan de cuentas, asientos, diario, mayor, sumas y
 // saldos, períodos y cuentas de tesorería). Es la integradora por diseño:
 // referencia clientes de Ventas, proveedores de Pagos y obras.

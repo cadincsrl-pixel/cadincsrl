@@ -35,7 +35,7 @@ export interface RutaAuditada {
 }
 
 /** POSTs que son consultas (geocoding, sugerencia de km): no son mutaciones. */
-const SIN_AUDITAR = [/^logistica\/maps\//]
+const SIN_AUDITAR = [/^logistica\/maps\//, /^sueldos\/liquidaciones\/[^/]+\/recibos\/calcular$/]
 
 /**
  * Verbo al final de la ruta → acción legible. Se sacan de la cola todos los
@@ -104,6 +104,8 @@ export const VERBOS: Record<string, string> = {
   deshacer: 'deshacer',
   // Cuenta corriente: EPP que se le cobra al cliente (20261002a).
   'epp-a-cargo': 'cambiar a cargo de quién es el EPP',
+  // Sueldos (2026-09-26). `cerrar`, `reabrir`, `anular`, `contabilizar` y `generar` ya están arriba.
+  paritaria: 'nueva paritaria',
 }
 
 /** Entidad legible por "modulo", "modulo/sub" o "modulo/sub/sub2". */
@@ -228,6 +230,13 @@ export const ENTIDADES: Record<string, string> = {
   empresa: 'datos de la empresa',
   // Tanda 6 (20260929f): catálogos compartidos y configuración de Compras.
   'catalogos/jurisdicciones': 'jurisdicción', 'pagos/config': 'configuración de compras',
+  // Sueldos (2026-09-26): PUT /sueldos/liquidaciones/5/recibos/12 → «actualizar recibo de sueldo 12»;
+  // POST /sueldos/escalas/paritaria → «nueva paritaria escala salarial».
+  sueldos: 'sueldos', 'sueldos/convenios': 'convenio', 'sueldos/categorias': 'categoría de convenio',
+  'sueldos/escalas': 'escala salarial', 'sueldos/conceptos': 'concepto de sueldo',
+  'sueldos/conceptos/valores': 'valor de concepto de sueldo', 'sueldos/parametros': 'parámetro de sueldos',
+  'sueldos/legajos': 'legajo de sueldos', 'sueldos/liquidaciones': 'liquidación de sueldos',
+  'sueldos/liquidaciones/recibos': 'recibo de sueldo',
 }
 
 /** Palabras que aparecen como segmentos de ruta: nunca son un id. */
@@ -311,6 +320,8 @@ export function parseRoute(path: string, method: string, opts: { incluirGet?: bo
 const CLAVES_OMITIDAS = new Set([
   'password', 'token', 'access_token', 'refresh_token',
   'created_by', 'updated_by',
+  // Datos personales/bancarios de Sueldos: el audit_log lo ve quien no tiene ver_pii.
+  'cuil', 'cbu',
 ])
 /** Textos que sí queremos enteros: son el "por qué" de la acción. */
 const CLAVES_LARGAS = new Set([
