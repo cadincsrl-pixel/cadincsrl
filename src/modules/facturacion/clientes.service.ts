@@ -266,15 +266,16 @@ export const clientesService = {
   },
 
   /**
-   * Obras que se pueden facturar, para los selectores: no archivadas, ni
-   * internas ni depósito. Cada una es su propio centro de costo; `cliente_nom`
-   * es el cliente que la agrupa (precarga el de la factura).
+   * Obras que se pueden facturar, para los selectores: ni internas ni depósito.
+   * Las archivadas también (al final): archivar es operativo y en Ventas y la
+   * contabilidad se ve todo (dueño, 27/09/2026). Cada una es su propio centro
+   * de costo; `cliente_nom` es el cliente que la agrupa.
    */
   async obras(db: SupabaseClient = supabase) {
     const filas = await todasLasFilas<Record<string, unknown> & { cliente?: { razon_social: string } | { razon_social: string }[] | null }>((d, h) =>
       db.from('obras').select('cod, nom, cliente_id, es_interna, archivada, cliente:ventas_clientes(razon_social)')
-        .eq('archivada', false).eq('es_interna', false).eq('es_deposito', false)
-        .order('nom').order('cod').range(d, h))
+        .eq('es_interna', false).eq('es_deposito', false)
+        .order('archivada').order('nom').order('cod').range(d, h))
     return filas.map(({ cliente, ...o }) => {
       const c = Array.isArray(cliente) ? cliente[0] : cliente
       return { ...o, cliente_nom: c?.razon_social ?? null }

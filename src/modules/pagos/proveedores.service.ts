@@ -91,9 +91,9 @@ function normalizar(dto: Partial<CreateProveedorDto>): Record<string, unknown> {
 }
 
 /**
- * Concepto habitual activo y obra habitual existente y no archivada
- * (20260930p). Los mismos códigos que rebota la imputación:
- * CONCEPTO_INVALIDO, OBRA_INEXISTENTE, OBRA_ARCHIVADA (400 con `campo`).
+ * Concepto habitual activo y obra habitual existente (20260930p). Una obra
+ * archivada sirve igual: sigue siendo centro de costo (20261001s; dueño,
+ * 27/09/2026). Códigos: CONCEPTO_INVALIDO, OBRA_INEXISTENTE (400 con `campo`).
  */
 async function validarHabituales(valores: Record<string, unknown>): Promise<void> {
   const conceptoId = valores.concepto_habitual_id
@@ -106,12 +106,9 @@ async function validarHabituales(valores: Record<string, unknown>): Promise<void
   }
   const obraCod = valores.obra_habitual_cod
   if (obraCod != null) {
-    const { data, error } = await supabase.from('obras').select('cod, archivada').eq('cod', obraCod as string).maybeSingle()
+    const { data, error } = await supabase.from('obras').select('cod').eq('cod', obraCod as string).maybeSingle()
     if (error) throw new PagosHttpError(500, 'DB_ERROR', error.message)
     if (!data) throw errorDeCampo('OBRA_INEXISTENTE', 'obra_habitual_cod', { obra_cod: obraCod })
-    if ((data as { archivada: boolean | null }).archivada) {
-      throw errorDeCampo('OBRA_ARCHIVADA', 'obra_habitual_cod', { obra_cod: obraCod })
-    }
   }
 }
 

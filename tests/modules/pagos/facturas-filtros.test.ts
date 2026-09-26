@@ -129,7 +129,19 @@ describe('filtros de la bandeja de facturas', () => {
     expect(resumen).toEqual([...FILTROS].sort())
   })
 
-  it.each(FILTROS)('«%s» cambia la consulta de la lista', (k) => {
+  // `archivadas` se acepta por compatibilidad pero ya no filtra: las obras
+  // archivadas no esconden facturas (dueño, 27/09/2026).
+  const SIN_EFECTO = new Set(['archivadas'])
+  it('las obras archivadas no esconden facturas: «archivadas» no cambia la consulta', () => {
+    const sin: Llamada[] = []
+    const con: Llamada[] = []
+    aplicarFiltrosFacturas(grabador([], sin), ListFacturasQuerySchema.parse({}))
+    aplicarFiltrosFacturas(grabador([], con), ListFacturasQuerySchema.parse({ archivadas: '1' }))
+    expect(con).toEqual(sin)
+    expect(JSON.stringify(sin)).not.toContain('todas_archivadas')
+  })
+
+  it.each(FILTROS.filter((k) => !SIN_EFECTO.has(k)))('«%s» cambia la consulta de la lista', (k) => {
     const sin: Llamada[] = []
     const con: Llamada[] = []
     aplicarFiltrosFacturas(grabador([], sin), ListFacturasQuerySchema.parse({}))

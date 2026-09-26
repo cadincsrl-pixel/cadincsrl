@@ -478,8 +478,9 @@ export function aplicarFiltrosFacturas(q: any, f: Omit<ListFacturasQuery, 'orden
   if (f.tributos_a_revisar !== undefined) q = q.eq('tributos_a_revisar', esBoolQ(f.tributos_a_revisar))
   if (f.origen_carga) q = q.eq('origen_carga', f.origen_carga)
   if (f.importacion_id) q = q.eq('importacion_id', f.importacion_id)
-  // Facturas cuyas obras están TODAS archivadas: solo con el tilde.
-  if (!esBoolQ(f.archivadas)) q = q.or('todas_archivadas.is.null,todas_archivadas.eq.false')
+  // Las obras archivadas NO esconden facturas (dueño, 27/09/2026): archivar una
+  // obra es un tema operativo; en Compras y en la contabilidad se ve todo.
+  // `archivadas` se sigue aceptando en la query por compatibilidad, sin efecto.
   // Un número de comprobante completo se busca exacto por `numero_norm`
   // (0005-… y 00005-… son la misma factura); el resto, substring de `busq`.
   const { numeros, resto } = separarNumerosFactura(f.q)
