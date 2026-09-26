@@ -389,6 +389,14 @@ describe('registrar orden', () => {
     expect(await (await post('/ordenes', { ...base, forma_pago: 'efectivo', fecha: '2999-01-01' })).json()).toMatchObject({ error: 'FECHA_FUTURA' })
     const viejo = [{ numero: '1', fecha_cobro: '2020-01-01', monto: 100 }]
     expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque', cheques: viejo })).json()).toMatchObject({ error: 'FECHA_COBRO_INVALIDA' })
+    // Cheque de tercero endosado ya vencido (20261008d): hasta 30 días pasa; más, no.
+    const menos = (dias: number) => { const d = new Date(`${HOY}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - dias); return d.toISOString().slice(0, 10) }
+    const tercero = (dias: number) => [{ numero: '9', fecha_cobro: menos(dias), monto: 100, es_propio: false, librador: 'Bradel del Pueblo SRL' }]
+    const reciente = await (await post('/ordenes', { ...base, forma_pago: 'cheque', cheques: tercero(1) })).json()
+    expect(reciente.error).not.toBe('FECHA_COBRO_INVALIDA')
+    expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque', cheques: tercero(31) })).json()).toMatchObject({ error: 'FECHA_COBRO_INVALIDA' })
+    // Uno propio de ayer sigue sin pasar.
+    expect(await (await post('/ordenes', { ...base, forma_pago: 'cheque', cheques: [{ numero: '8', fecha_cobro: menos(1), monto: 100, es_propio: true }] })).json()).toMatchObject({ error: 'FECHA_COBRO_INVALIDA' })
   })
 
   it('los cheques van uno por fila: suman el pago, llevan librador si son de tercero y viajan a la RPC', async () => {

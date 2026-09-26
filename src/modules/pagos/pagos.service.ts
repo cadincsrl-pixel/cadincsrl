@@ -256,9 +256,18 @@ export function validarImportes(fIn: ImportesFactura, imputaciones: ImputacionDt
  * RPC es la que manda.
  *   - cheque/echeq exige al menos uno; cualquier otra forma, ninguno.
  *   - Σ cheques = lo que sale de plata (±0,01). Si no cierra, falta o sobra uno.
- *   - ninguno se cobra antes de la fecha del pago.
+ *   - ninguno PROPIO se cobra antes de la fecha del pago; uno de tercero
+ *     endosado puede estar vencido hasta 30 días (sigue valiendo), 20261008d.
  *   - endosado de un tercero sin librador no se puede reclamar a nadie.
  */
+/** Un cheque de tercero se puede endosar hasta 30 días después de su fecha. */
+export const DIAS_CHEQUE_ENDOSABLE = 30
+function restarDiasISO(iso: string, dias: number): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - dias)
+  return d.toISOString().slice(0, 10)
+}
+
 export function validarCheques(forma: string, cheques: ChequeDto[] | undefined, fecha: string, montoPagado: number, prefijo = ''): void {
   const lista = cheques ?? []
   const campo = `${prefijo}cheques`
@@ -268,8 +277,8 @@ export function validarCheques(forma: string, cheques: ChequeDto[] | undefined, 
   }
   if (lista.length === 0) throw errorDeCampo('CHEQUES_REQUERIDOS', campo, { forma_pago: forma })
   lista.forEach((c, i) => {
-    if (c.fecha_cobro < fecha) {
-      throw errorDeCampo('FECHA_COBRO_INVALIDA', `${campo}.${i}.fecha_cobro`, { numero: c.numero, fecha })
+    if (c.fecha_cobro < fecha && (c.es_propio || c.fecha_cobro < restarDiasISO(fecha, DIAS_CHEQUE_ENDOSABLE))) {
+      throw errorDeCampo('FECHA_COBRO_INVALIDA', `${campo}.${i}.fecha_cobro`, { numero: c.numero, fecha, es_propio: c.es_propio })
     }
     if (!c.es_propio && !c.librador.trim()) {
       throw errorDeCampo('CHEQUE_SIN_LIBRADOR', `${campo}.${i}.librador`, { numero: c.numero })
