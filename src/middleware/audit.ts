@@ -77,6 +77,7 @@ export const VERBOS: Record<string, string> = {
   emitir: 'emitir en ARCA', reconciliar: 'reconciliar con ARCA', descartar: 'descartar',
   'volver-a-borrador': 'volver a borrador', alta: 'dar de alta',
   'actualizar-desde-arca': 'actualizar desde el padrón de ARCA',
+  'recalcular-vencimientos': 'recalcular vencimientos',
   // Cobranzas de Ventas (2026-09-24). `anular` y `upload-url` ya están arriba.
   imputar: 'imputar', 'pasar-a-deuda': 'pasar a deuda (no se había pagado)', 'completar-con-lectura': 'adjuntar el archivo leído', marcar: 'marcar saldo', importar: 'importar', vencimiento: 'cambiar vencimiento',
   adjunto: 'adjuntar certificado', 'descartar-pendiente': 'descartar adjunto pendiente',

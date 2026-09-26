@@ -446,6 +446,11 @@ pagos.post('/proveedores/:id/actualizar-desde-arca', actualizacion, tabProveedor
   return { ...r, proveedor: enmascararProveedor(r.proveedor, await verPii(c)) }
 }))
 
+// Vencimiento de sus facturas impagas con la regla actual: `?aplicar=1` lo
+// guarda; sin eso es vista previa y no cambia nada.
+pagos.post('/proveedores/:id/recalcular-vencimientos', actualizacion, tabProveedores, handler(async (c) =>
+  proveedoresService.recalcularVencimientos(idParam(c), esBoolQ(c.req.query('aplicar')), c.get('user').id, c.get('accessToken'))))
+
 pagos.post('/proveedores/:id/baja', actualizacion, tabProveedores, zValidator('json', MotivoSchema), handler(async (c) =>
   proveedoresService.baja(idParam(c), c.req.valid('json').motivo, c.get('user').id, c.get('accessToken'))))
 

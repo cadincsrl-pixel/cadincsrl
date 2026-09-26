@@ -80,9 +80,9 @@ function normalizar(dto: Partial<CreateProveedorDto>): Record<string, unknown> {
     out.condicion_iva_id = dto.condicion_iva_id
   }
   // `cierre_dia` va aparte porque el CHECK de la tabla lo ata al modo: sólo
-  // se admite con `cierre_mensual`. Al volver a 'dias' hay que limpiarlo en el
+  // se admite con `cierre_mensual`. Al pasar a otro modo hay que limpiarlo en el
   // mismo UPDATE o el constraint rebota con el valor viejo.
-  if (dto.vencimiento_modo === 'dias') out.cierre_dia = null
+  if (dto.vencimiento_modo !== undefined && dto.vencimiento_modo !== 'cierre_mensual') out.cierre_dia = null
   else if (dto.cierre_dia !== undefined) out.cierre_dia = dto.cierre_dia
   // Habituales (20260930p): vacío = null (sin preferencia).
   if (dto.concepto_habitual_id !== undefined) out.concepto_habitual_id = dto.concepto_habitual_id
@@ -344,6 +344,18 @@ export const proveedoresService = {
       facturas_abiertas: abiertas.data ?? [],
       contactos: contactos.data ?? [],
     }
+  },
+
+  /**
+   * Recalcula el vencimiento de las facturas impagas del proveedor con su regla
+   * actual («Cómo vence»). Sin `aplicar` es vista previa: devuelve qué cambia y
+   * no toca nada (20261008c; nació con el grupo Silva, 27/09/2026).
+   */
+  async recalcularVencimientos(id: number, aplicar: boolean, userId: string, token: string) {
+    const sb = createSupabaseClient(token)
+    const { data, error } = await sb.rpc('pagos_recalcular_vencimientos', { p_proveedor_id: id, p_aplicar: aplicar, p_user_id: userId })
+    if (error) throw mapRpcError(error)
+    return data as { aplicado: boolean; cambian: number; facturas: { id: number; numero: string; fecha: string; antes: string | null; despues: string }[] }
   },
 
   /** Reemplaza la lista de contactos (RPC transaccional, 20260925f). */

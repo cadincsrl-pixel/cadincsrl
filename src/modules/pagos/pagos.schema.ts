@@ -24,11 +24,14 @@ export const ESTADOS_FACTURA = ['pendiente', 'observada', 'aprobada', 'pagada_pa
 /**
  * Cómo se sugiere el vencimiento de las facturas de un proveedor (20260921g).
  *   dias           → fecha de la factura + plazo_pago_dias (lo de siempre; ABC S.A.).
- *   cierre_mensual → cuenta corriente: todo el mes cierra y vence junto (Silva).
+ *   cierre_mensual → cuenta corriente: todo el mes cierra y vence junto (fin de mes + N días).
+ *   fin_mes_siguiente → vence el último día del mes siguiente al de la factura
+ *     (grupo Silva, 27/09/2026: agosto hasta el 30/09, septiembre hasta el 31/10).
  * El cálculo vive en el frontend (`vencimientoSugerido`), que es donde se
- * propone la fecha; acá sólo se valida y se guarda la configuración.
+ * propone la fecha, y en `_pagos_prevision_pago` para el importador de ARCA;
+ * acá sólo se valida y se guarda la configuración.
  */
-export const VENCIMIENTO_MODOS = ['dias', 'cierre_mensual'] as const
+export const VENCIMIENTO_MODOS = ['dias', 'cierre_mensual', 'fin_mes_siguiente'] as const
 
 export const FORMAS_PREVISTAS = ['efectivo', 'transferencia', 'tarjeta', 'cheque', 'echeq', 'debito_automatico', 'cta_cte', 'otro'] as const
 /**
